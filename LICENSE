@@ -1,0 +1,135 @@
+The Matheusd Private License (the “MDPL License”)
+Copyright (c) 2025-present Matheus Degiovani
+
+
+By copying, installing, compiling, or using the SOFTWARE, YOU agree to this
+LICENSE.
+
+
+I. Definitions
+
+"SOFTWARE" refers to the MdCapNProto implementation, its source code,
+accompanying documentation, and any object code or executables generated from
+that source code, including statically or dynamically linked forms. For
+clarity, "SOFTWARE" does not include unrelated third-party components merely
+co-packaged or co-distributed with it.
+
+"LICENSOR" refers to Matheus Degiovani.
+
+"YOU" refers to the licensee of the SOFTWARE. 
+
+"ENTITY" means the company, organization, or legal person on whose behalf YOU
+access or use the SOFTWARE. If YOU are an individual using the SOFTWARE on
+behalf of an ENTITY, YOU represent that you have authority to bind that ENTITY,
+and "YOU" includes that ENTITY.
+
+"LICENSE" refers to this document, the license agreement between YOU and the
+LICENSOR.
+
+"AFFILIATE" means any entity that controls, is controlled by, or is under
+common control with a party, where "control" means ownership of more than 50%
+of the voting interests or of beneficial ownership.
+
+"PRODUCTION USE" means any use of the SOFTWARE (including as a
+network-accessible service) that: (i) provides functionality to anyone other
+than the project team developing or testing the SOFTWARE; (ii) supports or
+operates any business process or system; (iii) is accessible by end users,
+customers, or the public; (iv) processes live, customer, or business data (other
+than de-identified test data created solely for evaluation); or (v) runs in any
+environment designated or used for operational or live purposes (including
+“pilot,” “beta,” “staging,” or “canary”) beyond time-limited evaluation.
+
+"COMMERCIAL USE" means any use by or for the benefit of a for-profit ENTITY, or
+in connection with any revenue-generating, fee-bearing, or operational activity
+(including providing the SOFTWARE’s functionality to third parties as a
+service).
+
+"NON-PRODUCTION USE" means internal evaluation, education, and testing
+exclusively within YOUR ENTITY, by YOUR project team, not made available to
+customers, end users or the public, not used to process live or
+business-critical data, and not used to operate or support any production
+system or business operations.
+
+
+II. LICENSE GRANT (Non-Production Use Only)
+
+Subject to YOUR ongoing compliance with this LICENSE, LICENSOR grants YOU (and
+YOUR AFFILIATES and contractors acting on YOUR behalf) a limited,
+non-exclusive, non-transferable license to copy, install, compile, and modify
+the SOFTWARE solely for NON-PRODUCTION USE. Any PRODUCTION USE or COMMERCIAL
+USE requires a separate written agreement with LICENSOR expressly permitting
+such use.
+
+Except as expressly permitted in this LICENSE, YOU may not publish, distribute,
+sublicense, or make the SOFTWARE or any derivative works available to any third
+party.
+
+YOU may share minimal textual diffs solely within bug reports submitted through
+LICENSOR-designated channels. A "minimal textual diff" must not (i) include any
+complete file from the SOFTWARE, (ii) include more than 25% of any file from
+the SOFTWARE, or (iii) enable reconstruction of any substantial portion of the
+SOFTWARE or a compilable unit. By submitting any contribution, YOU grant
+LICENSOR a perpetual, worldwide, irrevocable, royalty-free license to use,
+reproduce, modify, sublicense, and distribute that contribution, and YOU
+represent that YOU have the necessary rights to grant this license.
+
+
+III. Conditions and Termination
+
+This LICENSE (including the grant in Section II) is conditioned on: (i)
+retaining all copyright notices and this LICENSE in all copies of the SOFTWARE;
+(ii) not removing, disabling, or circumventing any license key or usage
+control; (iii) complying with applicable law and third-party licenses; and (iv)
+not using LICENSOR’s names, logos, or trademarks without permission.
+
+This LICENSE terminates automatically if YOU breach it and fail to
+cure within 30 days after notice from LICENSOR (immediate termination for
+unauthorized PRODUCTION USE or COMMERCIAL USE). Upon termination, YOU must
+cease all use and destroy or permanently delete all copies of the SOFTWARE.
+LICENSOR may seek injunctive relief and other remedies at law or in equity.
+
+
+IV. Third-Party Components
+
+Third-party components included in or used with the SOFTWARE are licensed under
+their own applicable terms. YOU are responsible for complying with those terms.
+Nothing in this LICENSE modifies those third-party licenses.
+
+
+V. Disclaimers
+
+A. Limitation of Liability
+
+To the maximum extent permitted by law, LICENSOR’s aggregate liability arising
+out of or related to this LICENSE shall not exceed $100.
+
+B. No Patent or Trademark License
+
+No rights to LICENSOR’s patents or trademarks are granted by this LICENSE.
+
+C. Assignment 
+
+YOU may not assign or transfer this LICENSE, by operation of law or otherwise,
+without LICENSOR’s prior written consent; any attempted assignment is void.
+
+D. Export Compliance
+
+YOU must comply with all applicable export and sanctions laws.
+
+E. Severability; No Waiver; Entire Agreement; Survival
+
+If any provision is unenforceable, the remainder remains in effect. Failure to
+enforce is not a waiver. This LICENSE is the entire agreement regarding the
+SOFTWARE. Sections concerning restrictions, contributions, disclaimers,
+limitations, and governing law survive termination.
+
+
+VI. Warranty Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
