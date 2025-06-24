@@ -73,16 +73,46 @@ func (ssa *SingleSegmentArena) ReadWord(seg SegmentID, offset Word, out *Word) e
 }
 
 func (ssa *SingleSegmentArena) GetWord(seg SegmentID, offset Word) (res Word, err error) {
+	// 51 instructions
 	if seg != 0 {
-		return 0, errors.New("no segment")
+		err = errors.New("no segment")
+	} else if byteOffset := offset * WordSize; len(ssa.b) < int(byteOffset+WordSize) {
+		err = errors.New("invalid offset")
+	} else {
+		copy((*[8]byte)(unsafe.Pointer(&res))[:], ssa.b[byteOffset:])
 	}
+	return
 
-	byteOffset := offset * WordSize
-	if len(ssa.b) < int(byteOffset+WordSize) {
-		return 0, errors.New("invalid offset")
+	/*
+		// 51 instructions
+		if seg != 0 {
+			return 0, errors.New("no segment")
+		}
+
+		byteOffset := offset * WordSize
+		if len(ssa.b) < int(byteOffset+WordSize) {
+			return 0, errors.New("invalid offset")
+		}
+
+		copy((*[8]byte)(unsafe.Pointer(&res))[:], ssa.b[byteOffset:])
+		return
+	*/
+}
+
+type Segment interface {
+	GetWord(offset Word) (res Word, err error)
+}
+
+type MemSegment struct {
+	b []byte
+}
+
+func (ms *MemSegment) GetWord(offset Word) (res Word, err error) {
+	if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
+		err = errors.New("invalid offset")
+	} else {
+		copy((*[8]byte)(unsafe.Pointer(&res))[:], ms.b[byteOffset:])
 	}
-
-	copy((*[8]byte)(unsafe.Pointer(&res))[:], ssa.b[byteOffset:byteOffset+WordSize])
 	return
 }
 
@@ -92,6 +122,7 @@ type Message struct {
 
 type Struct struct {
 	msg         *Message
+	seg         Segment
 	segID       SegmentID
 	baseOffset  Word
 	dataSize    Word
@@ -154,11 +185,17 @@ func (s *Struct) Int64(dataOffset Word) (res int64) {
 		return wireWordLEToNativeEndianInt64(data)
 	*/
 
-	// Assumes a BE version will be written.
-	// 76 instructions
-	data, _ := s.msg.arena.GetWord(s.segID, s.baseOffset+dataOffset)
-	return int64(data)
+	/*
+		// Assumes a BE version will be written.
+		// 76 instructions
+		data, _ := s.msg.arena.GetWord(s.segID, s.baseOffset+dataOffset)
+		return int64(data)
+	*/
 
+	// Assumes a BE version will be written.
+	// 73 instructions
+	data, _ := s.seg.GetWord(s.baseOffset + dataOffset)
+	return int64(data)
 }
 
 func (s *Struct) Float64(dataOffset Word) (res float64) {
@@ -170,4 +207,59 @@ type SmallTestStruct Struct
 
 func (st *SmallTestStruct) Siblings() int64 {
 	return (*Struct)(st).Int64(0)
+}
+
+// ====================
+
+type GenMessage[T ReaderArena] struct {
+	arena T
+}
+
+type GenStruct[T ReaderArena] struct {
+	msg         *GenMessage[T]
+	segID       SegmentID
+	baseOffset  Word
+	dataSize    Word
+	pointerSize Word
+}
+
+func (s *GenStruct[T]) Int64(dataOffset Word) (res int64) {
+	data, _ := s.msg.arena.GetWord(s.segID, s.baseOffset+dataOffset)
+	return int64(data)
+}
+
+type GenSmallTestStruct[T ReaderArena] GenStruct[T]
+
+func (st *GenSmallTestStruct[T]) Siblings() int64 {
+	return (*GenStruct[T])(st).Int64(0)
+}
+
+// =============
+
+type MemMessage struct {
+	arena *SingleSegmentArena
+}
+
+type MemStruct struct {
+	msg   *MemMessage
+	arena *SingleSegmentArena
+	seg   *MemSegment
+
+	segID       SegmentID
+	baseOffset  Word
+	dataSize    Word
+	pointerSize Word
+}
+
+func (s *MemStruct) Int64(dataOffset Word) (res int64) {
+	data, _ := s.msg.arena.GetWord(s.segID, s.baseOffset+dataOffset)
+	// data, _ := s.arena.GetWord(s.segID, s.baseOffset+dataOffset)
+	// data, _ := s.seg.GetWord(s.baseOffset + dataOffset)
+	return int64(data)
+}
+
+type MemSmallTestStruct MemStruct
+
+func (st *MemSmallTestStruct) Siblings() int64 {
+	return (*MemStruct)(st).Int64(0)
 }
