@@ -12,12 +12,20 @@ func (err ErrInvalidSegmentOffset) Error() string {
 	return fmt.Sprintf("not a valid segment offset: %d", uint64(err))
 }
 
-type ErrInvalidOffset struct {
-	EndOffset    int
+type ErrInvalidMemOffset struct {
+	Offset       int
 	AvailableLen int
 }
 
-func (err ErrInvalidOffset) Error() string {
-	return fmt.Sprintf("invalid offset: wanted to read up to offset %d when only %d bytes were available",
-		err.EndOffset, err.AvailableLen)
+func (err ErrInvalidMemOffset) Error() string {
+	return fmt.Sprintf("invalid offset: wanted to read offset %d when only %d bytes were available",
+		err.Offset, err.AvailableLen)
+}
+
+type ErrReadLimitExceeded struct {
+	Target WordCount
+}
+
+func (err ErrReadLimitExceeded) Error() string {
+	return fmt.Sprintf("read limit exceeded when attempting to read %d words", err.Target)
 }

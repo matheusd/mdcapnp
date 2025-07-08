@@ -5,6 +5,7 @@
 package mdcapnp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math/rand"
 	"testing"
@@ -82,4 +83,45 @@ func BenchmarkMemGetInt64(b *testing.B) {
 		panic("boo")
 	}
 
+}
+
+func BenchmarkReadList(b *testing.B) {
+	targetName := []byte("mynameisslimshady   ")
+	buf := appendWords(nil,
+		0x0001000000000000,
+		// 0x0000000200000001,
+		0x000000ba00000001,
+	)
+	buf = append(buf, targetName...)
+
+	arena := &SingleSegmentArena{b: buf}
+	msg := &Message{arena: arena}
+	st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b}, dataStartOffset: 1, pointerSize: 1}
+
+	ls := new(List)
+
+	nameBuf := make([]byte, 32)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	var n int
+	for range b.N {
+		err := st.ReadNameField(ls)
+		if err != nil {
+			ls = nil
+			b.Fatal(err)
+		}
+
+		n, err = ls.Read(nameBuf)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	if ls == nil {
+		panic("boo")
+	}
+	if !bytes.Equal(targetName, nameBuf[:n]) {
+		panic("wrong targetName")
+	}
 }

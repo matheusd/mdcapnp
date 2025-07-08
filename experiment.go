@@ -5,7 +5,9 @@
 package mdcapnp
 
 import (
+	"encoding/binary"
 	"errors"
+	"math"
 	"unsafe"
 )
 
@@ -36,8 +38,8 @@ func (ssa *SingleSegmentArena) ReadBytes(seg SegmentID, offset Word, b []byte) e
 	}
 
 	byteOffset := int(offset * WordSize)
-	if len(ssa.b) < byteOffset+len(b) {
-		return ErrInvalidOffset{AvailableLen: len(ssa.b), EndOffset: byteOffset + len(b)}
+	if byteOffset >= len(ssa.b) {
+		return ErrInvalidMemOffset{AvailableLen: len(ssa.b), Offset: byteOffset}
 	}
 
 	copy(b, ssa.b[byteOffset:])
@@ -80,6 +82,9 @@ func (ssa *SingleSegmentArena) GetWord(seg SegmentID, offset Word) (res Word, er
 		err = errors.New("invalid offset")
 	} else {
 		copy((*[8]byte)(unsafe.Pointer(&res))[:], ssa.b[byteOffset:])
+
+		// Assumes a big endian version is written.
+		res = Word(binary.LittleEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
 	}
 	return
 
@@ -101,6 +106,7 @@ func (ssa *SingleSegmentArena) GetWord(seg SegmentID, offset Word) (res Word, er
 
 type Segment interface {
 	GetWord(offset Word) (res Word, err error)
+	Read(offset Word, b []byte) (int, error)
 }
 
 type MemSegment struct {
@@ -112,8 +118,23 @@ func (ms *MemSegment) GetWord(offset Word) (res Word, err error) {
 		err = errors.New("invalid offset")
 	} else {
 		copy((*[8]byte)(unsafe.Pointer(&res))[:], ms.b[byteOffset:])
+
+		// Assumes a big endian version is written. Note: this is
+		// counterintuitive, double check.
+		res = Word(binary.BigEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
 	}
 	return
+}
+
+func (ms *MemSegment) Read(offset Word, b []byte) (int, error) {
+	// 37
+	byteOffset := int(offset * WordSize)
+	if byteOffset >= len(ms.b) {
+		return 0, ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: byteOffset}
+	}
+
+	n := copy(b, ms.b[byteOffset:])
+	return n, nil
 }
 
 type Message struct {
@@ -121,12 +142,12 @@ type Message struct {
 }
 
 type Struct struct {
-	msg         *Message
-	seg         Segment
-	segID       SegmentID
-	baseOffset  Word
-	dataSize    Word
-	pointerSize Word
+	msg             *Message
+	seg             Segment
+	segID           SegmentID
+	dataStartOffset Word
+	dataSize        Word
+	pointerSize     Word
 }
 
 /*
@@ -194,19 +215,98 @@ func (s *Struct) Int64(dataOffset Word) (res int64) {
 
 	// Assumes a BE version will be written.
 	// 73 instructions
-	data, _ := s.seg.GetWord(s.baseOffset + dataOffset)
+	data, _ := s.seg.GetWord(s.dataStartOffset + dataOffset)
 	return int64(data)
 }
 
 func (s *Struct) Float64(dataOffset Word) (res float64) {
-	s.msg.arena.ReadBytes(s.segID, s.baseOffset+dataOffset, (*[8]byte)(unsafe.Pointer(&res))[:])
-	return
+	/*
+		// 72 instructions
+		s.msg.arena.ReadBytes(s.segID, s.baseOffset+dataOffset, (*[8]byte)(unsafe.Pointer(&res))[:])
+		return
+	*/
+
+	// 77 instructions
+	data, _ := s.seg.GetWord(s.dataStartOffset + dataOffset)
+	return math.Float64frombits(uint64(data))
+}
+
+func (s *Struct) ReadList(pointerOffset Word, ls *List) error {
+	if s.dataSize+pointerOffset >= s.pointerSize {
+		return errors.New("pointer at offset not set in struct")
+	}
+
+	finalPointerOffset := s.dataStartOffset + s.dataSize + pointerOffset
+	pointer, err := s.seg.GetWord(finalPointerOffset)
+	if err != nil {
+		return err
+	}
+
+	if !isPointerList(pointer) {
+		return errors.New("not a list pointer")
+	}
+
+	ls.seg = s.seg
+	ls.fromPointerWord(finalPointerOffset, pointer)
+	return nil
+}
+
+type ListElementSize byte
+
+const (
+	ListElSizeVoid      ListElementSize = 0
+	ListElSizeBit       ListElementSize = 1
+	ListElSizeByte      ListElementSize = 2
+	ListElSizeComposite ListElementSize = 7
+)
+
+type ListSize uint64
+
+type List struct {
+	seg        Segment
+	baseOffset Word
+	elSize     ListElementSize
+	listSize   ListSize
+}
+
+func isPointerList(p Word) bool {
+	return (p & 0x03) == 1
+}
+
+func (ls *List) fromPointerWord(pointerOffset, w Word) {
+	ls.baseOffset = pointerOffset + (w & 0xfffffffc >> 2) + 1
+	ls.elSize = ListElementSize(w & 0x300000000 >> 32)
+	ls.listSize = ListSize(w & 0xfffffff800000000 >> 35)
+}
+
+func (ls *List) LenBytes() int {
+	switch ls.elSize {
+	case ListElSizeVoid:
+		return 0
+	case ListElSizeBit:
+		return int(ls.listSize)
+	case ListElSizeByte:
+		return int(ls.listSize)
+	case ListElSizeComposite:
+		return int(ls.listSize * WordSize)
+	default:
+		panic("unknown el size")
+	}
+}
+
+func (ls *List) Read(b []byte) (n int, err error) {
+	n = min(len(b), ls.LenBytes())
+	return ls.seg.Read(ls.baseOffset, b[:n])
 }
 
 type SmallTestStruct Struct
 
 func (st *SmallTestStruct) Siblings() int64 {
 	return (*Struct)(st).Int64(0)
+}
+
+func (st *SmallTestStruct) ReadNameField(ls *List) error {
+	return (*Struct)(st).ReadList(0, ls) // First pointer.
 }
 
 // ====================

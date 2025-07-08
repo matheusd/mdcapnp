@@ -22,3 +22,10 @@ func TestMy(t *testing.T) {
 	res = int64(binary.LittleEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
 	t.Logf("%x final res", res)
 }
+
+func appendWords(b []byte, words ...Word) []byte {
+	for _, w := range words {
+		b = binary.BigEndian.AppendUint64(b, uint64(w))
+	}
+	return b
+}
