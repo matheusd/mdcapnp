@@ -7,16 +7,14 @@ package mdcapnp
 import (
 	"bytes"
 	"encoding/binary"
-	"math/rand"
 	"testing"
 )
 
 func BenchmarkStructGetInt64(b *testing.B) {
-	arena := &SingleSegmentArena{b: binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)}
-	msg := &Message{arena: arena}
+	buf := binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)
 
 	b.Run("with RL", func(b *testing.B) {
-		st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b, rl: NewReadLimiter(maxReadOnReadLimiter)}}
+		st := &SmallTestStruct{seg: &MemSegment{b: buf, rl: NewReadLimiter(maxReadOnReadLimiter)}}
 		b.ResetTimer()
 		b.ReportAllocs()
 		var v int64
@@ -30,7 +28,7 @@ func BenchmarkStructGetInt64(b *testing.B) {
 	})
 
 	b.Run("no RL", func(b *testing.B) {
-		st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b}}
+		st := &SmallTestStruct{seg: &MemSegment{b: buf}}
 		b.ResetTimer()
 		b.ReportAllocs()
 		var v int64
@@ -45,64 +43,6 @@ func BenchmarkStructGetInt64(b *testing.B) {
 
 }
 
-func BenchmarkGenStructGetInt64(b *testing.B) {
-	arena := &SingleSegmentArena{b: binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)}
-	msg := &GenMessage[*SingleSegmentArena]{arena: arena}
-	st := &GenSmallTestStruct[*SingleSegmentArena]{msg: msg}
-	b.ResetTimer()
-	b.ReportAllocs()
-	var v int64
-	for range b.N {
-		v = st.Siblings()
-	}
-
-	if v == 666 {
-		panic("boo")
-	}
-}
-
-func BenchmarkConcreteGetInt64(b *testing.B) {
-	var arena ReaderArena = &SingleSegmentArena{b: binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	// Ensure seg and offset are not compilte-time constants.
-	var seg SegmentID
-	var offset Word
-	if rand.Int31n(100) == 200 {
-		seg = 1
-		offset = 2
-	}
-
-	var v int64
-	for range b.N {
-		data, _ := arena.GetWord(seg, offset)
-		v = int64(data)
-	}
-
-	if v == 666 {
-		panic("boo")
-	}
-}
-
-func BenchmarkMemGetInt64(b *testing.B) {
-	arena := &SingleSegmentArena{b: binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)}
-	msg := &MemMessage{arena: arena}
-	st := &MemSmallTestStruct{msg: msg, arena: arena, seg: &MemSegment{b: arena.b}}
-	b.ResetTimer()
-	b.ReportAllocs()
-	var v int64
-	for range b.N {
-		v = st.Siblings()
-	}
-
-	if v == 666 {
-		panic("boo")
-	}
-
-}
-
 func BenchmarkReadList(b *testing.B) {
 	targetName := []byte("mynameisslimshady   ")
 	buf := appendWords(nil,
@@ -112,9 +52,7 @@ func BenchmarkReadList(b *testing.B) {
 	)
 	buf = append(buf, targetName...)
 
-	arena := &SingleSegmentArena{b: buf}
-	msg := &Message{arena: arena}
-	st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b}, dataStartOffset: 1, pointerSize: 1}
+	st := &SmallTestStruct{seg: &MemSegment{b: buf}, dataStartOffset: 1, pointerSize: 1}
 
 	ls := new(List)
 
