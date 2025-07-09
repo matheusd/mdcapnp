@@ -29,3 +29,8 @@ type ErrReadLimitExceeded struct {
 func (err ErrReadLimitExceeded) Error() string {
 	return fmt.Sprintf("read limit exceeded when attempting to read %d words", err.Target)
 }
+
+func (err ErrReadLimitExceeded) Is(target error) bool {
+	_, ok := target.(ErrReadLimitExceeded)
+	return ok
+}

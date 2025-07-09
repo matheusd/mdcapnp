@@ -110,23 +110,32 @@ type Segment interface {
 }
 
 type MemSegment struct {
-	b []byte
+	b  []byte
+	rl *ReadLimiter
 }
 
 func (ms *MemSegment) GetWord(offset Word) (res Word, err error) {
-	if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
-		err = errors.New("invalid offset")
+	// 43
+	if err = ms.rl.CanRead(1); err != nil {
+	} else if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
+		err = ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: int(byteOffset)}
 	} else {
-		copy((*[8]byte)(unsafe.Pointer(&res))[:], ms.b[byteOffset:])
+		res = Word(binary.BigEndian.Uint64(ms.b[byteOffset:]))
+
+		// copy((*[8]byte)(unsafe.Pointer(&res))[:], ms.b[byteOffset:])
 
 		// Assumes a big endian version is written. Note: this is
 		// counterintuitive, double check.
-		res = Word(binary.BigEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
+		// res = Word(binary.BigEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
 	}
 	return
 }
 
 func (ms *MemSegment) Read(offset Word, b []byte) (int, error) {
+	if err := ms.rl.CanRead(1); err != nil {
+		return 0, err
+	}
+
 	// 37
 	byteOffset := int(offset * WordSize)
 	if byteOffset >= len(ms.b) {

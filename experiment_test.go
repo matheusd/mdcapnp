@@ -14,17 +14,35 @@ import (
 func BenchmarkStructGetInt64(b *testing.B) {
 	arena := &SingleSegmentArena{b: binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)}
 	msg := &Message{arena: arena}
-	st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b}}
-	b.ResetTimer()
-	b.ReportAllocs()
-	var v int64
-	for range b.N {
-		v = st.Siblings()
-	}
 
-	if v == 666 {
-		panic("boo")
-	}
+	b.Run("with RL", func(b *testing.B) {
+		st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b, rl: NewReadLimiter(maxReadOnReadLimiter)}}
+		b.ResetTimer()
+		b.ReportAllocs()
+		var v int64
+		for range b.N {
+			v = st.Siblings()
+		}
+
+		if v == 666 {
+			panic("boo")
+		}
+	})
+
+	b.Run("no RL", func(b *testing.B) {
+		st := &SmallTestStruct{msg: msg, seg: &MemSegment{b: arena.b}}
+		b.ResetTimer()
+		b.ReportAllocs()
+		var v int64
+		for range b.N {
+			v = st.Siblings()
+		}
+
+		if v == 666 {
+			panic("boo")
+		}
+	})
+
 }
 
 func BenchmarkGenStructGetInt64(b *testing.B) {
