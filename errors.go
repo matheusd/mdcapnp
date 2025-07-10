@@ -4,7 +4,10 @@
 
 package mdcapnp
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type ErrInvalidSegmentOffset uint64
 
@@ -34,3 +37,24 @@ func (err ErrReadLimitExceeded) Is(target error) bool {
 	_, ok := target.(ErrReadLimitExceeded)
 	return ok
 }
+
+var ErrNotStructPointer = errors.New("pointer is not a struct pointer")
+
+type ErrObjectOutOfBounds struct {
+	Offset WordOffset
+	Size   WordCount
+	Len    int
+}
+
+func (err ErrObjectOutOfBounds) Error() string {
+	return fmt.Sprintf("object at offset 0x%016x with size %d is out of bounds (segment length is %d)",
+		err.Offset, err.Size, err.Len)
+}
+
+type ErrUnknownSegment SegmentID
+
+func (err ErrUnknownSegment) Error() string {
+	return fmt.Sprintf("segment with ID %d does not exist in arena", uint64(err))
+}
+
+var errSegmentNotInitialized = errors.New("segment was not initialized")

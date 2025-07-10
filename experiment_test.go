@@ -6,42 +6,8 @@ package mdcapnp
 
 import (
 	"bytes"
-	"encoding/binary"
 	"testing"
 )
-
-func BenchmarkStructGetInt64(b *testing.B) {
-	buf := binary.LittleEndian.AppendUint64(nil, 0x1234567890abcdef)
-
-	b.Run("with RL", func(b *testing.B) {
-		st := &SmallTestStruct{seg: &MemSegment{b: buf, rl: NewReadLimiter(maxReadOnReadLimiter)}}
-		b.ResetTimer()
-		b.ReportAllocs()
-		var v int64
-		for range b.N {
-			v = st.Siblings()
-		}
-
-		if v == 666 {
-			panic("boo")
-		}
-	})
-
-	b.Run("no RL", func(b *testing.B) {
-		st := &SmallTestStruct{seg: &MemSegment{b: buf}}
-		b.ResetTimer()
-		b.ReportAllocs()
-		var v int64
-		for range b.N {
-			v = st.Siblings()
-		}
-
-		if v == 666 {
-			panic("boo")
-		}
-	})
-
-}
 
 func BenchmarkReadList(b *testing.B) {
 	targetName := []byte("mynameisslimshady   ")
