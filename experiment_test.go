@@ -5,8 +5,9 @@
 package mdcapnp
 
 import (
-	"bytes"
 	"testing"
+
+	"matheusd.com/depvendoredtestify/require"
 )
 
 func BenchmarkReadList(b *testing.B) {
@@ -18,7 +19,7 @@ func BenchmarkReadList(b *testing.B) {
 	)
 	buf = append(buf, targetName...)
 
-	st := &SmallTestStruct{seg: &MemSegment{b: buf}, dataStartOffset: 1, pointerSize: 1}
+	st := &SmallTestStruct{seg: &Segment{b: buf}, dataStartOffset: 1, pointerSize: 1}
 
 	ls := new(List)
 
@@ -40,10 +41,6 @@ func BenchmarkReadList(b *testing.B) {
 		}
 	}
 
-	if ls == nil {
-		panic("boo")
-	}
-	if !bytes.Equal(targetName, nameBuf[:n]) {
-		panic("wrong targetName")
-	}
+	require.NotNil(b, ls)
+	require.Equal(b, targetName, nameBuf[:n])
 }

@@ -16,7 +16,8 @@ var errLimitOverMaxReadLimiter = fmt.Errorf("cannot read more than %d words", ma
 
 // ReadLimiter limits the amount of data read while traversing structures.
 type ReadLimiter struct {
-	limit atomic.Int64
+	limit         atomic.Int64
+	originalLimit int64
 }
 
 // NewReadLimiter creates a new read limiter.
@@ -27,9 +28,17 @@ func NewReadLimiter(limit WordCount) *ReadLimiter {
 	if limit > maxReadOnReadLimiter {
 		panic(errLimitOverMaxReadLimiter)
 	}
-	rl := &ReadLimiter{}
+	rl := &ReadLimiter{originalLimit: int64(limit)}
 	rl.limit.Store(int64(limit))
 	return rl
+}
+
+// Reset the read limiter to its original limit. This is valid even for nil
+// read limiters.
+func (rl *ReadLimiter) Reset() {
+	if rl != nil {
+		rl.limit.Store(rl.originalLimit)
+	}
 }
 
 func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {

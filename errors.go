@@ -58,3 +58,5 @@ func (err ErrUnknownSegment) Error() string {
 }
 
 var errSegmentNotInitialized = errors.New("segment was not initialized")
+
+var errNotOneByteElList = errors.New("list is not a one-byte-per-element list")

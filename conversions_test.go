@@ -25,7 +25,7 @@ func TestMy(t *testing.T) {
 
 func appendWords(b []byte, words ...Word) []byte {
 	for _, w := range words {
-		b = binary.BigEndian.AppendUint64(b, uint64(w))
+		b = binary.LittleEndian.AppendUint64(b, uint64(w))
 	}
 	return b
 }
