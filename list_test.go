@@ -14,7 +14,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 	buf = append(buf, []byte(name)...)
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
 		seg, _ := arena.Segment(0)
 
 		// Tests only reading after already having checked for
@@ -22,7 +22,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from list no check", func(b *testing.B) {
 			ls := &List{
 				seg:   seg,
-				arena: &arena,
+				arena: arena,
 				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
 			}
 			if err := ls.CheckCanGetUnsafeString(); err != nil {
@@ -43,7 +43,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from list", func(b *testing.B) {
 			ls := &List{
 				seg:   seg,
-				arena: &arena,
+				arena: arena,
 				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
 			}
 
@@ -64,7 +64,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from struct", func(b *testing.B) {
 			st := &Struct{
 				seg:   seg,
-				arena: &arena,
+				arena: arena,
 				ptr:   structPointer{pointerSectionSize: 1},
 			}
 

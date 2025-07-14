@@ -180,9 +180,9 @@ func (arena *SingleSegmentArena) Reset(b []byte, writable bool) {
 	arena.rl.Reset()
 }
 
-func MakeSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) SingleSegmentArena {
+func NewSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) *SingleSegmentArena {
 	var arena SingleSegmentArena
 	arena.rl = rl
 	arena.Reset(b, writable)
-	return arena
+	return &arena
 }

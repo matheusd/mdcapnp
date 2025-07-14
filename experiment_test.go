@@ -20,11 +20,11 @@ func BenchmarkReadList(b *testing.B) {
 	buf = append(buf, targetName...)
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
 		seg, _ := arena.Segment(0)
 		st := &SmallTestStruct{
 			seg:   seg,
-			arena: &arena,
+			arena: arena,
 			ptr:   structPointer{dataOffset: 1, pointerSectionSize: 1},
 		}
 		ls := new(List)

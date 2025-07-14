@@ -16,8 +16,8 @@ import (
 
 func BenchmarkMsgGetRoot(b *testing.B) {
 	buf := appendWords(nil, 0x00000000fffffffc)
-	arena := MakeSingleSegmentArena(buf, false, nil)
-	msg := MakeMsg(&arena)
+	arena := NewSingleSegmentArena(buf, false, nil)
+	msg := MakeMsg(arena)
 
 	var st Struct
 
@@ -66,8 +66,8 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 		b.Run(fmt.Sprintf("%v/unsafe=%v", rlTestName(tc.rl), tc.unsafe), func(b *testing.B) {
 			b.Run("reuse all", func(b *testing.B) {
 				rl := tc.rl(maxReadOnReadLimiter)
-				arena := MakeSingleSegmentArena(segBuf, false, rl)
-				msg := MakeMsg(&arena)
+				arena := NewSingleSegmentArena(segBuf, false, rl)
+				msg := MakeMsg(arena)
 				var st GoserbenchAStruct
 
 				b.ReportAllocs()
@@ -101,8 +101,8 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 
 				for range b.N {
 					rl := tc.rl(maxReadOnReadLimiter)
-					arena := MakeSingleSegmentArena(segBuf, false, rl)
-					msg := MakeMsg(&arena)
+					arena := NewSingleSegmentArena(segBuf, false, rl)
+					msg := MakeMsg(arena)
 					var st GoserbenchAStruct
 
 					err := st.ReadFromRoot(&msg)

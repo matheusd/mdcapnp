@@ -14,11 +14,11 @@ func BenchmarkStructGetInt64(b *testing.B) {
 	buf := appendWords(nil, 0x1234567890abcdef)
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
 		seg, _ := arena.Segment(0)
 		st := &SmallTestStruct{
 			seg:   seg,
-			arena: &arena,
+			arena: arena,
 		}
 		var v int64
 		for range b.N {
@@ -32,13 +32,13 @@ func BenchmarkStructReadList(b *testing.B) {
 	buf := appendWords(nil, 0x00000000fffffffd)
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
 		seg, _ := arena.Segment(0)
 
 		b.Run("single struct", func(b *testing.B) {
 			st := &Struct{
 				seg:   seg,
-				arena: &arena,
+				arena: arena,
 				ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
 			}
 			var ls List
@@ -64,7 +64,7 @@ func BenchmarkStructReadList(b *testing.B) {
 			for range b.N {
 				st := Struct{
 					seg:   seg,
-					arena: &arena,
+					arena: arena,
 					ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
 				}
 				if err := st.ReadList(0, &ls); err != nil {
@@ -84,7 +84,7 @@ func BenchmarkStructReadList(b *testing.B) {
 				var ls List
 				st := Struct{
 					seg:   seg,
-					arena: &arena,
+					arena: arena,
 					ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
 				}
 				if err := st.ReadList(0, &ls); err != nil {
