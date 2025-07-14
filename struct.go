@@ -10,8 +10,9 @@ import (
 )
 
 type Struct struct {
-	seg *Segment
-	ptr structPointer
+	seg   *Segment
+	arena Arena
+	ptr   structPointer
 }
 
 func (s *Struct) Int64(dataOffset WordOffset) (res int64) {
@@ -90,6 +91,7 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 	// All good.
 	ls.seg = s.seg
+	ls.arena = s.arena
 	ls.ptr = lp
 	return nil
 }

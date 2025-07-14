@@ -44,6 +44,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	}
 
 	s.seg = seg
+	s.arena = msg.arena
 	s.ptr = sp
 	return nil
 }

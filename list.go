@@ -34,8 +34,9 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 }
 
 type List struct {
-	seg *Segment
-	ptr listPointer
+	seg   *Segment
+	arena Arena
+	ptr   listPointer
 }
 
 /*
