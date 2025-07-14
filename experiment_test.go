@@ -19,7 +19,7 @@ func BenchmarkReadList(b *testing.B) {
 	)
 	buf = append(buf, targetName...)
 
-	st := &SmallTestStruct{seg: &Segment{b: buf}, dataStartOffset: 1, pointerSize: 1}
+	st := &SmallTestStruct{seg: &Segment{b: buf}, ptr: structPointer{dataOffset: 1, pointerSectionSize: 1}}
 
 	ls := new(List)
 

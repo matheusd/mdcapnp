@@ -60,3 +60,23 @@ func (err ErrUnknownSegment) Error() string {
 var errSegmentNotInitialized = errors.New("segment was not initialized")
 
 var errNotOneByteElList = errors.New("list is not a one-byte-per-element list")
+
+type errWordOffsetSumOverflows struct {
+	a, b WordOffset
+}
+
+func (err errWordOffsetSumOverflows) Error() string {
+	return fmt.Sprintf("word offset sum between %d and %d overflows",
+		err.a, err.b)
+}
+
+type errInvalidStructSectionSizes struct {
+	dataSectionSize    wordCount16
+	pointerSectionSize wordCount16
+	sum                WordCount
+}
+
+func (err errInvalidStructSectionSizes) Error() string {
+	return fmt.Sprintf("struct data (%d) and pointer (%d) sections sum to invalid value %d",
+		err.dataSectionSize, err.pointerSectionSize, err.sum)
+}

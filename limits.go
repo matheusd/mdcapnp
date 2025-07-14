@@ -24,7 +24,7 @@ type ReadLimiter struct {
 //
 // NOTE: limit cannot be higher than [math.MaxInt64]. This is unlikely to be an
 // actual limitation, during regular use.
-func NewReadLimiter(limit WordCount) *ReadLimiter {
+func NewReadLimiter(limit uint64) *ReadLimiter {
 	if limit > maxReadOnReadLimiter {
 		panic(errLimitOverMaxReadLimiter)
 	}
@@ -42,7 +42,8 @@ func (rl *ReadLimiter) Reset() {
 }
 
 func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
-	if wc > maxReadOnReadLimiter {
+	wcu := uint64(wc)
+	if wcu > maxReadOnReadLimiter {
 		return errLimitOverMaxReadLimiter
 	}
 	if rl == nil {
@@ -52,7 +53,7 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 	// Loop to ensure concurrent calls are correct.
 	for {
 		limit := rl.limit.Load()
-		newLimit := limit - int64(wc)
+		newLimit := limit - int64(wcu)
 		if newLimit < 0 {
 			return ErrReadLimitExceeded{Target: wc}
 		}

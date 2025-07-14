@@ -31,7 +31,7 @@ func BenchmarkMsgGetRoot(b *testing.B) {
 	}
 
 	// Ensure st is not eliminated.
-	if st.dataSize != 0 {
+	if st.ptr.dataOffset != 0 {
 		panic("error")
 	}
 }

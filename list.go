@@ -34,10 +34,8 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 }
 
 type List struct {
-	seg        *Segment
-	baseOffset WordOffset
-	elSize     listElementSize
-	listSize   listSize
+	seg *Segment
+	ptr listPointer
 }
 
 /*
@@ -49,20 +47,20 @@ func (ls *List) fromPointerWord(pointerOffset WordOffset, w Word) {
 */
 
 func (ls *List) LenBytes() ByteCount {
-	return ByteCount(listWordCount(ls.elSize, ls.listSize)) * WordSize
+	return ByteCount(listWordCount(ls.ptr.elSize, ls.ptr.listSize)) * WordSize
 }
 
 // Read this list into a slice. Only valid for one-byte-per-element lists.
 func (ls *List) Read(b []byte) (n int, err error) {
-	if ls.elSize != listElSizeByte {
+	if ls.ptr.elSize != listElSizeByte {
 		return 0, errNotOneByteElList
 	}
-	n = min(len(b), int(ls.listSize)) // FIXME: check if conversion valid in 32bit archs
-	return ls.seg.Read(ls.baseOffset, b[:n])
+	n = min(len(b), int(ls.ptr.listSize)) // FIXME: check if conversion valid in 32bit archs
+	return ls.seg.Read(ls.ptr.startOffset, b[:n])
 }
 
 func (ls *List) String() string {
-	buf := ls.seg.uncheckedSlice(ls.baseOffset, ls.LenBytes())
+	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ls.LenBytes())
 	return string(buf)
 }
 
@@ -73,10 +71,10 @@ func (ls *List) String() string {
 // TODO: is this really needed? Struct.ReadList() already checks for list
 // validity.
 func (ls *List) CheckCanGetUnsafeString() error {
-	if ls.elSize != listElSizeByte {
+	if ls.ptr.elSize != listElSizeByte {
 		return errNotOneByteElList
 	}
-	if err := ls.seg.checkSliceBounds(ls.baseOffset, ls.LenBytes()); err != nil {
+	if err := ls.seg.checkSliceBounds(ls.ptr.startOffset, ls.LenBytes()); err != nil {
 		return err
 	}
 	return nil
@@ -90,14 +88,6 @@ func (ls *List) CheckCanGetUnsafeString() error {
 // If the arena is modified, attempting to use the string may result in
 // undefined behavior.
 func (ls *List) UnsafeString() string {
-	buf := ls.seg.uncheckedSlice(ls.baseOffset, ls.LenBytes())
+	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ls.LenBytes())
 	return *(*string)(unsafe.Pointer(&buf))
-}
-
-func (ls *List) Foo() {
-	v := ls.seg
-	if v == nil {
-		panic("boo")
-	}
-	v.Read(0, nil)
 }

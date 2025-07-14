@@ -31,16 +31,19 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	var sp structPointer
 	sp.fromWord(ptr)
 
-	dataStartOffset := WordOffset(0 + sp.dataOffset + 1) // 0 == root pointer offset
+	if !AddWordOffsets(sp.dataOffset, 1, &sp.dataOffset) {
+		return errWordOffsetSumOverflows{sp.dataOffset, 1}
+	}
+
 	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
-	if err := seg.CheckBounds(dataStartOffset, fullSize); err != nil {
+	if !fullSize.Valid() {
+		return errInvalidStructSectionSizes{sp.dataSectionSize, sp.pointerSectionSize, fullSize}
+	}
+	if err := seg.CheckBounds(sp.dataOffset, fullSize); err != nil {
 		return err
 	}
 
 	s.seg = seg
-	s.dataStartOffset = dataStartOffset
-	s.dataSize = sp.dataSectionSize
-	s.pointerSize = sp.pointerSectionSize
-
+	s.ptr = sp
 	return nil
 }

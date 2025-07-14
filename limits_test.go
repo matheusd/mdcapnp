@@ -16,7 +16,7 @@ import (
 func TestReadLimiterCorrectness(t *testing.T) {
 	tests := []struct {
 		name    string
-		initial WordCount
+		initial uint64
 		value   WordCount
 		want    error
 	}{{
@@ -42,13 +42,8 @@ func TestReadLimiterCorrectness(t *testing.T) {
 	}, {
 		name:    "max on max",
 		initial: maxReadOnReadLimiter,
-		value:   maxReadOnReadLimiter,
+		value:   MaxValidWordCount,
 		want:    nil,
-	}, {
-		name:    "one over max on max",
-		initial: maxReadOnReadLimiter,
-		value:   maxReadOnReadLimiter + 1,
-		want:    errLimitOverMaxReadLimiter,
 	}, {
 		name:    "1001 on 1000",
 		initial: 1000,
@@ -145,7 +140,7 @@ func BenchmarkCanReadAlternatives(b *testing.B) {
 
 func BenchmarkCanReadLimiter(b *testing.B) {
 	const readSz = 1000
-	rl := NewReadLimiter(WordCount((b.N - 1) * readSz))
+	rl := NewReadLimiter(uint64((b.N - 1) * readSz))
 	b.ResetTimer()
 
 	for i := range b.N {

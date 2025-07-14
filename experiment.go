@@ -12,8 +12,6 @@ type Word uint64
 
 const WordSize = 8
 
-type WordCount uint64
-
 type wordCount16 uint16
 
 // PointerFieldIndex is the index of a pointer field in a struct. The first
@@ -29,7 +27,57 @@ type PointerFieldIndex uint16
 // extract its value.
 type DataFieldIndex uint16
 
-type WordOffset uint64
+// WordOffset is a signed offset into a segment. Segments can have up to 2^29
+// words.
+//
+// Segment offsets are signed for two reasons: they may validly point to objects
+// that have been written to the segment before their pointer was written (e.g.
+// orphans or relocated objects) or because empty structs point to their own
+// pointer as an offset.
+type WordOffset int32
+
+// Valid determines if the value within this offset is valid.
+func (w WordOffset) Valid() bool {
+	// Valid word offsets have up to 29 bits set, optionally with the sign
+	// bit set. This means the invalid bits are the first three bits of the
+	// most significant nibble of the value. We test directly whether any of
+	// these bits are set here, to determine if the value is valid.
+	const invalidBitsMask = 0b0111 << 28
+	return w&invalidBitsMask == 0
+}
+
+// AddWordOffsets adds two offsets, setting the resulting argument to the sum if
+// the sum generates a still valid offset.
+//
+// Returns true if the sum was valid.
+func AddWordOffsets(a, b WordOffset, r *WordOffset) (ok bool) {
+	c := a + b
+	ok = ((c > a) == (b > 0)) && c.Valid()
+	if ok {
+		*r = c
+	}
+	return
+}
+
+// WordCount is a count of addressable words within a segment. Only up to 2^29
+// words are addressable within a segment, therefore a count of words can only
+// go up to that amount. Counts cannot be negative.
+type WordCount uint32
+
+// Valid returns true if this is a valid word count.
+func (wc WordCount) Valid() bool {
+	// Valid counts cannot be negative and cannot have more than 29 bits
+	// set. Thus to test for validity, check if any of the highest bits in
+	// the most significant nibble are set.
+	const invalidBitsMask = 0b1111 << 28
+	return wc&invalidBitsMask == 0
+}
+
+func AddWordOffsetAndCount(off WordOffset, c WordCount, r *WordOffset) (ok bool) {
+	return AddWordOffsets(off, WordOffset(c), r)
+}
+
+const MaxValidWordCount = 1<<30 - 1
 
 type SignedWordOffset int64
 
@@ -107,8 +155,8 @@ func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
 }
 
 func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
-	byteOffset := int(offset * WordSize)
-	byteSize := int(size * WordSize)
+	byteOffset := int(offset) * WordSize // TODO: check if 32 bits arch?
+	byteSize := int(size) * WordSize
 	if byteOffset < 0 || byteOffset+byteSize > len(ms.b) {
 		return ErrObjectOutOfBounds{Offset: offset, Size: size, Len: len(ms.b)}
 	}

@@ -13,28 +13,25 @@ func isStructPointer(p Word) bool {
 }
 
 type structPointer struct {
-	dataOffset         listOrStructOffset
+	dataOffset         WordOffset
 	dataSectionSize    wordCount16
 	pointerSectionSize wordCount16
 }
 
 func (sp *structPointer) fromWord(w Word) {
-	// 0x0000000080000000
-	//         0x7ffffffc
-	//         0x80000000
-	sp.dataOffset = listOrStructOffset(w&0xfffffffc) >> 2
+	sp.dataOffset = WordOffset(w&0xfffffffc) >> 2
 	sp.dataSectionSize = wordCount16(w & 0xffff00000000 >> 32)
 	sp.pointerSectionSize = wordCount16(w >> 48)
 }
 
 type listPointer struct {
-	startOffset listOrStructOffset
+	startOffset WordOffset
 	elSize      listElementSize
 	listSize    listSize
 }
 
 func (lp *listPointer) fromWord(w Word) {
-	lp.startOffset = listOrStructOffset(w&0xfffffffc) >> 2
+	lp.startOffset = WordOffset(w&0xfffffffc) >> 2
 	lp.elSize = listElementSize(w & 0x300000000 >> 32)
 	lp.listSize = listSize(w & 0xfffffff800000000 >> 35)
 }

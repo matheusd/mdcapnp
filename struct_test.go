@@ -56,7 +56,7 @@ func BenchmarkStructReadList(b *testing.B) {
 			seg := &Segment{b: buf, rl: rl}
 
 			b.Run("single struct", func(b *testing.B) {
-				st := &Struct{seg: seg, dataStartOffset: 0, dataSize: 0, pointerSize: 1}
+				st := &Struct{seg: seg, ptr: structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1}}
 				var ls List
 
 				b.ReportAllocs()
@@ -67,7 +67,7 @@ func BenchmarkStructReadList(b *testing.B) {
 					}
 				}
 
-				require.Equal(b, WordOffset(0), ls.baseOffset)
+				require.Equal(b, WordOffset(0), ls.ptr.startOffset)
 			})
 
 			// This test verifies if struct escapes to the heap when
@@ -78,13 +78,13 @@ func BenchmarkStructReadList(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {
-					st := Struct{seg: seg, dataStartOffset: 0, dataSize: 0, pointerSize: 1}
+					st := Struct{seg: seg, ptr: structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1}}
 					if err := st.ReadList(0, &ls); err != nil {
 						b.Fatal(err)
 					}
 				}
 
-				require.Equal(b, WordOffset(0), ls.baseOffset)
+				require.Equal(b, WordOffset(0), ls.ptr.startOffset)
 			})
 
 			// This test verifies if list escapes to the heap when
@@ -94,11 +94,11 @@ func BenchmarkStructReadList(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					var ls List
-					st := Struct{seg: seg, dataStartOffset: 0, dataSize: 0, pointerSize: 1}
+					st := Struct{seg: seg, ptr: structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1}}
 					if err := st.ReadList(0, &ls); err != nil {
 						b.Fatal(err)
 					}
-					if ls.baseOffset != 0 {
+					if ls.ptr.startOffset != 0 {
 						b.Fatal("error")
 					}
 				}
