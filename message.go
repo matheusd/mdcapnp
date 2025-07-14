@@ -39,7 +39,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 
 	s.seg = seg
 	s.dataStartOffset = dataStartOffset
-	s.dataSize = WordCount(sp.dataSectionSize)
+	s.dataSize = sp.dataSectionSize
 	s.pointerSize = sp.pointerSectionSize
 
 	return nil

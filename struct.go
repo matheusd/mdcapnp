@@ -12,7 +12,7 @@ import (
 type Struct struct {
 	seg             *Segment
 	dataStartOffset WordOffset
-	dataSize        WordCount
+	dataSize        wordCount16
 	pointerSize     wordCount16
 }
 
