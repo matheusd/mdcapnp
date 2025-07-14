@@ -39,14 +39,6 @@ type List struct {
 	ptr   listPointer
 }
 
-/*
-func (ls *List) fromPointerWord(pointerOffset WordOffset, w Word) {
-	ls.baseOffset = pointerOffset + (WordOffset(w) & 0xfffffffc >> 2) + 1
-	ls.elSize = ListElementSize(w & 0x300000000 >> 32)
-	ls.listSize = ListSize(w & 0xfffffff800000000 >> 35)
-}
-*/
-
 func (ls *List) LenBytes() ByteCount {
 	return ByteCount(listWordCount(ls.ptr.elSize, ls.ptr.listSize)) * WordSize
 }

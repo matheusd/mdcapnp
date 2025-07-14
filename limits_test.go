@@ -51,28 +51,38 @@ func TestReadLimiterCorrectness(t *testing.T) {
 		want:    ErrReadLimitExceeded{},
 	}}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			rl := NewReadLimiter(tc.initial)
-			got := rl.CanRead(tc.value)
-			require.ErrorIs(t, got, tc.want)
-		})
+	rlTypes := []struct {
+		name  string
+		newRL func(uint64) *ReadLimiter
+	}{
+		{name: "safe", newRL: NewReadLimiter},
+		{name: "unsafe", newRL: NewConcurrentUnsafeReadLimiter},
 	}
 
-	t.Run("panic on new over max", func(t *testing.T) {
-		require.Panics(t, func() {
-			NewReadLimiter(maxReadOnReadLimiter + 1)
+	for _, rltc := range rlTypes {
+		for _, tc := range tests {
+			t.Run(rltc.name+"/"+tc.name, func(t *testing.T) {
+				rl := rltc.newRL(tc.initial)
+				got := rl.CanRead(tc.value)
+				require.ErrorIs(t, got, tc.want)
+			})
+		}
+
+		t.Run(rltc.name+"/panic on new over max", func(t *testing.T) {
+			require.Panics(t, func() {
+				rltc.newRL(maxReadOnReadLimiter + 1)
+			})
 		})
-	})
 
-	t.Run("valid after invalid", func(t *testing.T) {
-		rl := NewReadLimiter(1000)
-		got := rl.CanRead(1001)
-		require.ErrorIs(t, got, ErrReadLimitExceeded{})
-		got2 := rl.CanRead(1000)
-		require.Nil(t, got2)
+		t.Run(rltc.name+"/valid after invalid", func(t *testing.T) {
+			rl := rltc.newRL(1000)
+			got := rl.CanRead(1001)
+			require.ErrorIs(t, got, ErrReadLimitExceeded{})
+			got2 := rl.CanRead(1000)
+			require.Nil(t, got2)
 
-	})
+		})
+	}
 }
 
 // BenchmarkCanReadAlternatives benchmarks alternatives to the read limiter
@@ -140,14 +150,42 @@ func BenchmarkCanReadAlternatives(b *testing.B) {
 
 func BenchmarkCanReadLimiter(b *testing.B) {
 	const readSz = 1000
-	rl := NewReadLimiter(uint64((b.N - 1) * readSz))
-	b.ResetTimer()
+	var rl *ReadLimiter // Ensure it escapes to the heap for the test to be fair.
 
-	for i := range b.N {
-		got := rl.CanRead(readSz) == nil
-		want := (i < b.N-1)
-		if got != want {
-			panic(fmt.Sprintf("invalid result at %d (got %v, want %v)", i, got, want))
+	// This MUST be the first test to ensure rl is nil.
+	b.Run("nil limiter", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			got := rl.CanRead(readSz) == nil
+			if got != true {
+				panic("unexpected result")
+			}
 		}
-	}
+	})
+
+	b.Run("concurrent unsafe", func(b *testing.B) {
+		rl = NewConcurrentUnsafeReadLimiter(uint64((b.N - 1) * readSz))
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := range b.N {
+			got := rl.CanRead(readSz) == nil
+			want := (i < b.N-1)
+			if got != want {
+				panic(fmt.Sprintf("invalid result at %d (got %v, want %v)", i, got, want))
+			}
+		}
+	})
+
+	b.Run("concurrent safe", func(b *testing.B) {
+		rl = NewReadLimiter(uint64((b.N - 1) * readSz))
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := range b.N {
+			got := rl.CanRead(readSz) == nil
+			want := (i < b.N-1)
+			if got != want {
+				panic(fmt.Sprintf("invalid result at %d (got %v, want %v)", i, got, want))
+			}
+		}
+	})
 }
