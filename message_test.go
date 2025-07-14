@@ -51,23 +51,21 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 	segBuf := testdata.GoserbenchSampleA[8:]
 
 	tests := []struct {
-		rl     bool
+		rl     func(uint64) *ReadLimiter
 		unsafe bool
 	}{
-		{rl: false, unsafe: true},
-		{rl: false, unsafe: false},
-		{rl: true, unsafe: true},
-		{rl: true, unsafe: false},
+		{rl: nilReadLimiter, unsafe: true},
+		{rl: nilReadLimiter, unsafe: false},
+		{rl: NewConcurrentUnsafeReadLimiter, unsafe: true},
+		{rl: NewConcurrentUnsafeReadLimiter, unsafe: false},
+		{rl: NewReadLimiter, unsafe: true},
+		{rl: NewReadLimiter, unsafe: false},
 	}
 
 	for _, tc := range tests {
-		b.Run(fmt.Sprintf("rl=%v/unsafe=%v", tc.rl, tc.unsafe), func(b *testing.B) {
+		b.Run(fmt.Sprintf("%v/unsafe=%v", rlTestName(tc.rl), tc.unsafe), func(b *testing.B) {
 			b.Run("reuse all", func(b *testing.B) {
-				var rl *ReadLimiter
-				if tc.rl {
-					rl = NewReadLimiter(maxReadOnReadLimiter)
-				}
-
+				rl := tc.rl(maxReadOnReadLimiter)
 				arena := MakeSingleSegmentArena(segBuf, false, rl)
 				msg := MakeMsg(&arena)
 				var st GoserbenchAStruct
@@ -102,11 +100,7 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 				b.ResetTimer()
 
 				for range b.N {
-					var rl *ReadLimiter
-					if tc.rl {
-						rl = NewReadLimiter(maxReadOnReadLimiter)
-					}
-
+					rl := tc.rl(maxReadOnReadLimiter)
 					arena := MakeSingleSegmentArena(segBuf, false, rl)
 					msg := MakeMsg(&arena)
 					var st GoserbenchAStruct

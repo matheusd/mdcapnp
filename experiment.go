@@ -51,6 +51,7 @@ func (w WordOffset) Valid() bool {
 //
 // Returns true if the sum was valid.
 func AddWordOffsets(a, b WordOffset, r *WordOffset) (ok bool) {
+	// Could this use bits.Add64??
 	c := a + b
 	ok = ((c > a) == (b > 0)) && c.Valid()
 	if ok {

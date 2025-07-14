@@ -13,6 +13,14 @@ import (
 	"matheusd.com/depvendoredtestify/require"
 )
 
+// nilReadLimiter is an aux func with the same signature as New*ReadLimiter.
+func nilReadLimiter(uint64) *ReadLimiter { return nil }
+
+func rlTestName(newRL func(uint64) *ReadLimiter) string {
+	rl := newRL(0)
+	return rl.testName()
+}
+
 func TestReadLimiterCorrectness(t *testing.T) {
 	tests := []struct {
 		name    string

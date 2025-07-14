@@ -56,6 +56,17 @@ func NewConcurrentUnsafeReadLimiter(limit uint64) *ReadLimiter {
 	}
 }
 
+// testName returns a description of this RL for tests.
+func (rl *ReadLimiter) testName() string {
+	if rl == nil {
+		return "nil RL"
+	}
+	if rl.concurrentUnsafe {
+		return "unsafe RL"
+	}
+	return "safe RL"
+}
+
 // Reset the read limiter to its original limit. This is valid even for nil
 // read limiters.
 func (rl *ReadLimiter) Reset() {
