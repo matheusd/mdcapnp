@@ -16,9 +16,32 @@ import (
 // nilReadLimiter is an aux func with the same signature as New*ReadLimiter.
 func nilReadLimiter(uint64) *ReadLimiter { return nil }
 
-func rlTestName(newRL func(uint64) *ReadLimiter) string {
+type newRLFunc func(uint64) *ReadLimiter
+
+func rlTestName(newRL newRLFunc) string {
 	rl := newRL(0)
 	return rl.testName()
+}
+
+// rlTestCases is the test matrix for tests and benchmarks that use different
+// ReadLimiters.
+var rlTestCases = []struct {
+	name  string
+	newRL newRLFunc
+}{
+	{name: "nil RL", newRL: nilReadLimiter},
+	{name: "unsafe RL", newRL: NewConcurrentUnsafeReadLimiter},
+	{name: "safe RL", newRL: NewReadLimiter},
+}
+
+// benchmarkRLMatrix executes a benchmark using the various possible read
+// limiters.
+func benchmarkRLMatrix(b *testing.B, f func(b *testing.B, newRL newRLFunc)) {
+	for _, rltc := range rlTestCases {
+		b.Run(rltc.name, func(b *testing.B) {
+			f(b, rltc.newRL)
+		})
+	}
 }
 
 func TestReadLimiterCorrectness(t *testing.T) {

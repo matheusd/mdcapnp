@@ -6,6 +6,7 @@ package mdcapnp
 
 import "time"
 
+// SmallTestStruct is a handwritten small test structure.
 type SmallTestStruct Struct
 
 func (st *SmallTestStruct) Siblings() int64 {

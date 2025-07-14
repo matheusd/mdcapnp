@@ -5,7 +5,6 @@
 package mdcapnp
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -14,71 +13,76 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 	buf := appendWords(nil, 0x0000008200000001)
 	buf = append(buf, []byte(name)...)
 
-	for _, withRL := range []bool{false, true} {
-		var rl *ReadLimiter
-		if withRL {
-			rl = NewReadLimiter(maxReadOnReadLimiter)
-		}
-		seg := &Segment{b: buf, rl: rl}
+	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
+		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		seg, _ := arena.Segment(0)
 
-		b.Run(fmt.Sprintf("rl=%v", withRL), func(b *testing.B) {
-			// Tests only reading after already having checked for
-			// validity.
-			b.Run("from list no check", func(b *testing.B) {
-				ls := &List{seg: seg, ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1}}
+		// Tests only reading after already having checked for
+		// validity.
+		b.Run("from list no check", func(b *testing.B) {
+			ls := &List{
+				seg:   seg,
+				arena: &arena,
+				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+			}
+			if err := ls.CheckCanGetUnsafeString(); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				got := ls.UnsafeString()
+				if got != name {
+					b.Fatalf("Unexpected name: got %q, want %q", got, name)
+				}
+			}
+		})
+
+		// Tests both checking for validity and reading.
+		b.Run("from list", func(b *testing.B) {
+			ls := &List{
+				seg:   seg,
+				arena: &arena,
+				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
 				if err := ls.CheckCanGetUnsafeString(); err != nil {
 					b.Fatal(err)
 				}
-
-				b.ReportAllocs()
-				b.ResetTimer()
-				for range b.N {
-					got := ls.UnsafeString()
-					if got != name {
-						b.Fatalf("Unexpected name: got %q, want %q", got, name)
-					}
+				got := ls.UnsafeString()
+				if got != name {
+					b.Fatalf("Unexpected name: got %q, want %q", got, name)
 				}
-			})
-
-			// Tests both checking for validity and reading.
-			b.Run("from list", func(b *testing.B) {
-				ls := &List{seg: seg, ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1}}
-
-				b.ReportAllocs()
-				b.ResetTimer()
-				for range b.N {
-					if err := ls.CheckCanGetUnsafeString(); err != nil {
-						b.Fatal(err)
-					}
-					got := ls.UnsafeString()
-					if got != name {
-						b.Fatalf("Unexpected name: got %q, want %q", got, name)
-					}
-				}
-			})
-
-			// Tests reading from struct.
-			b.Run("from struct", func(b *testing.B) {
-				st := &Struct{seg: seg, ptr: structPointer{pointerSectionSize: 1}}
-
-				b.ReportAllocs()
-				b.ResetTimer()
-				for range b.N {
-					var ls List
-					if err := st.ReadList(0, &ls); err != nil {
-						b.Fatal(err)
-					}
-					if err := ls.CheckCanGetUnsafeString(); err != nil {
-						b.Fatal(err)
-					}
-					got := ls.UnsafeString()
-					if got != name {
-						b.Fatalf("Unexpected name: got %q, want %q", got, name)
-					}
-				}
-			})
-
+			}
 		})
-	}
 
+		// Tests reading from struct.
+		b.Run("from struct", func(b *testing.B) {
+			st := &Struct{
+				seg:   seg,
+				arena: &arena,
+				ptr:   structPointer{pointerSectionSize: 1},
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				var ls List
+				if err := st.ReadList(0, &ls); err != nil {
+					b.Fatal(err)
+				}
+				if err := ls.CheckCanGetUnsafeString(); err != nil {
+					b.Fatal(err)
+				}
+				got := ls.UnsafeString()
+				if got != name {
+					b.Fatalf("Unexpected name: got %q, want %q", got, name)
+				}
+			}
+		})
+	})
 }

@@ -19,28 +19,35 @@ func BenchmarkReadList(b *testing.B) {
 	)
 	buf = append(buf, targetName...)
 
-	st := &SmallTestStruct{seg: &Segment{b: buf}, ptr: structPointer{dataOffset: 1, pointerSectionSize: 1}}
+	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
+		arena := MakeSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		seg, _ := arena.Segment(0)
+		st := &SmallTestStruct{
+			seg:   seg,
+			arena: &arena,
+			ptr:   structPointer{dataOffset: 1, pointerSectionSize: 1},
+		}
+		ls := new(List)
+		nameBuf := make([]byte, 32)
 
-	ls := new(List)
+		var n int
 
-	nameBuf := make([]byte, 32)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			err := st.ReadNameField(ls)
+			if err != nil {
+				ls = nil
+				b.Fatal(err)
+			}
 
-	b.ResetTimer()
-	b.ReportAllocs()
-	var n int
-	for range b.N {
-		err := st.ReadNameField(ls)
-		if err != nil {
-			ls = nil
-			b.Fatal(err)
+			n, err = ls.Read(nameBuf)
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
 
-		n, err = ls.Read(nameBuf)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-
-	require.NotNil(b, ls)
-	require.Equal(b, targetName, nameBuf[:n])
+		require.NotNil(b, ls)
+		require.Equal(b, targetName, nameBuf[:n])
+	})
 }

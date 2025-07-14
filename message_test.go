@@ -51,7 +51,7 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 	segBuf := testdata.GoserbenchSampleA[8:]
 
 	tests := []struct {
-		rl     func(uint64) *ReadLimiter
+		rl     newRLFunc
 		unsafe bool
 	}{
 		{rl: nilReadLimiter, unsafe: true},
