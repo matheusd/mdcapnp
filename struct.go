@@ -88,6 +88,9 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	if err := s.seg.CheckBounds(lp.startOffset, fullSize); err != nil {
 		return err
 	}
+	if err := s.arena.ReadLimiter().CanRead(fullSize); err != nil {
+		return err
+	}
 
 	// All good.
 	ls.seg = s.seg

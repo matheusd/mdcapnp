@@ -92,16 +92,15 @@ type SegmentID uint64
 
 type Arena interface {
 	Segment(id SegmentID) (*Segment, error)
+	ReadLimiter() *ReadLimiter
 }
 
 type Segment struct {
-	b  []byte
-	rl *ReadLimiter
+	b []byte
 }
 
 func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
-	if err = ms.rl.CanRead(1); err != nil {
-	} else if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
+	if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
 		err = ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: int(byteOffset)}
 	} else {
 		res = Word(binary.LittleEndian.Uint64(ms.b[byteOffset:]))
@@ -119,10 +118,6 @@ func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
 // the same arguments will fail. If this function returns true, immediately
 // calling [uncheckedSlice] will generate a valid slice.
 func (ms *Segment) checkSliceBounds(offset WordOffset, size ByteCount) error {
-	if err := ms.rl.CanRead(WordCount(size) / WordSize); err != nil {
-		return err
-	}
-
 	startOffset := int(offset * WordSize) // FIXME: check for overflows in 32bit archs
 	endOffset := startOffset + int(size)
 	if endOffset > len(ms.b) {
@@ -142,10 +137,6 @@ func (ms *Segment) uncheckedSlice(offset WordOffset, size ByteCount) []byte {
 }
 
 func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
-	if err := ms.rl.CanRead(1); err != nil {
-		return 0, err
-	}
-
 	byteOffset := int(offset * WordSize)
 	if byteOffset >= len(ms.b) {
 		return 0, ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: byteOffset}
@@ -165,7 +156,12 @@ func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
 }
 
 type SingleSegmentArena struct {
-	s Segment
+	s  Segment
+	rl *ReadLimiter
+}
+
+func (arena *SingleSegmentArena) ReadLimiter() *ReadLimiter {
+	return arena.rl
 }
 
 func (arena *SingleSegmentArena) Segment(id SegmentID) (*Segment, error) {
@@ -181,12 +177,12 @@ func (arena *SingleSegmentArena) Segment(id SegmentID) (*Segment, error) {
 
 func (arena *SingleSegmentArena) Reset(b []byte, writable bool) {
 	arena.s.b = b
-	arena.s.rl.Reset()
+	arena.rl.Reset()
 }
 
 func MakeSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) SingleSegmentArena {
 	var arena SingleSegmentArena
-	arena.s.rl = rl
+	arena.rl = rl
 	arena.Reset(b, writable)
 	return arena
 }

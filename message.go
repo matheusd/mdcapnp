@@ -42,6 +42,9 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	if err := seg.CheckBounds(sp.dataOffset, fullSize); err != nil {
 		return err
 	}
+	if err := msg.arena.ReadLimiter().CanRead(fullSize); err != nil {
+		return err
+	}
 
 	s.seg = seg
 	s.arena = msg.arena
