@@ -121,6 +121,10 @@ var globalStructHeapVsStackTest *Struct
 // heap or stack allocated reference.
 //
 // This is used to determine how to build the API.
+//
+// Note: this only measures the overhead in calling Struct functions using value
+// (ensured to be on the stack) vs pointer (which may be on the stack or on the
+// heap), _not_ of the heap allocation itself.
 func BenchmarkStructHeapVsStack(b *testing.B) {
 	st := new(Struct)
 	b.Run("heap", func(b *testing.B) {

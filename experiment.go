@@ -4,9 +4,7 @@
 
 package mdcapnp
 
-import (
-	"encoding/binary"
-)
+import "encoding/binary"
 
 type Word uint64
 
@@ -104,14 +102,13 @@ func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
 		err = ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: int(byteOffset)}
 	} else {
 		res = Word(binary.LittleEndian.Uint64(ms.b[byteOffset:]))
-
-		// copy((*[8]byte)(unsafe.Pointer(&res))[:], ms.b[byteOffset:])
-
-		// Assumes a big endian version is written. Note: this is
-		// counterintuitive, double check.
-		// res = Word(binary.BigEndian.Uint64((*[8]byte)(unsafe.Pointer(&res))[:]))
 	}
 	return
+}
+
+func (ms *Segment) getWordAsPointer(offset WordOffset) (pointer, error) {
+	w, err := ms.GetWord(offset)
+	return pointer(w), err
 }
 
 // checkSliceBounds checks whether a subsequent call to [uncheckedSlice] with

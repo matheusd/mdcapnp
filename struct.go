@@ -62,17 +62,16 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	//
 	// TODO: check if sum won't overflow?
 	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
-	pointer, err := s.seg.GetWord(pointerOffset)
+	ptr, err := s.seg.getWordAsPointer(pointerOffset)
 	if err != nil {
 		return err
 	}
 
-	if !isListPointer(pointer) {
+	if !ptr.isListPointer() {
 		return errors.New("not a list pointer")
 	}
 
-	var lp listPointer
-	lp.fromWord(pointer)
+	lp := ptr.toListPointer()
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.

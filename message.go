@@ -18,18 +18,17 @@ func (msg *Message) ReadRoot(s *Struct) error {
 		return err
 	}
 
-	ptr, err := seg.GetWord(0)
+	ptr, err := seg.getWordAsPointer(0)
 	if err != nil {
 		return err
 	}
-	if !isStructPointer(ptr) {
+	if !ptr.isStructPointer() {
 		return ErrNotStructPointer
 	}
 
 	// TODO: check null pointer? zero sized struct?
 
-	var sp structPointer
-	sp.fromWord(ptr)
+	sp := ptr.toStructPointer()
 
 	if !AddWordOffsets(sp.dataOffset, 1, &sp.dataOffset) {
 		return errWordOffsetSumOverflows{sp.dataOffset, 1}

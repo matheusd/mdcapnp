@@ -4,12 +4,48 @@
 
 package mdcapnp
 
-func isListPointer(p Word) bool {
-	return (p & 0x03) == 1
+type pointer Word
+
+func (ptr pointer) dataOffset() WordOffset {
+	return WordOffset(ptr&0xfffffffc) >> 2
 }
 
-func isStructPointer(p Word) bool {
-	return (p & 0x03) == 0
+func (ptr pointer) dataSectionSize() wordCount16 {
+	return wordCount16(ptr & 0xffff00000000 >> 32)
+}
+
+func (ptr pointer) pointerSectionSize() wordCount16 {
+	return wordCount16(ptr >> 48)
+}
+
+func (ptr pointer) elSize() listElementSize {
+	return listElementSize(ptr & 0x300000000 >> 32)
+}
+
+func (ptr pointer) listSize() listSize {
+	return listSize(ptr & 0xfffffff800000000 >> 35)
+}
+
+func (ptr pointer) isListPointer() bool {
+	return (ptr & 0x03) == 1
+}
+
+func (ptr pointer) isStructPointer() bool {
+	return (ptr & 0x03) == 0
+}
+
+func (ptr pointer) toStructPointer() (sp structPointer) {
+	sp.dataOffset = ptr.dataOffset()
+	sp.dataSectionSize = ptr.dataSectionSize()
+	sp.pointerSectionSize = ptr.pointerSectionSize()
+	return
+}
+
+func (ptr pointer) toListPointer() (lp listPointer) {
+	lp.startOffset = ptr.dataOffset()
+	lp.elSize = ptr.elSize()
+	lp.listSize = ptr.listSize()
+	return
 }
 
 type structPointer struct {
@@ -18,20 +54,12 @@ type structPointer struct {
 	pointerSectionSize wordCount16
 }
 
-func (sp *structPointer) fromWord(w Word) {
-	sp.dataOffset = WordOffset(w&0xfffffffc) >> 2
-	sp.dataSectionSize = wordCount16(w & 0xffff00000000 >> 32)
-	sp.pointerSectionSize = wordCount16(w >> 48)
+func (sp structPointer) toPointer() pointer {
+	return 1 | pointer(sp.dataOffset)<<2 | pointer(sp.dataOffset)<<32 | pointer(sp.dataOffset)<<48
 }
 
 type listPointer struct {
 	startOffset WordOffset
 	elSize      listElementSize
 	listSize    listSize
-}
-
-func (lp *listPointer) fromWord(w Word) {
-	lp.startOffset = WordOffset(w&0xfffffffc) >> 2
-	lp.elSize = listElementSize(w & 0x300000000 >> 32)
-	lp.listSize = listSize(w & 0xfffffff800000000 >> 35)
 }
