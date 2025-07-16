@@ -15,19 +15,19 @@ import (
 func BenchmarkStructGetInt64(b *testing.B) {
 	buf := appendWords(nil, 0x1234567890abcdef)
 
-	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
-		seg, _ := arena.Segment(0)
-		st := &SmallTestStruct{
-			seg:   seg,
-			arena: arena,
-		}
-		var v int64
-		for range b.N {
-			v = st.Siblings()
-		}
-		require.Equal(b, int64(0x1234567890abcdef), v)
-	})
+	// No need to test multiple ReadLimiter values because GetInt64 does not
+	// depend on them.
+	arena := NewSingleSegmentArena(buf, false, nil)
+	seg, _ := arena.Segment(0)
+	st := &SmallTestStruct{
+		seg:   seg,
+		arena: arena,
+	}
+	var v int64
+	for range b.N {
+		v = st.Siblings()
+	}
+	require.Equal(b, int64(0x1234567890abcdef), v)
 }
 
 // BenchmarkStructReadList benchmarks calling the ReadList call of a struct.

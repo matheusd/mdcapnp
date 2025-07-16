@@ -16,12 +16,12 @@ type Struct struct {
 }
 
 func (s *Struct) Int64(dataOffset WordOffset) (res int64) {
-	data, _ := s.seg.GetWord(WordOffset(s.ptr.dataOffset) + dataOffset)
+	data, _ := s.seg.GetWord(s.ptr.dataOffset + dataOffset)
 	return int64(data)
 }
 
 func (s *Struct) Float64(dataOffset WordOffset) (res float64) {
-	data, _ := s.seg.GetWord(WordOffset(s.ptr.dataOffset) + dataOffset)
+	data, _ := s.seg.GetWord(s.ptr.dataOffset + dataOffset)
 	return math.Float64frombits(uint64(data))
 }
 
@@ -38,7 +38,7 @@ const (
 //
 // TODO: review if this is the way to go.
 func (s *Struct) Int32(fieldIndex DataFieldIndex, shift Int32DataFieldShift) int32 {
-	data, _ := s.seg.GetWord(WordOffset(s.ptr.dataOffset) + WordOffset(fieldIndex))
+	data, _ := s.seg.GetWord(s.ptr.dataOffset + WordOffset(fieldIndex))
 	return int32(data >> shift)
 }
 
