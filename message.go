@@ -6,13 +6,19 @@ package mdcapnp
 
 type Message struct {
 	arena Arena
+	dl    depthLimit
 }
 
 func MakeMsg(arena Arena) Message {
-	return Message{arena: arena}
+	return Message{arena: arena, dl: defaultDepthLimit}
 }
 
 func (msg *Message) ReadRoot(s *Struct) error {
+	structDL, ok := msg.dl.dec()
+	if !ok {
+		return errDepthLimitExceeded
+	}
+
 	seg, err := msg.arena.Segment(0)
 	if err != nil {
 		return err
@@ -48,5 +54,6 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	s.seg = seg
 	s.arena = msg.arena
 	s.ptr = sp
+	s.dl = structDL
 	return nil
 }

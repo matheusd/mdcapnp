@@ -26,6 +26,7 @@ func BenchmarkReadList(b *testing.B) {
 			seg:   seg,
 			arena: arena,
 			ptr:   structPointer{dataOffset: 1, pointerSectionSize: 1},
+			dl:    noDepthLimit,
 		}
 		ls := new(List)
 		nameBuf := make([]byte, 32)

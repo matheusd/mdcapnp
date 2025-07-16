@@ -22,6 +22,7 @@ func BenchmarkStructGetInt64(b *testing.B) {
 	st := &SmallTestStruct{
 		seg:   seg,
 		arena: arena,
+		dl:    noDepthLimit,
 	}
 	var v int64
 	for range b.N {
@@ -43,6 +44,7 @@ func BenchmarkStructReadList(b *testing.B) {
 				seg:   seg,
 				arena: arena,
 				ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
+				dl:    noDepthLimit,
 			}
 			var ls List
 
@@ -66,8 +68,9 @@ func BenchmarkStructReadList(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				st := Struct{
-					seg:   seg,
 					arena: arena,
+					seg:   seg,
+					dl:    noDepthLimit,
 					ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
 				}
 				if err := st.ReadList(0, &ls); err != nil {
@@ -89,6 +92,7 @@ func BenchmarkStructReadList(b *testing.B) {
 					seg:   seg,
 					arena: arena,
 					ptr:   structPointer{dataOffset: 0, dataSectionSize: 0, pointerSectionSize: 1},
+					dl:    noDepthLimit,
 				}
 				if err := st.ReadList(0, &ls); err != nil {
 					b.Fatal(err)

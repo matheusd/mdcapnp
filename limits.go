@@ -92,6 +92,8 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 		return
 	}
 
+	// Version used when concurrent safety is not necessary (i.e. only one
+	// goroutine is assured to be using the arena). A simple test and dec.
 	if rl.concurrentUnsafe {
 		if rl.unsafeLimit < wcu {
 			return ErrReadLimitExceeded{Target: wc}
@@ -101,6 +103,8 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 		return
 	}
 
+	// Version used when concurrent safety is required.
+	//
 	// Loop to ensure concurrent calls are correct.
 	for {
 		limit := rl.limit.Load()
@@ -116,4 +120,21 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 			return
 		}
 	}
+}
+
+type depthLimit uint64
+
+const (
+	noDepthLimit      depthLimit = math.MaxUint64
+	maxDepthLimit     depthLimit = math.MaxUint64 - 1
+	defaultDepthLimit depthLimit = 64
+)
+
+func (dl depthLimit) dec() (newDL depthLimit, ok bool) {
+	if dl == noDepthLimit {
+		return noDepthLimit, true
+	} else if dl == 0 {
+		return 0, false
+	}
+	return dl - 1, true
 }

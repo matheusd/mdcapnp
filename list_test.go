@@ -24,6 +24,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 				seg:   seg,
 				arena: arena,
 				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				dl:    noDepthLimit,
 			}
 			if err := ls.CheckCanGetUnsafeString(); err != nil {
 				b.Fatal(err)
@@ -45,6 +46,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 				seg:   seg,
 				arena: arena,
 				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				dl:    noDepthLimit,
 			}
 
 			b.ReportAllocs()
@@ -66,6 +68,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 				seg:   seg,
 				arena: arena,
 				ptr:   structPointer{pointerSectionSize: 1},
+				dl:    noDepthLimit,
 			}
 
 			b.ReportAllocs()

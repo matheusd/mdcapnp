@@ -220,3 +220,43 @@ func BenchmarkCanReadLimiter(b *testing.B) {
 		}
 	})
 }
+
+// TestDepthLimit tests the correctness of the depth limiter.
+func TestDepthLimit(t *testing.T) {
+	tests := []struct {
+		dl     depthLimit
+		want   depthLimit
+		wantOk bool
+	}{
+		{dl: 0, want: 0, wantOk: false},
+		{dl: 1, want: 0, wantOk: true},
+		{dl: 2, want: 1, wantOk: true},
+		{dl: maxDepthLimit, want: maxDepthLimit - 1, wantOk: true},
+		{dl: noDepthLimit, want: noDepthLimit, wantOk: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%016x", uint(tc.dl)), func(t *testing.T) {
+			var dl depthLimit = tc.dl
+			got, gotOk := dl.dec()
+			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.wantOk, gotOk)
+		})
+	}
+}
+
+// BenchmarkDepthLimitDec benchmarks the dec() function of the depth limiter.
+func BenchmarkDepthLimitDec(b *testing.B) {
+	const initial = maxDepthLimit
+	var dl depthLimit = initial
+	var ok bool
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		dl, ok = dl.dec()
+	}
+
+	require.Equal(b, initial-depthLimit(b.N), dl)
+	require.True(b, ok)
+}

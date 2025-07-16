@@ -12,6 +12,7 @@ import (
 type Struct struct {
 	seg   *Segment
 	arena Arena
+	dl    depthLimit
 	ptr   structPointer
 }
 
@@ -51,6 +52,14 @@ func (s *Struct) Bool(fieldIndex DataFieldIndex, bit byte) bool {
 }
 
 func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
+	// Check if we can descend further into the struct (to fetch the first
+	// list pointer).
+	listDL, ok := s.dl.dec()
+	if !ok {
+		return errDepthLimitExceeded
+	}
+
+	// Check if this pointer is set within the pointer section.
 	if ptrIndex >= PointerFieldIndex(s.ptr.pointerSectionSize) {
 		// TODO: return default if it exists? Or handle this at a higher
 		// level?
@@ -67,10 +76,12 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 		return err
 	}
 
+	// TODO: handle far pointers.
+
+	// Check if it is a list pointer.
 	if !ptr.isListPointer() {
 		return errors.New("not a list pointer")
 	}
-
 	lp := ptr.toListPointer()
 
 	// Determine concrete offset into segment of where the list actually
@@ -95,5 +106,6 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	ls.seg = s.seg
 	ls.arena = s.arena
 	ls.ptr = lp
+	ls.dl = listDL
 	return nil
 }

@@ -37,6 +37,7 @@ type List struct {
 	seg   *Segment
 	arena Arena
 	ptr   listPointer
+	dl    depthLimit
 }
 
 func (ls *List) LenBytes() ByteCount {
