@@ -14,7 +14,8 @@ import (
 	"matheusd.com/mdcapnp/internal/testdata"
 )
 
-func BenchmarkMsgGetRoot(b *testing.B) {
+// BenchmarkMsgReadRoot benchmarks reading the root struct of a message.
+func BenchmarkMsgReadRoot(b *testing.B) {
 	buf := appendWords(nil, 0x00000000fffffffc)
 	arena := NewSingleSegmentArena(buf, false, nil)
 	msg := MakeMsg(arena)
@@ -36,8 +37,10 @@ func BenchmarkMsgGetRoot(b *testing.B) {
 	}
 }
 
-func BenchmarkDecodeGoserbenchA(b *testing.B) {
-	var oa goserbenchA
+// BenchmarkDecodeGoserbenchSmallStruct benchmarks decoding a goserbench
+// SmallStruct under various configurations.
+func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
+	var oa goserbenchSmallStruct
 	checkOA := func(b *testing.B) {
 		require.Equal(b, "slimshady0123456", oa.Name)
 		require.Equal(b, int64(0x1011121314151617), oa.BirthDay.Unix())
@@ -68,7 +71,7 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 				rl := tc.rl(maxReadOnReadLimiter)
 				arena := NewSingleSegmentArena(segBuf, false, rl)
 				msg := MakeMsg(arena)
-				var st GoserbenchAStruct
+				var st GoserbenchSmallStruct
 
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -103,7 +106,7 @@ func BenchmarkDecodeGoserbenchA(b *testing.B) {
 					rl := tc.rl(maxReadOnReadLimiter)
 					arena := NewSingleSegmentArena(segBuf, false, rl)
 					msg := MakeMsg(arena)
-					var st GoserbenchAStruct
+					var st GoserbenchSmallStruct
 
 					err := st.ReadFromRoot(&msg)
 					if err != nil {

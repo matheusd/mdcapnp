@@ -10,6 +10,8 @@ import (
 	"matheusd.com/depvendoredtestify/require"
 )
 
+// BenchmarkStructGetInt64 benchmarks indirectly calling the GetInt64 of a
+// Struct.
 func BenchmarkStructGetInt64(b *testing.B) {
 	buf := appendWords(nil, 0x1234567890abcdef)
 
@@ -28,6 +30,7 @@ func BenchmarkStructGetInt64(b *testing.B) {
 	})
 }
 
+// BenchmarkStructReadList benchmarks calling the ReadList call of a struct.
 func BenchmarkStructReadList(b *testing.B) {
 	buf := appendWords(nil, 0x00000000fffffffd)
 
