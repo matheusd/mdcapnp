@@ -100,3 +100,42 @@ func BenchmarkStructReadList(b *testing.B) {
 		})
 	})
 }
+
+//go:noinline
+func testStructFuncHeap(s *Struct) {
+	if s.seg != nil {
+		panic("failed")
+	}
+}
+
+//go:noinline
+func testStructFuncStack(s Struct) {
+	if s.seg != nil {
+		panic("failed")
+	}
+}
+
+var globalStructHeapVsStackTest *Struct
+
+// BenchmarkStructHeapVsStack benchmarks passing a struct around as either a
+// heap or stack allocated reference.
+//
+// This is used to determine how to build the API.
+func BenchmarkStructHeapVsStack(b *testing.B) {
+	st := new(Struct)
+	b.Run("heap", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			testStructFuncHeap(st)
+		}
+	})
+	b.Run("stack", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			testStructFuncStack(*st)
+		}
+	})
+
+	// Ensure st is in the heap.
+	globalStructHeapVsStackTest = st
+}
