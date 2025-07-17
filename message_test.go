@@ -96,6 +96,40 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 				checkOA(b)
 			})
 
+			b.Run("reuse arena", func(b *testing.B) {
+				rl := tc.rl(MaxReadLimiterLimit)
+				arena := NewSingleSegmentArena(segBuf, false, rl)
+
+				b.ReportAllocs()
+				b.ResetTimer()
+
+				for range b.N {
+					arena.Reset(segBuf, false)
+					msg := MakeMsg(arena)
+					var st GoserbenchSmallStruct
+
+					err := st.ReadFromRoot(&msg)
+					if err != nil {
+						b.Fatal(err)
+					}
+
+					if tc.unsafe {
+						oa.Name = st.UnsafeName()
+						oa.Phone = st.UnsafePhone()
+					} else {
+						oa.Name = st.Name()
+						oa.Phone = st.Phone()
+					}
+
+					oa.BirthDay = time.Unix(st.BirthDay(), 0)
+					oa.Siblings = int(st.Siblings())
+					oa.Spouse = st.Spouse()
+					oa.Money = st.Money()
+				}
+
+				checkOA(b)
+			})
+
 			b.Run("reuse none", func(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
