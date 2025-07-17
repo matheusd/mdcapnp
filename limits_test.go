@@ -57,12 +57,12 @@ func TestReadLimiterCorrectness(t *testing.T) {
 		want:    nil,
 	}, {
 		name:    "zero on max",
-		initial: maxReadOnReadLimiter,
+		initial: MaxReadLimiterLimit,
 		value:   0,
 		want:    nil,
 	}, {
 		name:    "one on max",
-		initial: maxReadOnReadLimiter,
+		initial: MaxReadLimiterLimit,
 		value:   1,
 		want:    nil,
 	}, {
@@ -72,7 +72,7 @@ func TestReadLimiterCorrectness(t *testing.T) {
 		want:    ErrReadLimitExceeded{},
 	}, {
 		name:    "max on max",
-		initial: maxReadOnReadLimiter,
+		initial: MaxReadLimiterLimit,
 		value:   MaxValidWordCount,
 		want:    nil,
 	}, {
@@ -101,7 +101,7 @@ func TestReadLimiterCorrectness(t *testing.T) {
 
 		t.Run(rltc.name+"/panic on new over max", func(t *testing.T) {
 			require.Panics(t, func() {
-				rltc.newRL(maxReadOnReadLimiter + 1)
+				rltc.newRL(MaxReadLimiterLimit + 1)
 			})
 		})
 

@@ -66,7 +66,7 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 	for _, tc := range tests {
 		b.Run(fmt.Sprintf("%v/unsafe=%v", rlTestName(tc.rl), tc.unsafe), func(b *testing.B) {
 			b.Run("reuse all", func(b *testing.B) {
-				rl := tc.rl(maxReadOnReadLimiter)
+				rl := tc.rl(MaxReadLimiterLimit)
 				arena := NewSingleSegmentArena(segBuf, false, rl)
 				msg := MakeMsg(arena)
 				var st GoserbenchSmallStruct
@@ -101,7 +101,7 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 				b.ResetTimer()
 
 				for range b.N {
-					rl := tc.rl(maxReadOnReadLimiter)
+					rl := tc.rl(MaxReadLimiterLimit)
 					arena := NewSingleSegmentArena(segBuf, false, rl)
 					msg := MakeMsg(arena)
 					var st GoserbenchSmallStruct

@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 )
 
-const maxReadOnReadLimiter = math.MaxInt64
+const MaxReadLimiterLimit = math.MaxInt64
 
-var errLimitOverMaxReadLimiter = fmt.Errorf("cannot read more than %d words", maxReadOnReadLimiter)
+var errLimitOverMaxReadLimiter = fmt.Errorf("cannot read more than %d words", MaxReadLimiterLimit)
 
 // ReadLimiter limits the amount of data read while traversing structures.
 //
@@ -31,7 +31,7 @@ type ReadLimiter struct {
 // NOTE: limit cannot be higher than [math.MaxInt64]. This is unlikely to be an
 // actual limitation during regular use.
 func NewReadLimiter(limit uint64) *ReadLimiter {
-	if limit > maxReadOnReadLimiter {
+	if limit > MaxReadLimiterLimit {
 		panic(errLimitOverMaxReadLimiter)
 	}
 	rl := &ReadLimiter{originalLimit: int64(limit)}
@@ -46,7 +46,7 @@ func NewReadLimiter(limit uint64) *ReadLimiter {
 // goroutine accesses an arena/message (and any objects/structs/lists/unsafe
 // strings derived from such).
 func NewConcurrentUnsafeReadLimiter(limit uint64) *ReadLimiter {
-	if limit > maxReadOnReadLimiter {
+	if limit > MaxReadLimiterLimit {
 		panic(errLimitOverMaxReadLimiter)
 	}
 	return &ReadLimiter{
@@ -84,7 +84,7 @@ func (rl *ReadLimiter) Reset() {
 // concurrent access by multiple goroutines.
 func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 	wcu := int64(wc)
-	if wcu > maxReadOnReadLimiter {
+	if wcu > MaxReadLimiterLimit {
 		return errLimitOverMaxReadLimiter
 	}
 

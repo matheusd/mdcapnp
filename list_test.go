@@ -14,7 +14,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 	buf = append(buf, []byte(name)...)
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := NewSingleSegmentArena(buf, false, newRL(maxReadOnReadLimiter))
+		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
 		seg, _ := arena.Segment(0)
 
 		// Tests only reading after already having checked for
