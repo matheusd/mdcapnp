@@ -125,9 +125,12 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 type depthLimit uint64
 
 const (
-	noDepthLimit      depthLimit = math.MaxUint64
-	maxDepthLimit     depthLimit = math.MaxUint64 - 1
+	noDepthLimit      depthLimit = math.MaxUint
+	maxDepthLimit     depthLimit = math.MaxUint - 1
 	defaultDepthLimit depthLimit = 64
+
+	// MaxDepthLimit is the maximum allowed, valid depth limit.
+	MaxDepthLimit = uint(maxDepthLimit)
 )
 
 func (dl depthLimit) dec() (newDL depthLimit, ok bool) {
