@@ -34,6 +34,10 @@ func (ptr pointer) isStructPointer() bool {
 	return (ptr & 0x03) == 0
 }
 
+func (ptr pointer) isFarPointer() bool {
+	return (ptr & 0x03) == 2
+}
+
 func (ptr pointer) toStructPointer() (sp structPointer) {
 	sp.dataOffset = ptr.dataOffset()
 	sp.dataSectionSize = ptr.dataSectionSize()

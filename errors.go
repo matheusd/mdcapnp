@@ -63,6 +63,8 @@ var errNotOneByteElList = errors.New("list is not a one-byte-per-element list")
 
 var errDepthLimitExceeded = errors.New("depth limit exceeded")
 
+var errNotListPointer = errors.New("not a list pointer")
+
 type errWordOffsetSumOverflows struct {
 	a, b WordOffset
 }

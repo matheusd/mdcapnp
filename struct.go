@@ -59,6 +59,8 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 		return errDepthLimitExceeded
 	}
 
+	seg := s.seg
+
 	// Check if this pointer is set within the pointer section.
 	if ptrIndex >= PointerFieldIndex(s.ptr.pointerSectionSize) {
 		// TODO: return default if it exists? Or handle this at a higher
@@ -71,16 +73,22 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	//
 	// TODO: check if sum won't overflow?
 	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
-	ptr, err := s.seg.getWordAsPointer(pointerOffset)
+	ptr, err := seg.getWordAsPointer(pointerOffset)
 	if err != nil {
 		return err
 	}
 
-	// TODO: handle far pointers.
+	// De-ref far pointers into the concrete list segment and near pointer.
+	if ptr.isFarPointer() {
+		seg, ptr, listDL, err = derefFarPointer(s.arena, listDL, ptr)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Check if it is a list pointer.
 	if !ptr.isListPointer() {
-		return errors.New("not a list pointer")
+		return errNotListPointer
 	}
 	lp := ptr.toListPointer()
 
@@ -98,12 +106,18 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	if err := s.seg.CheckBounds(lp.startOffset, fullSize); err != nil {
 		return err
 	}
+
+	// If list elements have zero size, count them as one byte per element,
+	// to avoid vulnerabilities where large simulated lists are iterated.
+	if lp.elSize == listElSizeVoid {
+		fullSize = WordCount(lp.listSize / WordSize)
+	}
 	if err := s.arena.ReadLimiter().CanRead(fullSize); err != nil {
 		return err
 	}
 
 	// All good.
-	ls.seg = s.seg
+	ls.seg = seg
 	ls.arena = s.arena
 	ls.ptr = lp
 	ls.dl = listDL

@@ -28,6 +28,15 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	if err != nil {
 		return err
 	}
+
+	// De-ref far pointers into the concrete list segment and near pointer.
+	if ptr.isFarPointer() {
+		seg, ptr, structDL, err = derefFarPointer(s.arena, structDL, ptr)
+		if err != nil {
+			return err
+		}
+	}
+
 	if !ptr.isStructPointer() {
 		return ErrNotStructPointer
 	}
