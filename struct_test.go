@@ -13,7 +13,7 @@ import (
 // BenchmarkStructGetInt64 benchmarks indirectly calling the GetInt64 of a
 // Struct.
 func BenchmarkStructGetInt64(b *testing.B) {
-	buf := appendWords(nil, 0x1234567890abcdef)
+	buf := appendWords(nil, 0x0000000000000100, 0x1234567890abcdef)
 
 	// No need to test multiple ReadLimiter values because GetInt64 does not
 	// depend on them.
@@ -22,8 +22,13 @@ func BenchmarkStructGetInt64(b *testing.B) {
 	st := &SmallTestStruct{
 		seg:   seg,
 		arena: arena,
+		ptr:   structPointer{dataOffset: 1, dataSectionSize: 1},
 		dl:    noDepthLimit,
 	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
 	var v int64
 	for range b.N {
 		v = st.Siblings()

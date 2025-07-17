@@ -16,14 +16,26 @@ type Struct struct {
 	ptr   structPointer
 }
 
-func (s *Struct) Int64(dataOffset WordOffset) (res int64) {
-	data, _ := s.seg.GetWord(s.ptr.dataOffset + dataOffset)
-	return int64(data)
+// HasData returns true if the specified word in the data section is set in this
+// struct.
+func (s *Struct) HasData(dataIndex DataFieldIndex) bool {
+	return s.ptr.dataOffset > 0 && dataIndex < DataFieldIndex(s.ptr.dataSectionSize)
 }
 
-func (s *Struct) Float64(dataOffset WordOffset) (res float64) {
-	data, _ := s.seg.GetWord(s.ptr.dataOffset + dataOffset)
-	return math.Float64frombits(uint64(data))
+func (s *Struct) Int64(dataIndex DataFieldIndex) (res int64) {
+	if s.HasData(dataIndex) {
+		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = int64(data)
+	}
+	return
+}
+
+func (s *Struct) Float64(dataIndex DataFieldIndex) (res float64) {
+	if s.HasData(dataIndex) {
+		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = math.Float64frombits(uint64(data))
+	}
+	return
 }
 
 type Int32DataFieldShift int
@@ -38,17 +50,23 @@ const (
 // between the two.
 //
 // TODO: review if this is the way to go.
-func (s *Struct) Int32(fieldIndex DataFieldIndex, shift Int32DataFieldShift) int32 {
-	data, _ := s.seg.GetWord(s.ptr.dataOffset + WordOffset(fieldIndex))
-	return int32(data >> shift)
+func (s *Struct) Int32(dataIndex DataFieldIndex, shift Int32DataFieldShift) (res int32) {
+	if s.HasData(dataIndex) {
+		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = int32(data >> shift)
+	}
+	return
 }
 
 // Bool returns a data field as a bool. fieldIndex points to the data word
 // within the struct, while bit determines which bit (within the word)
 // corresponds to the target field.
-func (s *Struct) Bool(fieldIndex DataFieldIndex, bit byte) bool {
-	data, _ := s.seg.GetWord(s.ptr.dataOffset + WordOffset(fieldIndex))
-	return data&(1<<bit) != 0
+func (s *Struct) Bool(dataIndex DataFieldIndex, bit byte) (res bool) {
+	if s.HasData(dataIndex) {
+		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = data&(1<<bit) != 0
+	}
+	return res
 }
 
 func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
@@ -94,10 +112,10 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.
-	if !AddWordOffsets(pointerOffset, 1, &pointerOffset) {
+	if !addWordOffsets(pointerOffset, 1, &pointerOffset) {
 		return errWordOffsetSumOverflows{pointerOffset, 1}
 	}
-	if !AddWordOffsets(lp.startOffset, pointerOffset, &lp.startOffset) {
+	if !addWordOffsets(lp.startOffset, pointerOffset, &lp.startOffset) {
 		return errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
 	}
 

@@ -16,7 +16,7 @@ import (
 
 // BenchmarkMsgReadRoot benchmarks reading the root struct of a message.
 func BenchmarkMsgReadRoot(b *testing.B) {
-	buf := appendWords(nil, 0x00000000fffffffc)
+	buf := appendWords(nil, 0x0000000100000000, 0x0000000000000000)
 	arena := NewSingleSegmentArena(buf, false, nil)
 	msg := MakeMsg(arena)
 
@@ -32,9 +32,7 @@ func BenchmarkMsgReadRoot(b *testing.B) {
 	}
 
 	// Ensure st is not eliminated.
-	if st.ptr.dataOffset != 0 {
-		panic("error")
-	}
+	require.Equal(b, WordOffset(1), st.ptr.dataOffset)
 }
 
 // BenchmarkDecodeGoserbenchSmallStruct benchmarks decoding a goserbench

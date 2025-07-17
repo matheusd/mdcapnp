@@ -25,6 +25,15 @@ type PointerFieldIndex uint16
 // extract its value.
 type DataFieldIndex uint16
 
+// uncheckedWordOffset returns the final offset of a data word of a struct
+// inside a segment, without checking for the validity of this operation. This
+// is used in cases where it is assumed that the index has already been
+// determined to be valid inside the struct (because the entire struct size has
+// been bounds checked already).
+func (i DataFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
+	return base + WordOffset(i)
+}
+
 // WordOffset is a signed offset into a segment. Segments can have up to 2^29
 // words.
 //
@@ -44,11 +53,11 @@ func (w WordOffset) Valid() bool {
 	return w&invalidBitsMask == 0
 }
 
-// AddWordOffsets adds two offsets, setting the resulting argument to the sum if
+// addWordOffsets adds two offsets, setting the resulting argument to the sum if
 // the sum generates a still valid offset.
 //
 // Returns true if the sum was valid.
-func AddWordOffsets(a, b WordOffset, r *WordOffset) (ok bool) {
+func addWordOffsets(a, b WordOffset, r *WordOffset) (ok bool) {
 	// Could this use bits.Add64??
 	c := a + b
 	ok = ((c > a) == (b > 0)) && c.Valid()
@@ -72,8 +81,8 @@ func (wc WordCount) Valid() bool {
 	return wc&invalidBitsMask == 0
 }
 
-func AddWordOffsetAndCount(off WordOffset, c WordCount, r *WordOffset) (ok bool) {
-	return AddWordOffsets(off, WordOffset(c), r)
+func addWordOffsetAndCount(off WordOffset, c WordCount, r *WordOffset) (ok bool) {
+	return addWordOffsets(off, WordOffset(c), r)
 }
 
 const MaxValidWordCount = 1<<30 - 1

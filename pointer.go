@@ -38,6 +38,12 @@ func (ptr pointer) isFarPointer() bool {
 	return (ptr & 0x03) == 2
 }
 
+// isNullPointer returns true if this is a "null" pointer. A null pointer is all
+// zeros (except for the first two bits which may denote the type of pointer).
+func (ptr pointer) isNullPointer() bool {
+	return (ptr & 0xfffffffffffffffc) == 0
+}
+
 func (ptr pointer) toStructPointer() (sp structPointer) {
 	sp.dataOffset = ptr.dataOffset()
 	sp.dataSectionSize = ptr.dataSectionSize()

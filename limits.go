@@ -122,11 +122,20 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 	}
 }
 
-type depthLimit uint64
+// depthLimit is the internal representation of the depth limit when reading and
+// de-referencing pointers.
+type depthLimit uint
 
 const (
-	noDepthLimit      depthLimit = math.MaxUint
-	maxDepthLimit     depthLimit = math.MaxUint - 1
+	// noDepthLimit is used as a flag to signal that no depth limit should
+	// be applied.
+	noDepthLimit depthLimit = math.MaxUint
+
+	// maxDepthLimit is the maximum allowed depth limit.
+	maxDepthLimit depthLimit = math.MaxUint - 1
+
+	// defaultDepthLimit is the default depth limit applied when
+	// initializing a message.
 	defaultDepthLimit depthLimit = 64
 
 	// MaxDepthLimit is the maximum allowed, valid depth limit.

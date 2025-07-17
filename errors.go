@@ -65,6 +65,8 @@ var errDepthLimitExceeded = errors.New("depth limit exceeded")
 
 var errNotListPointer = errors.New("not a list pointer")
 
+var errInvalidNegativeStructOffset = errors.New("invalid negative struct offset")
+
 type errWordOffsetSumOverflows struct {
 	a, b WordOffset
 }

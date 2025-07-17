@@ -69,27 +69,48 @@ func (msg *Message) ReadRoot(s *Struct) error {
 		}
 	}
 
+	// The resulting pointer (after de-ref) MUST be a struct pointer.
 	if !ptr.isStructPointer() {
 		return ErrNotStructPointer
 	}
 
-	// TODO: check null pointer? zero sized struct?
-
 	sp := ptr.toStructPointer()
-
-	if !AddWordOffsets(sp.dataOffset, 1, &sp.dataOffset) {
-		return errWordOffsetSumOverflows{sp.dataOffset, 1}
-	}
-
 	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
-	if !fullSize.Valid() {
-		return errInvalidStructSectionSizes{sp.dataSectionSize, sp.pointerSectionSize, fullSize}
+
+	// The only negative value allowed as an offset is -1, to denote a
+	// zero-sized struct.
+	//
+	// TODO: double check if this is true.
+	if sp.dataOffset < -1 {
+		return errInvalidNegativeStructOffset
 	}
-	if err := seg.CheckBounds(sp.dataOffset, fullSize); err != nil {
-		return err
-	}
-	if err := msg.arena.ReadLimiter().CanRead(fullSize); err != nil {
-		return err
+
+	// Perform a bounds check when either a data offset or fields were
+	// specified (i.e. non-null struct).
+	//
+	// Note that the gap for the case where (dataOffset == -1) && (fullSize
+	// == 0) does not need to be checked because for that case (empty
+	// struct), the offset points to the pointer itself (which was already
+	// obtained and thus necessarily in bounds). Therefore we elide the
+	// redundant check.
+	if sp.dataOffset > 0 || fullSize > 0 {
+		// TODO: abstract and add base struct offset when obtaining a
+		// struct field from a struct.
+
+		// Concrete offset is always one more than the encoded start
+		// offset.
+		if !addWordOffsets(sp.dataOffset, 1, &sp.dataOffset) {
+			return errWordOffsetSumOverflows{sp.dataOffset, 1}
+		}
+		if !fullSize.Valid() {
+			return errInvalidStructSectionSizes{sp.dataSectionSize, sp.pointerSectionSize, fullSize}
+		}
+		if err := seg.CheckBounds(sp.dataOffset, fullSize); err != nil {
+			return err
+		}
+		if err := msg.arena.ReadLimiter().CanRead(fullSize); err != nil {
+			return err
+		}
 	}
 
 	s.seg = seg
