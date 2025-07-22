@@ -62,15 +62,17 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	}
 
 	// De-ref far pointers into the concrete list segment and near pointer.
-	if ptr.isFarPointer() {
+	ptrType := ptr.pointerType()
+	if ptrType == pointerTypeFarPointer {
 		seg, ptr, structDL, err = derefFarPointer(s.arena, structDL, ptr)
 		if err != nil {
 			return err
 		}
+		ptrType = ptr.pointerType()
 	}
 
 	// The resulting pointer (after de-ref) MUST be a struct pointer.
-	if !ptr.isStructPointer() {
+	if ptrType != pointerTypeStruct {
 		return ErrNotStructPointer
 	}
 

@@ -97,15 +97,18 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	}
 
 	// De-ref far pointers into the concrete list segment and near pointer.
-	if ptr.isFarPointer() {
+	var err error
+	ptrType := ptr.pointerType()
+	if ptrType == pointerTypeFarPointer {
 		seg, ptr, listDL, err = derefFarPointer(s.arena, listDL, ptr)
 		if err != nil {
 			return err
 		}
+		ptrType = ptr.pointerType()
 	}
 
 	// Check if it is a list pointer.
-	if !ptr.isListPointer() {
+	if ptrType != pointerTypeList {
 		return errNotListPointer
 	}
 	lp := ptr.toListPointer()

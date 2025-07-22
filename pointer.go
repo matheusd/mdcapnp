@@ -4,6 +4,14 @@
 
 package mdcapnp
 
+type pointerType byte
+
+const (
+	pointerTypeStruct     pointerType = 0x00
+	pointerTypeList       pointerType = 0x01
+	pointerTypeFarPointer pointerType = 0x02
+)
+
 type pointer Word
 
 func (ptr pointer) dataOffset() WordOffset {
@@ -36,6 +44,10 @@ func (ptr pointer) isStructPointer() bool {
 
 func (ptr pointer) isFarPointer() bool {
 	return (ptr & 0x03) == 2
+}
+
+func (ptr pointer) pointerType() pointerType {
+	return pointerType(ptr & 0x03)
 }
 
 // isNullPointer returns true if this is a "null" pointer. A null pointer is all
