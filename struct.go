@@ -24,16 +24,14 @@ func (s *Struct) HasData(dataIndex DataFieldIndex) bool {
 
 func (s *Struct) Int64(dataIndex DataFieldIndex) (res int64) {
 	if s.HasData(dataIndex) {
-		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
-		res = int64(data)
+		res = int64(s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset)))
 	}
 	return
 }
 
 func (s *Struct) Float64(dataIndex DataFieldIndex) (res float64) {
 	if s.HasData(dataIndex) {
-		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
-		res = math.Float64frombits(uint64(data))
+		res = math.Float64frombits(uint64(s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))))
 	}
 	return
 }
@@ -52,7 +50,7 @@ const (
 // TODO: review if this is the way to go.
 func (s *Struct) Int32(dataIndex DataFieldIndex, shift Int32DataFieldShift) (res int32) {
 	if s.HasData(dataIndex) {
-		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		data := s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
 		res = int32(data >> shift)
 	}
 	return
@@ -63,7 +61,7 @@ func (s *Struct) Int32(dataIndex DataFieldIndex, shift Int32DataFieldShift) (res
 // corresponds to the target field.
 func (s *Struct) Bool(dataIndex DataFieldIndex, bit byte) (res bool) {
 	if s.HasData(dataIndex) {
-		data, _ := s.seg.GetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		data := s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
 		res = data&(1<<bit) != 0
 	}
 	return res
@@ -91,10 +89,7 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	//
 	// TODO: check if sum won't overflow?
 	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
-	ptr, err := seg.getWordAsPointer(pointerOffset)
-	if err != nil {
-		return err
-	}
+	ptr := seg.uncheckedGetWordAsPointer(pointerOffset)
 
 	// De-ref far pointers into the concrete list segment and near pointer.
 	var err error
