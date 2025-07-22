@@ -112,10 +112,10 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.
-	if !addWordOffsets(pointerOffset, 1, &pointerOffset) {
+	if pointerOffset, ok = addWordOffsets(pointerOffset, 1); !ok {
 		return errWordOffsetSumOverflows{pointerOffset, 1}
 	}
-	if !addWordOffsets(lp.startOffset, pointerOffset, &lp.startOffset) {
+	if lp.startOffset, ok = addWordOffsets(lp.startOffset, pointerOffset); !ok {
 		return errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
 	}
 

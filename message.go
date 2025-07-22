@@ -75,6 +75,10 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	}
 
 	sp := ptr.toStructPointer()
+
+	// Calculate full size of struct in words. Doesn't need an overflow
+	// check because the section sizes are both uint16, so their sum can't
+	// overflow uint32.
 	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
 
 	// The only negative value allowed as an offset is -1, to denote a
@@ -99,7 +103,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 
 		// Concrete offset is always one more than the encoded start
 		// offset.
-		if !addWordOffsets(sp.dataOffset, 1, &sp.dataOffset) {
+		if sp.dataOffset, ok = addWordOffsets(sp.dataOffset, 1); !ok {
 			return errWordOffsetSumOverflows{sp.dataOffset, 1}
 		}
 		if !fullSize.Valid() {

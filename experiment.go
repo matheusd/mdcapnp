@@ -4,7 +4,9 @@
 
 package mdcapnp
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 type Word uint64
 
@@ -43,27 +45,24 @@ func (i DataFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
 // pointer as an offset.
 type WordOffset int32
 
-// Valid determines if the value within this offset is valid.
+const (
+	maxWordOffset = (1 << 29) - 1
+	minWordOffset = -(1 << 29)
+)
+
+// Valid determines if the value of this offset is valid.
 func (w WordOffset) Valid() bool {
-	// Valid word offsets have up to 29 bits set, optionally with the sign
-	// bit set. This means the invalid bits are the first three bits of the
-	// most significant nibble of the value. We test directly whether any of
-	// these bits are set here, to determine if the value is valid.
-	const invalidBitsMask = 0b0111 << 28
-	return w&invalidBitsMask == 0
+	return w >= minWordOffset && w <= maxWordOffset
 }
 
-// addWordOffsets adds two offsets, setting the resulting argument to the sum if
-// the sum generates a still valid offset.
+// addWordOffsets adds two offsets, detecting whether the resulting offset
+// remains valid.
 //
 // Returns true if the sum was valid.
-func addWordOffsets(a, b WordOffset, r *WordOffset) (ok bool) {
-	// Could this use bits.Add64??
-	c := a + b
-	ok = ((c > a) == (b > 0)) && c.Valid()
-	if ok {
-		*r = c
-	}
+func addWordOffsets(a, b WordOffset) (c WordOffset, ok bool) {
+	sum64 := int64(a) + int64(b)
+	ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	c = WordOffset(sum64)
 	return
 }
 
@@ -81,8 +80,8 @@ func (wc WordCount) Valid() bool {
 	return wc&invalidBitsMask == 0
 }
 
-func addWordOffsetAndCount(off WordOffset, c WordCount, r *WordOffset) (ok bool) {
-	return addWordOffsets(off, WordOffset(c), r)
+func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) {
+	return addWordOffsets(off, WordOffset(c))
 }
 
 const MaxValidWordCount = 1<<30 - 1
