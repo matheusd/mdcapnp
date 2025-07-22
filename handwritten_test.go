@@ -38,11 +38,7 @@ func (st *GoserbenchSmallStruct) Name() string {
 }
 
 func (st *GoserbenchSmallStruct) UnsafeName() string {
-	var ls List
-	if err := (*Struct)(st).ReadList(0, &ls); err != nil {
-		return ""
-	}
-	return ls.UnsafeString()
+	return (*Struct)(st).UnsafeString(0)
 }
 
 func (st *GoserbenchSmallStruct) BirthDay() int64 {
@@ -58,11 +54,7 @@ func (st *GoserbenchSmallStruct) Phone() string {
 }
 
 func (st *GoserbenchSmallStruct) UnsafePhone() string {
-	var ls List
-	if err := (*Struct)(st).ReadList(1, &ls); err != nil {
-		return ""
-	}
-	return ls.UnsafeString()
+	return (*Struct)(st).UnsafeString(1)
 }
 
 func (st *GoserbenchSmallStruct) Siblings() int32 {

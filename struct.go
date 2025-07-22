@@ -139,3 +139,11 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	ls.dl = listDL
 	return nil
 }
+
+func (s *Struct) UnsafeString(ptrIndex PointerFieldIndex) string {
+	var ls List
+	if err := s.ReadList(ptrIndex, &ls); err != nil {
+		return ""
+	}
+	return ls.UnsafeString()
+}

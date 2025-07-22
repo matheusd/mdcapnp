@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"matheusd.com/depvendoredtestify/require"
+	"matheusd.com/mdcapnp/internal/testdata"
 )
 
 // BenchmarkStructGetInt64 benchmarks indirectly calling the GetInt64 of a
@@ -107,6 +108,29 @@ func BenchmarkStructReadList(b *testing.B) {
 				}
 			}
 		})
+	})
+}
+
+func BenchmarkStructUnsafeString(b *testing.B) {
+	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
+		segBuf := testdata.GoserbenchSampleA[8:]
+		arena := NewSingleSegmentArena(segBuf, false, newRL(MaxReadLimiterLimit))
+		msg := MakeMsg(arena)
+		var st GoserbenchSmallStruct
+
+		var s string
+
+		err := st.ReadFromRoot(&msg)
+		require.Nil(b, err)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for range b.N {
+			s = st.UnsafeName()
+		}
+
+		require.Equal(b, "slimshady0123456", s)
 	})
 }
 
