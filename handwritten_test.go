@@ -30,11 +30,7 @@ func (st *GoserbenchSmallStruct) ReadNameField(ls *List) error {
 }
 
 func (st *GoserbenchSmallStruct) Name() string {
-	var ls List
-	if err := (*Struct)(st).ReadList(0, &ls); err != nil {
-		return ""
-	}
-	return ls.String()
+	return (*Struct)(st).String(0)
 }
 
 func (st *GoserbenchSmallStruct) UnsafeName() string {
@@ -46,11 +42,7 @@ func (st *GoserbenchSmallStruct) BirthDay() int64 {
 }
 
 func (st *GoserbenchSmallStruct) Phone() string {
-	var ls List
-	if err := (*Struct)(st).ReadList(1, &ls); err != nil {
-		return ""
-	}
-	return ls.String()
+	return (*Struct)(st).String(1)
 }
 
 func (st *GoserbenchSmallStruct) UnsafePhone() string {

@@ -7,6 +7,7 @@ package mdcapnp
 import (
 	"errors"
 	"math"
+	"unsafe"
 )
 
 type Struct struct {
@@ -67,21 +68,24 @@ func (s *Struct) Bool(dataIndex DataFieldIndex, bit byte) (res bool) {
 	return res
 }
 
-func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
+func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listPointer, listDL depthLimit, err error) {
 	// Check if we can descend further into the struct (to fetch the first
 	// list pointer).
-	listDL, ok := s.dl.dec()
+	var ok bool
+	listDL, ok = s.dl.dec()
 	if !ok {
-		return errDepthLimitExceeded
+		err = errDepthLimitExceeded
+		return
 	}
 
-	seg := s.seg
+	seg = s.seg
 
 	// Check if this pointer is set within the pointer section.
 	if ptrIndex >= PointerFieldIndex(s.ptr.pointerSectionSize) {
 		// TODO: return default if it exists? Or handle this at a higher
 		// level?
-		return errors.New("pointer at offset not set in struct")
+		err = errors.New("pointer at offset not set in struct")
+		return
 	}
 
 	// Determine the offset of the pointer word (given its index) and fetch
@@ -92,35 +96,37 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	ptr := seg.uncheckedGetWordAsPointer(pointerOffset)
 
 	// De-ref far pointers into the concrete list segment and near pointer.
-	var err error
 	ptrType := ptr.pointerType()
 	if ptrType == pointerTypeFarPointer {
 		seg, ptr, listDL, err = derefFarPointer(s.arena, listDL, ptr)
 		if err != nil {
-			return err
+			return
 		}
 		ptrType = ptr.pointerType()
 	}
 
 	// Check if it is a list pointer.
 	if ptrType != pointerTypeList {
-		return errNotListPointer
+		err = errNotListPointer
+		return
 	}
-	lp := ptr.toListPointer()
+	lp = ptr.toListPointer()
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.
 	if pointerOffset, ok = addWordOffsets(pointerOffset, 1); !ok {
-		return errWordOffsetSumOverflows{pointerOffset, 1}
+		err = errWordOffsetSumOverflows{pointerOffset, 1}
+		return
 	}
 	if lp.startOffset, ok = addWordOffsets(lp.startOffset, pointerOffset); !ok {
-		return errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
+		err = errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
+		return
 	}
 
 	// Check if entire list is readable.
 	fullSize := listWordCount(lp.elSize, lp.listSize)
-	if err := s.seg.CheckBounds(lp.startOffset, fullSize); err != nil {
-		return err
+	if err = s.seg.CheckBounds(lp.startOffset, fullSize); err != nil {
+		return
 	}
 
 	// If list elements have zero size, count them as one byte per element,
@@ -128,7 +134,16 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	if lp.elSize == listElSizeVoid {
 		fullSize = WordCount(lp.listSize / WordSize)
 	}
-	if err := s.arena.ReadLimiter().CanRead(fullSize); err != nil {
+	if err = s.arena.ReadLimiter().CanRead(fullSize); err != nil {
+		return
+	}
+
+	return
+}
+
+func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
+	seg, lp, listDL, err := s.readListPtr(ptrIndex)
+	if err != nil {
 		return err
 	}
 
@@ -141,9 +156,21 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 }
 
 func (s *Struct) UnsafeString(ptrIndex PointerFieldIndex) string {
-	var ls List
-	if err := s.ReadList(ptrIndex, &ls); err != nil {
+	seg, lp, _, err := s.readListPtr(ptrIndex)
+	if err != nil {
 		return ""
 	}
-	return ls.UnsafeString()
+
+	buf := seg.uncheckedSlice(lp.startOffset, listByteCount(lp.elSize, lp.listSize))
+	return *(*string)(unsafe.Pointer(&buf))
+}
+
+func (s *Struct) String(ptrIndex PointerFieldIndex) string {
+	seg, lp, _, err := s.readListPtr(ptrIndex)
+	if err != nil {
+		return ""
+	}
+
+	buf := seg.uncheckedSlice(lp.startOffset, listByteCount(lp.elSize, lp.listSize))
+	return string(buf)
 }

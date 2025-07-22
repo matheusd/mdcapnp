@@ -30,7 +30,10 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 	default:
 		panic("unknown el size")
 	}
+}
 
+func listByteCount(elSize listElementSize, lsSize listSize) ByteCount {
+	return ByteCount(listWordCount(elSize, lsSize)) * WordSize
 }
 
 type List struct {
@@ -41,7 +44,7 @@ type List struct {
 }
 
 func (ls *List) LenBytes() ByteCount {
-	return ByteCount(listWordCount(ls.ptr.elSize, ls.ptr.listSize)) * WordSize
+	return listByteCount(ls.ptr.elSize, ls.ptr.listSize)
 }
 
 // Read this list into a slice. Only valid for one-byte-per-element lists.
