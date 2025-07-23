@@ -19,13 +19,26 @@ type Segment struct {
 	b []byte
 }
 
+// uncheckedOpenSlice returns a slice starting at the provided offset up to the
+// end of the buffer without checking bounds.
+//
+// The assumption is that this method is only called in instances where the
+// offset has already been determined to exist.
+func (ms *Segment) uncheckedTailSlice(offset WordOffset) []byte {
+	return ms.b[offset*WordSize:]
+}
+
+func (ms *Segment) intLen() int {
+	return len(ms.b)
+}
+
 // uncheckedGetWord returns the word at the given offset without checking for
 // valid bounds.
 //
 // The assumption is that this method is only called in instances where the
 // offset has already been determined to exist.
 func (ms *Segment) uncheckedGetWord(offset WordOffset) Word {
-	return Word(binary.LittleEndian.Uint64(ms.b[offset*WordSize:]))
+	return Word(binary.LittleEndian.Uint64(ms.uncheckedTailSlice(offset)))
 }
 
 func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
@@ -43,7 +56,7 @@ func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
 // The assumption is that this method is only called in instances where the
 // offset has already been determined to exist.
 func (ms *Segment) uncheckedGetWordAsPointer(offset WordOffset) pointer {
-	return pointer(binary.LittleEndian.Uint64(ms.b[offset*WordSize:]))
+	return pointer(binary.LittleEndian.Uint64(ms.uncheckedTailSlice(offset)))
 }
 
 func (ms *Segment) getWordAsPointer(offset WordOffset) (pointer, error) {
@@ -57,8 +70,8 @@ func (ms *Segment) getWordAsPointer(offset WordOffset) (pointer, error) {
 func (ms *Segment) checkSliceBounds(offset WordOffset, size ByteCount) error {
 	startOffset := int(offset * WordSize) // FIXME: check for overflows in 32bit archs
 	endOffset := startOffset + int(size)
-	if endOffset > len(ms.b) {
-		return ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: endOffset}
+	if endOffset > ms.intLen() {
+		return ErrInvalidMemOffset{AvailableLen: ms.intLen(), Offset: endOffset}
 	}
 
 	return nil
@@ -75,8 +88,8 @@ func (ms *Segment) uncheckedSlice(offset WordOffset, size ByteCount) []byte {
 
 func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
 	byteOffset := int(offset * WordSize)
-	if byteOffset >= len(ms.b) {
-		return 0, ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: byteOffset}
+	if byteOffset >= ms.intLen() {
+		return 0, ErrInvalidMemOffset{AvailableLen: ms.intLen(), Offset: byteOffset}
 	}
 
 	n := copy(b, ms.b[byteOffset:])
@@ -86,8 +99,8 @@ func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
 func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
 	byteOffset := int(offset) * WordSize // TODO: check if 32 bits arch?
 	byteSize := int(size) * WordSize
-	if byteOffset < 0 || byteOffset+byteSize > len(ms.b) {
-		return ErrObjectOutOfBounds{Offset: offset, Size: size, Len: len(ms.b)}
+	if byteOffset < 0 || byteOffset+byteSize > ms.intLen() {
+		return ErrObjectOutOfBounds{Offset: offset, Size: size, Len: ms.intLen()}
 	}
 	return nil
 }
