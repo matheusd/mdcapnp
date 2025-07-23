@@ -54,6 +54,12 @@ func (wc WordCount) Valid() bool {
 	return wc&invalidBitsMask == 0
 }
 
+// ByteCount returns the number of bytes that correspond to this number of
+// words.
+func (wc WordCount) ByteCount() ByteCount {
+	return ByteCount(wc) * WordSize
+}
+
 func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) {
 	return addWordOffsets(off, WordOffset(c))
 }

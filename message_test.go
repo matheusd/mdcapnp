@@ -92,8 +92,8 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 		require.Equal(b, uint64(0xabcd0000ef01), math.Float64bits(oa.Money))
 	}
 
-	// Skip the header.
-	segBuf := testdata.GoserbenchSampleA[8:]
+	serialBuf := testdata.GoserbenchSampleA
+	segBuf := testdata.GoserbenchSampleA[8:] // Skip the header.
 
 	tests := []struct {
 		rl     newRLFunc
@@ -149,6 +149,42 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 
 				for range b.N {
 					arena.Reset(segBuf, false)
+					msg := MakeMsg(arena)
+					var st GoserbenchSmallStruct
+
+					err := st.ReadFromRoot(&msg)
+					if err != nil {
+						b.Fatal(err)
+					}
+
+					if tc.unsafe {
+						oa.Name = st.UnsafeName()
+						oa.Phone = st.UnsafePhone()
+					} else {
+						oa.Name = st.Name()
+						oa.Phone = st.Phone()
+					}
+
+					oa.BirthDay = time.Unix(st.BirthDay(), 0)
+					oa.Siblings = int(st.Siblings())
+					oa.Spouse = st.Spouse()
+					oa.Money = st.Money()
+				}
+
+				checkOA(b)
+			})
+
+			b.Run("reuse arena deserialize", func(b *testing.B) {
+				rl := tc.rl(MaxReadLimiterLimit)
+				arena := NewSingleSegmentArena(segBuf, false, rl)
+
+				b.ReportAllocs()
+				b.ResetTimer()
+
+				for range b.N {
+					if err := arena.DecodeSingleSegment(serialBuf); err != nil {
+						b.Fatal(err)
+					}
 					msg := MakeMsg(arena)
 					var st GoserbenchSmallStruct
 

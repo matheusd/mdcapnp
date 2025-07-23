@@ -93,6 +93,9 @@ func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
 }
 
 type SingleSegmentArena struct {
+	// fb is the full, framed data for the arena (includes header and arena
+	// size framing when != nil).
+	fb []byte
 	s  Segment
 	rl *ReadLimiter
 }
@@ -112,8 +115,20 @@ func (arena *SingleSegmentArena) Segment(id SegmentID) (*Segment, error) {
 	return &arena.s, nil
 }
 
+// DecodeSingleSegment decodes the given buffer as a single segment arena.
+func (arena *SingleSegmentArena) DecodeSingleSegment(fb []byte) error {
+	b, err := decodeSingleSegmentStream(fb)
+	if err != nil {
+		return err
+	}
+	arena.Reset(b, false)
+	arena.fb = fb
+	return nil
+}
+
 func (arena *SingleSegmentArena) Reset(b []byte, writable bool) {
 	arena.s.b = b
+	arena.fb = nil
 	arena.rl.Reset()
 }
 

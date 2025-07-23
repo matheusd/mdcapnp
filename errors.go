@@ -86,3 +86,17 @@ func (err errInvalidStructSectionSizes) Error() string {
 	return fmt.Sprintf("struct data (%d) and pointer (%d) sections sum to invalid value %d",
 		err.dataSectionSize, err.pointerSectionSize, err.sum)
 }
+
+var errShortSingleSegmentStream = errors.New("single segment stream smaller than expected")
+
+var errStreamNotSingleSegment = errors.New("stream is not a single segment stream")
+
+type errShortStreamSegSize struct {
+	segSize   ByteCount
+	streamLen int
+}
+
+func (err errShortStreamSegSize) Error() string {
+	return fmt.Sprintf("remaining stream length %d smaller than expected segment size %d",
+		err.streamLen, err.segSize)
+}
