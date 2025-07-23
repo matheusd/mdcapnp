@@ -111,7 +111,7 @@ type Arena struct {
 
 	// segs are the additional segments in multi-segment arenas. The segment
 	// at index 0 is the segment with id 1, and so on.
-	segs []*Segment
+	segs *[]*Segment
 
 	rl *ReadLimiter
 }
@@ -130,11 +130,12 @@ func (arena *Arena) Segment(id SegmentID) (*Segment, error) {
 	}
 
 	index := int(id - 1)
-	if index >= len(arena.segs) {
+	segs := *arena.segs
+	if index >= len(segs) {
 		return nil, ErrUnknownSegment(id)
 	}
 
-	return arena.segs[index], nil
+	return segs[index], nil
 }
 
 // DecodeSingleSegment decodes the given buffer as a single segment arena.
