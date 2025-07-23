@@ -10,6 +10,28 @@ import (
 	"unsafe"
 )
 
+// PointerFieldIndex is the index of a pointer field in a struct. The first
+// pointer of a struct's pointer section has index 0, the second one has index
+// 1, and so on.
+//
+// Given that 1 pointer == 1 word, and a struct is limited to 16 bits worth of
+// words in its pointer section, it can have up to 2^16 pointer fields.
+type PointerFieldIndex uint16
+
+// DataFieldIndex is the index of a data field in a struct (in words). When the
+// field is smaller than one word, then further indexing may be necessary to
+// extract its value.
+type DataFieldIndex uint16
+
+// uncheckedWordOffset returns the final offset of a data word of a struct
+// inside a segment, without checking for the validity of this operation. This
+// is used in cases where it is assumed that the index has already been
+// determined to be valid inside the struct (because the entire struct size has
+// been bounds checked already).
+func (i DataFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
+	return base + WordOffset(i)
+}
+
 type Struct struct {
 	seg   *Segment
 	arena Arena

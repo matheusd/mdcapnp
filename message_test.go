@@ -35,6 +35,50 @@ func BenchmarkMsgReadRoot(b *testing.B) {
 	require.Equal(b, WordOffset(1), st.ptr.dataOffset)
 }
 
+// BenchmarkMsgReadList benchmarks reading a list field from a message.
+func BenchmarkMsgReadList(b *testing.B) {
+	targetName := []byte("mynameisslimshady   ")
+	buf := appendWords(nil,
+		0x0001000000000000,
+		// 0x0000000200000001,
+		0x000000ba00000001,
+	)
+	buf = append(buf, targetName...)
+
+	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
+		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
+		seg, _ := arena.Segment(0)
+		st := &SmallTestStruct{
+			seg:   seg,
+			arena: arena,
+			ptr:   structPointer{dataOffset: 1, pointerSectionSize: 1},
+			dl:    noDepthLimit,
+		}
+		ls := new(List)
+		nameBuf := make([]byte, 32)
+
+		var n int
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			err := st.ReadNameField(ls)
+			if err != nil {
+				ls = nil
+				b.Fatal(err)
+			}
+
+			n, err = ls.Read(nameBuf)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		require.NotNil(b, ls)
+		require.Equal(b, targetName, nameBuf[:n])
+	})
+}
+
 // BenchmarkDecodeGoserbenchSmallStruct benchmarks decoding a goserbench
 // SmallStruct under various configurations.
 func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
