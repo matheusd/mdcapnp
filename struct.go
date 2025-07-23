@@ -34,7 +34,7 @@ func (i DataFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
 
 type Struct struct {
 	seg   *Segment
-	arena Arena
+	arena *Arena
 	dl    depthLimit
 	ptr   structPointer
 }
@@ -171,7 +171,6 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 	// All good.
 	ls.seg = seg
-	ls.arena = s.arena
 	ls.ptr = lp
 	ls.dl = listDL
 	return nil

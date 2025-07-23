@@ -90,7 +90,7 @@ type listPointer struct {
 // It follows pointers (up to the depth limit) until a non-far pointer is found.
 //
 // Returns the resulting pointer and the remaining depth limit.
-func derefFarPointer(arena Arena, dl depthLimit, ptr pointer) (*Segment, pointer, depthLimit, error) {
+func derefFarPointer(arena *Arena, dl depthLimit, ptr pointer) (*Segment, pointer, depthLimit, error) {
 	// TODO: implement.
 	return nil, 0, 0, nil
 }

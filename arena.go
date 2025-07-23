@@ -8,12 +8,7 @@ import (
 	"encoding/binary"
 )
 
-type SegmentID uint64
-
-type Arena interface {
-	Segment(id SegmentID) (*Segment, error)
-	ReadLimiter() *ReadLimiter
-}
+type SegmentID uint32
 
 type Segment struct {
 	b []byte
@@ -105,31 +100,45 @@ func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
 	return nil
 }
 
-type SingleSegmentArena struct {
+type Arena struct {
 	// fb is the full, framed data for the arena (includes header and arena
 	// size framing when != nil).
 	fb []byte
-	s  Segment
+
+	// s is the first segment. It is the only segment in single-segment
+	// arenas.
+	s Segment
+
+	// segs are the additional segments in multi-segment arenas. The segment
+	// at index 0 is the segment with id 1, and so on.
+	segs []*Segment
+
 	rl *ReadLimiter
 }
 
-func (arena *SingleSegmentArena) ReadLimiter() *ReadLimiter {
+func (arena *Arena) ReadLimiter() *ReadLimiter {
 	return arena.rl
 }
 
-func (arena *SingleSegmentArena) Segment(id SegmentID) (*Segment, error) {
-	if id != 0 {
-		return nil, ErrUnknownSegment(id)
-	}
+func (arena *Arena) Segment(id SegmentID) (*Segment, error) {
 	if arena == nil {
-		return nil, errSegmentNotInitialized
+		return nil, errArenaNotInitialized
 	}
 
-	return &arena.s, nil
+	if id == 0 {
+		return &arena.s, nil
+	}
+
+	index := int(id - 1)
+	if index >= len(arena.segs) {
+		return nil, ErrUnknownSegment(id)
+	}
+
+	return arena.segs[index], nil
 }
 
 // DecodeSingleSegment decodes the given buffer as a single segment arena.
-func (arena *SingleSegmentArena) DecodeSingleSegment(fb []byte) error {
+func (arena *Arena) DecodeSingleSegment(fb []byte) error {
 	b, err := decodeSingleSegmentStream(fb)
 	if err != nil {
 		return err
@@ -139,14 +148,14 @@ func (arena *SingleSegmentArena) DecodeSingleSegment(fb []byte) error {
 	return nil
 }
 
-func (arena *SingleSegmentArena) Reset(b []byte, writable bool) {
+func (arena *Arena) Reset(b []byte, writable bool) {
 	arena.s.b = b
 	arena.fb = nil
 	arena.rl.Reset()
 }
 
-func NewSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) *SingleSegmentArena {
-	var arena SingleSegmentArena
+func NewSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) *Arena {
+	var arena Arena
 	arena.rl = rl
 	arena.Reset(b, writable)
 	return &arena

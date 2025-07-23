@@ -59,6 +59,8 @@ func (err ErrUnknownSegment) Error() string {
 
 var errSegmentNotInitialized = errors.New("segment was not initialized")
 
+var errArenaNotInitialized = errors.New("arena was not initialized")
+
 var errNotOneByteElList = errors.New("list is not a one-byte-per-element list")
 
 var errDepthLimitExceeded = errors.New("depth limit exceeded")

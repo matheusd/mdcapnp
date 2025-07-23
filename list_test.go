@@ -21,10 +21,9 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		// validity.
 		b.Run("from list no check", func(b *testing.B) {
 			ls := &List{
-				seg:   seg,
-				arena: arena,
-				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
-				dl:    noDepthLimit,
+				seg: seg,
+				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				dl:  noDepthLimit,
 			}
 			if err := ls.CheckCanGetUnsafeString(); err != nil {
 				b.Fatal(err)
@@ -43,10 +42,9 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		// Tests both checking for validity and reading.
 		b.Run("from list", func(b *testing.B) {
 			ls := &List{
-				seg:   seg,
-				arena: arena,
-				ptr:   listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
-				dl:    noDepthLimit,
+				seg: seg,
+				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				dl:  noDepthLimit,
 			}
 
 			b.ReportAllocs()
@@ -66,8 +64,8 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from struct", func(b *testing.B) {
 			st := &Struct{
 				seg:   seg,
-				arena: arena,
 				ptr:   structPointer{pointerSectionSize: 1},
+				arena: arena,
 				dl:    noDepthLimit,
 			}
 

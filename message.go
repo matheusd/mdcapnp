@@ -7,11 +7,11 @@ package mdcapnp
 import "fmt"
 
 type Message struct {
-	arena Arena
+	arena *Arena
 	dl    depthLimit
 }
 
-func MakeMsg(arena Arena) Message {
+func MakeMsg(arena *Arena) Message {
 	return Message{arena: arena, dl: defaultDepthLimit}
 }
 

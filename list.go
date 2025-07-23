@@ -37,10 +37,9 @@ func listByteCount(elSize listElementSize, lsSize listSize) ByteCount {
 }
 
 type List struct {
-	seg   *Segment
-	arena Arena
-	ptr   listPointer
-	dl    depthLimit
+	seg *Segment
+	ptr listPointer
+	dl  depthLimit
 }
 
 func (ls *List) LenBytes() ByteCount {
