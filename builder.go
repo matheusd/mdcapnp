@@ -11,9 +11,9 @@ import (
 )
 
 type StructBuilder struct {
-	seg SegmentBuilder
 	off WordOffset // Concrete offset into segment where struct data begins.
 	sz  StructSize
+	seg SegmentBuilder
 }
 
 func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
@@ -35,7 +35,7 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 
 type SegmentBuilder struct {
 	mb *MessageBuilder
-	as *AllocState
+	b  *[]byte
 	id SegmentID
 }
 
@@ -43,7 +43,13 @@ type SegmentBuilder struct {
 // only be called when the caller is sure the given word is already allocated in
 // the segment.
 func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
-	binary.LittleEndian.PutUint64(sb.as.uncheckedSegTailSlice(sb.id, offset), uint64(value))
+	// binary.LittleEndian.PutUint64(sb.as.uncheckedSegSlice(sb.id, offset, 1), uint64(value))
+	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], uint64(value))
+	// binary.LittleEndian.PutUint64(sb.b[offset*WordSize:(offset+1)*WordSize], uint64(value))
+}
+
+func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
+	return Word(binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:]))
 }
 
 type Allocator interface {
@@ -155,11 +161,31 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (Segment
 	if size > MaxValidWordCount {
 		return SegmentBuilder{}, 0, errAllocOverMaxWordCount
 	}
+	oldSegsCap := cap(mb.state.Segs)
+
+	// Ask the allocator to allocate.
 	segID, offset, err := mb.alloc.Allocate(&mb.state, preferred, size)
 	if err != nil {
 		return SegmentBuilder{}, 0, err
 	}
-	return SegmentBuilder{id: segID, mb: mb, as: &mb.state}, offset, nil
+
+	// This assertion is necessary because SegmentBuilders track the segment
+	// buffers by pointers into mb.state.Segs. Changing the capacity (but
+	// _not_ the length) would invalidate such pointers (because of the
+	// reallocation of the Segs slice). Thus we impose this restriction on
+	// allocators, that they must define at init time the max number of
+	// segments they are likely to use (while actual usage is still dynamic,
+	// given by the length of Segs).
+	if cap(mb.state.Segs) != oldSegsCap {
+		return SegmentBuilder{}, 0, errCannotChangeSegsCap
+	}
+
+	// All good.
+	return SegmentBuilder{
+		id: segID,
+		mb: mb,
+		b:  &mb.state.Segs[segID],
+	}, offset, nil
 }
 
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {

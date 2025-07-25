@@ -119,6 +119,8 @@ var errStructSizeTooLarge = errors.New("struct size is too large")
 
 var errDifferentMsgBuilders = errors.New("different message builders")
 
+var errCannotChangeSegsCap = errors.New("cannot change capacity of segments during Allocate")
+
 type errStructBuilderDoesNotContainDataField uint16
 
 func (err errStructBuilderDoesNotContainDataField) Error() string {

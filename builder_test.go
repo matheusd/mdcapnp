@@ -99,9 +99,78 @@ func TestAllocStateHeaderBufSeg0Prefix(t *testing.T) {
 	}
 }
 
+func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
+	alloc := &alwaysReallocAllocator{segsCapacity: 2}
+	mb, err := NewMessageBuilder(alloc)
+	require.NoError(t, err)
+
+	// Allocate first word.
+	v1 := Word(0x1122333455667788)
+	seg1, off1, err := mb.allocate(0, 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, seg1.id) // Sanity check.
+	require.EqualValues(t, 1, off1)    // Sanity check.
+	seg1.uncheckedSetWord(off1, v1)
+
+	// Allocate a large amount to cause a re-allocation in the internal
+	// buffer.
+	const extraWords = 256
+	_, _, err = mb.allocate(0, extraWords)
+	require.NoError(t, err)
+
+	// Allocate second word.
+	v2 := Word(0x99aabbccddeeff00)
+	seg2, off2, err := mb.allocate(0, 1)
+	require.NoError(t, err)
+	seg2.uncheckedSetWord(off2, v2)
+
+	// Ensure the second offset was made far from the first offset.
+	require.EqualValues(t, seg1.id, seg2.id)
+	require.Equal(t, off1+extraWords+1, off2)
+
+	// Ensure both segment builders can read each other's values.
+	require.Equal(t, v1, seg2.uncheckedGetWord(off1))
+	require.Equal(t, v2, seg1.uncheckedGetWord(off2))
+
+	// Create a new segment and allocate the third word on it.
+	alloc.createNewSeg = true
+	v3 := Word(0x5566778899001122)
+	seg3, off3, err := mb.allocate(0, 4)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, seg3.id) // Sanity check.
+	seg3.uncheckedSetWord(off3, v3)
+	require.NotEqualValues(t, seg3.id, seg1.id)
+
+	// Allocate a new word back in the first segment.
+	alloc.usePreferredSeg = true
+	v4 := Word(0x7788990011223344)
+	seg4, off4, err := mb.allocate(0, 1)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, seg4.id) // Sanity check.
+	seg4.uncheckedSetWord(off4, v4)
+
+	// Ensure segment builders on segment 0 can read each other's values.
+	//
+	// This is the critical test: ensures that even after allocating new
+	// segments and new segment buffers, old segment builders (created
+	// before the reallocs) can still read new values (i.e. they are all
+	// pointing to the _same_ buffer).
+	require.Equal(t, v1, seg1.uncheckedGetWord(off1))
+	require.Equal(t, v1, seg2.uncheckedGetWord(off1))
+	require.Equal(t, v1, seg4.uncheckedGetWord(off1))
+	require.Equal(t, v2, seg1.uncheckedGetWord(off2))
+	require.Equal(t, v2, seg2.uncheckedGetWord(off2))
+	require.Equal(t, v2, seg4.uncheckedGetWord(off2))
+	require.Equal(t, v4, seg1.uncheckedGetWord(off4))
+	require.Equal(t, v4, seg2.uncheckedGetWord(off4))
+	require.Equal(t, v4, seg4.uncheckedGetWord(off4))
+}
+
 func BenchmarkBuilderSetInt64(b *testing.B) {
+	alloc := DefaultSimpleSingleAllocator
+
 	b.Run("reuse all", func(b *testing.B) {
-		mb, err := NewMessageBuilder(DefaultSimpleSingleAllocator)
+		mb, err := NewMessageBuilder(alloc)
 		require.NoError(b, err)
 
 		st, err := NewGoserbenchSmallStruct(mb)
@@ -121,7 +190,7 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 	})
 
 	b.Run("reuse mb", func(b *testing.B) {
-		mb, err := NewMessageBuilder(DefaultSimpleSingleAllocator)
+		mb, err := NewMessageBuilder(alloc)
 		require.NoError(b, err)
 
 		b.ReportAllocs()
@@ -150,7 +219,7 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 		b.ResetTimer()
 
 		for i := range b.N {
-			mb, err := NewMessageBuilder(DefaultSimpleSingleAllocator)
+			mb, err := NewMessageBuilder(alloc)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -166,4 +235,22 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 			}
 		}
 	})
+}
+
+// BenchmarkMsgBuilderAllocate benchmarks the overhead in
+// MessageBuilder.allocate using a simulated test allocator that doesn't do
+// anything.
+func BenchmarkMsgBuilderAllocate(b *testing.B) {
+	mb, err := NewMessageBuilder(&nopAllocator{})
+	require.NoError(b, err)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for range b.N {
+		_, _, err := mb.allocate(0, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -7,11 +7,19 @@ package mdcapnp
 import "slices"
 
 type SimpleSingleAllocator struct {
-	initialSize int
+	initialSize WordCount
+}
+
+func MakeSimpleSingleAllocator(initialSize WordCount) SimpleSingleAllocator {
+	// One word for header + one word for root pointer.
+	if initialSize < 2 {
+		panic("minimum initial size is 2 words")
+	}
+	return SimpleSingleAllocator{initialSize: initialSize}
 }
 
 func (s SimpleSingleAllocator) Init(state *AllocState) (err error) {
-	state.HeaderBuf = make([]byte, 8, s.initialSize)
+	state.HeaderBuf = make([]byte, WordSize, s.initialSize*WordSize)
 	state.Segs = make([][]byte, 1)
 	state.Segs[0] = state.HeaderBuf[8:16]
 	return
@@ -42,4 +50,4 @@ func (s SimpleSingleAllocator) Reset(state *AllocState) (err error) {
 	return
 }
 
-var DefaultSimpleSingleAllocator = SimpleSingleAllocator{initialSize: 1024}
+var DefaultSimpleSingleAllocator = SimpleSingleAllocator{initialSize: 1024 / WordSize}
