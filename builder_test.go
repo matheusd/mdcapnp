@@ -91,7 +91,7 @@ func TestAllocStateHeaderBufSeg0Prefix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			as := AllocState{
 				HeaderBuf: tc.hb,
-				Segs:      [][]byte{tc.sb},
+				FirstSeg:  tc.sb,
 			}
 			got := as.headerBufPrefixesSeg0Buf()
 			require.Equal(t, tc.want, got)
@@ -167,7 +167,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 }
 
 func BenchmarkBuilderSetInt64(b *testing.B) {
-	alloc := DefaultSimpleSingleAllocator
+	alloc := MakeSimpleSingleAllocator(10)
 
 	b.Run("reuse all", func(b *testing.B) {
 		mb, err := NewMessageBuilder(alloc)

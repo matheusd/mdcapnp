@@ -19,8 +19,10 @@ type alwaysReallocAllocator struct {
 }
 
 func (a *alwaysReallocAllocator) Init(state *AllocState) (err error) {
-	state.Segs = make([][]byte, 1, max(1, a.segsCapacity))
-	state.Segs[0] = make([]byte, WordSize, WordSize)
+	state.FirstSeg = make([]byte, WordSize, WordSize)
+	if a.segsCapacity > 0 {
+		state.Segs = make([][]byte, 0, a.segsCapacity)
+	}
 	return
 }
 
@@ -31,17 +33,22 @@ func (a *alwaysReallocAllocator) Allocate(state *AllocState, preferred SegmentID
 		seg = preferred
 	case a.createNewSeg:
 		state.Segs = append(state.Segs, []byte{})
-		seg = SegmentID(len(state.Segs) - 1)
+		seg = SegmentID(len(state.Segs))
 	default:
-		seg = SegmentID(len(state.Segs) - 1)
-	}
-	if a.createNewSeg {
+		seg = SegmentID(len(state.Segs))
 	}
 
-	oldLen := len(state.Segs[seg])
+	var oldBuf *[]byte
+	if seg == 0 {
+		oldBuf = &state.FirstSeg
+	} else {
+		oldBuf = &state.Segs[seg-1]
+	}
+
+	oldLen := len(*oldBuf)
 	newBuf := make([]byte, oldLen+int(size*WordSize), oldLen+int(size*WordSize))
-	copy(newBuf, state.Segs[seg])
-	state.Segs[seg] = newBuf
+	copy(newBuf, *oldBuf)
+	*oldBuf = newBuf
 
 	off = WordOffset(oldLen / WordSize)
 	return
@@ -52,12 +59,12 @@ func (a *alwaysReallocAllocator) Reset(state *AllocState) (err error) {
 	return a.Init(state)
 }
 
-var globalNopAllocatorSegs = [][]byte{make([]byte, WordSize, WordSize)}
+var globalNopFirstSeg = make([]byte, WordSize, WordSize)
 
 type nopAllocator struct{}
 
 func (n *nopAllocator) Init(state *AllocState) (err error) {
-	state.Segs = globalNopAllocatorSegs
+	state.FirstSeg = globalNopFirstSeg
 	return
 }
 
@@ -66,6 +73,6 @@ func (n *nopAllocator) Allocate(state *AllocState, preferred SegmentID, size Wor
 }
 
 func (n *nopAllocator) Reset(state *AllocState) (err error) {
-	state.Segs = globalNopAllocatorSegs
+	state.FirstSeg = globalNopFirstSeg
 	return
 }

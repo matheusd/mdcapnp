@@ -20,33 +20,32 @@ func MakeSimpleSingleAllocator(initialSize WordCount) SimpleSingleAllocator {
 
 func (s SimpleSingleAllocator) Init(state *AllocState) (err error) {
 	state.HeaderBuf = make([]byte, WordSize, s.initialSize*WordSize)
-	state.Segs = make([][]byte, 1)
-	state.Segs[0] = state.HeaderBuf[8:16]
+	state.FirstSeg = state.HeaderBuf[8:16]
 	return
 }
 
 func (s SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
-	segbuf := state.Segs[0]
+	segbuf := state.FirstSeg
 	sizeBytes := int(size.ByteCount())
 	freeCap := cap(segbuf) - len(segbuf)
 	if freeCap < sizeBytes {
 		// Resize needed.
 		state.HeaderBuf = slices.Grow(state.HeaderBuf, len(segbuf)+sizeBytes)
-		state.Segs[0] = state.HeaderBuf[8:len(segbuf)]
+		state.FirstSeg = state.HeaderBuf[8:len(segbuf)]
 		segbuf = state.Segs[0]
 	}
 
 	// Increase len of segment 0.
 	off = WordOffset(len(segbuf) / WordSize)
-	state.Segs[0] = segbuf[:len(segbuf)+sizeBytes]
+	state.FirstSeg = segbuf[:len(segbuf)+sizeBytes]
 	return
 }
 
 func (s SimpleSingleAllocator) Reset(state *AllocState) (err error) {
 	// Truncate segment 0 to root word.
 	clear(state.HeaderBuf)
-	clear(state.Segs[0])
-	state.Segs[0] = state.Segs[0][:8]
+	clear(state.FirstSeg)
+	state.FirstSeg = state.FirstSeg[:8]
 	return
 }
 

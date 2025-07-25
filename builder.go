@@ -60,6 +60,7 @@ type Allocator interface {
 
 type AllocState struct {
 	HeaderBuf []byte
+	FirstSeg  []byte
 	Segs      [][]byte
 	Extra     any
 }
@@ -67,15 +68,16 @@ type AllocState struct {
 // ValidAfterInitReset checks if the AllocState is valid after having been
 // (re-)initialized by an [Allocator] Init() or Reset() call.
 func (as *AllocState) ValidAfterInitReset() error {
-	if len(as.Segs) < 1 {
+	if len(as.FirstSeg) == 0 {
 		return errAllocNoFirstSeg
 	}
-	if len(as.Segs[0]) < WordSize {
+	if len(as.FirstSeg) < WordSize {
 		return errAllocNoRootWord
 	}
 	return nil
 }
 
+/*
 // uncheckedSegTailSlice returns the tail slice of a segment (aligned to a word)
 // without checking for valid bounds.
 //
@@ -93,6 +95,7 @@ func (as *AllocState) uncheckedSegTailSlice(seg SegmentID, offset WordOffset) []
 func (as *AllocState) uncheckedSegSlice(seg SegmentID, offset WordOffset, size WordCount) []byte {
 	return as.Segs[seg][offset*WordSize : (offset+WordOffset(size))*WordSize]
 }
+*/
 
 // headerBufPrefixesSeg0Buf returns true if the underlying array in HeaderBuf
 // exactly prefixes the underlying array of Segs[0].
@@ -110,8 +113,8 @@ func (as *AllocState) headerBufPrefixesSeg0Buf() bool {
 	// address for headerBuf) and the headerBuf slice could be extended
 	// towards the seg0 buffer.
 	headerBufPtr := unsafe.Pointer(unsafe.SliceData(as.HeaderBuf))
-	seg0BufPtr := unsafe.Pointer(unsafe.SliceData(as.Segs[0]))
-	return cap(as.HeaderBuf) >= len(as.HeaderBuf)+len(as.Segs[0]) &&
+	seg0BufPtr := unsafe.Pointer(unsafe.SliceData(as.FirstSeg))
+	return cap(as.HeaderBuf) >= len(as.HeaderBuf)+len(as.FirstSeg) &&
 		seg0BufPtr == unsafe.Add(headerBufPtr, len(as.HeaderBuf))
 }
 
@@ -121,14 +124,14 @@ func (as *AllocState) headerBufPrefixesSeg0Buf() bool {
 // This must only be called in the single segment case, after ensuring the
 // header buf has enough room for the header.
 func (as *AllocState) putSingleSegHeaderInBuf() {
-	seg0size := uint64(len(as.Segs[0]))
+	seg0size := uint64(len(as.FirstSeg))
 	if seg0size > MaxValidWordCount*WordSize {
 		// This should never happen for correctly implemented
 		// allocators.
 		panic("allocator allocated single segment too large")
 	}
 	clear(as.HeaderBuf[:4]) // Segment count is all zeroes.
-	binary.LittleEndian.PutUint32(as.HeaderBuf[4:], uint32(len(as.Segs[0])/WordSize))
+	binary.LittleEndian.PutUint32(as.HeaderBuf[4:], uint32(len(as.FirstSeg)/WordSize))
 }
 
 type MessageBuilder struct {
@@ -180,18 +183,23 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (Segment
 		return SegmentBuilder{}, 0, errCannotChangeSegsCap
 	}
 
+	b := &mb.state.FirstSeg
+	if segID != 0 {
+		b = &mb.state.Segs[segID-1]
+	}
+
 	// All good.
 	return SegmentBuilder{
 		id: segID,
 		mb: mb,
-		b:  &mb.state.Segs[segID],
+		b:  b,
 	}, offset, nil
 }
 
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 	// NewMessageBuilder() ensure the allocator returns at least one segment
 	// with at least enough room for the root pointer.
-	if mb == nil || len(mb.state.Segs) == 0 || len(mb.state.Segs[0]) < WordSize {
+	if mb == nil || mb.state.FirstSeg == nil || len(mb.state.FirstSeg) < WordSize {
 		return errAllocStateNoRootWord
 	}
 	if sb.seg.mb != mb {
@@ -210,7 +218,7 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 		dataSectionSize:    sb.sz.DataSectionSize,
 		pointerSectionSize: sb.sz.PointerSectionSize,
 	}
-	binary.LittleEndian.PutUint64(mb.state.Segs[0], uint64(sp.toPointer()))
+	binary.LittleEndian.PutUint64(mb.state.FirstSeg, uint64(sp.toPointer()))
 
 	return nil
 }
@@ -229,10 +237,10 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 }
 
 func (mb *MessageBuilder) Serialize() ([]byte, error) {
-	if len(mb.state.Segs) == 0 {
+	if mb.state.FirstSeg == nil {
 		return nil, errMsgBuilderNoSegments
 	}
-	if len(mb.state.Segs[0]) == 0 {
+	if len(mb.state.FirstSeg) == 0 {
 		return nil, errMsgBuilderNoSegData
 	}
 
@@ -244,10 +252,10 @@ func (mb *MessageBuilder) Serialize() ([]byte, error) {
 	// segment size (in words).
 	const singleSegmentHeaderSize = 8
 	if len(mb.state.HeaderBuf) == singleSegmentHeaderSize &&
-		len(mb.state.Segs) == 1 &&
+		len(mb.state.Segs) == 0 &&
 		mb.state.headerBufPrefixesSeg0Buf() {
 		mb.state.putSingleSegHeaderInBuf() // Write single segment header
-		return mb.state.HeaderBuf[:len(mb.state.HeaderBuf)+len(mb.state.Segs[0])], nil
+		return mb.state.HeaderBuf[:len(mb.state.HeaderBuf)+len(mb.state.FirstSeg)], nil
 	}
 
 	// TODO: proceed to standard framing and serialization.
