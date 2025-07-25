@@ -6,11 +6,11 @@ package mdcapnp
 
 import (
 	"encoding/binary"
+	"fmt"
 	"unsafe"
 )
 
 type StructBuilder struct {
-	mb  *MessageBuilder
 	seg SegmentBuilder
 	off WordOffset // Concrete offset into segment where struct data begins.
 	sz  StructSize
@@ -35,6 +35,7 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 
 type SegmentBuilder struct {
 	mb *MessageBuilder
+	as *AllocState
 	id SegmentID
 }
 
@@ -42,8 +43,7 @@ type SegmentBuilder struct {
 // only be called when the caller is sure the given word is already allocated in
 // the segment.
 func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
-	byteOffset := int(offset * WordSize)
-	binary.LittleEndian.PutUint64(sb.mb.state.Segs[sb.id][byteOffset:], uint64(value))
+	binary.LittleEndian.PutUint64(sb.as.uncheckedSegTailSlice(sb.id, offset), uint64(value))
 }
 
 type Allocator interface {
@@ -68,6 +68,24 @@ func (as *AllocState) ValidAfterInitReset() error {
 		return errAllocNoRootWord
 	}
 	return nil
+}
+
+// uncheckedSegTailSlice returns the tail slice of a segment (aligned to a word)
+// without checking for valid bounds.
+//
+// This must only be called when the assumption holds that the bounds have
+// already been validated.
+func (as *AllocState) uncheckedSegTailSlice(seg SegmentID, offset WordOffset) []byte {
+	return as.Segs[seg][offset*WordSize:]
+}
+
+// uncheckedSegSlice slices part of a segment (aligned to a word) without
+// checking for valid bounds.
+//
+// This must only be called when the assumption holds that the bounds have
+// already been validated.
+func (as *AllocState) uncheckedSegSlice(seg SegmentID, offset WordOffset, size WordCount) []byte {
+	return as.Segs[seg][offset*WordSize : (offset+WordOffset(size))*WordSize]
 }
 
 // headerBufPrefixesSeg0Buf returns true if the underlying array in HeaderBuf
@@ -141,7 +159,7 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (Segment
 	if err != nil {
 		return SegmentBuilder{}, 0, err
 	}
-	return SegmentBuilder{id: segID, mb: mb}, offset, nil
+	return SegmentBuilder{id: segID, mb: mb, as: &mb.state}, offset, nil
 }
 
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
@@ -149,6 +167,9 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 	// with at least enough room for the root pointer.
 	if mb == nil || len(mb.state.Segs) == 0 || len(mb.state.Segs[0]) < WordSize {
 		return errAllocStateNoRootWord
+	}
+	if sb.seg.mb != mb {
+		return fmt.Errorf("sb.mb vs mb: %w", errDifferentMsgBuilders)
 	}
 
 	// TODO: handle inter-segment pointer.
@@ -163,7 +184,7 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 		dataSectionSize:    sb.sz.DataSectionSize,
 		pointerSectionSize: sb.sz.PointerSectionSize,
 	}
-	binary.LittleEndian.PutUint64(sb.mb.state.Segs[0], uint64(sp.toPointer()))
+	binary.LittleEndian.PutUint64(mb.state.Segs[0], uint64(sp.toPointer()))
 
 	return nil
 }
@@ -175,7 +196,6 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 	}
 
 	return StructBuilder{
-		mb:  mb,
 		seg: seg,
 		off: off,
 		sz:  size,

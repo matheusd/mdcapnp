@@ -117,6 +117,8 @@ var errAllocOverMaxWordCount = errors.New("cannot allocate more than the max wor
 
 var errStructSizeTooLarge = errors.New("struct size is too large")
 
+var errDifferentMsgBuilders = errors.New("different message builders")
+
 type errStructBuilderDoesNotContainDataField uint16
 
 func (err errStructBuilderDoesNotContainDataField) Error() string {
