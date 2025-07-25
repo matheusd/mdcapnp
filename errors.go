@@ -103,9 +103,9 @@ func (err errShortStreamSegSize) Error() string {
 		err.streamLen, err.segSize)
 }
 
-var errAllocInitNoFirstSeg = errors.New("allocator Init() did not initialize the first segment")
+var errAllocNoFirstSeg = errors.New("allocator did not initialize the first segment")
 
-var errAllocInitNoRootWord = errors.New("allocator Init() did not initialize the root struct pointer")
+var errAllocNoRootWord = errors.New("allocator did not initialize the root struct pointer")
 
 var errAllocStateNoRootWord = errors.New("builder state does not have space for root pointer")
 

@@ -10,37 +10,35 @@ type SimpleSingleAllocator struct {
 	initialSize int
 }
 
-func (s SimpleSingleAllocator) Init() (initState AllocState, err error) {
-	initState.HeaderBuf = make([]byte, 8, s.initialSize)
-	initState.Segs = make([][]byte, 1)
-	initState.Segs[0] = initState.HeaderBuf[8:16]
+func (s SimpleSingleAllocator) Init(state *AllocState) (err error) {
+	state.HeaderBuf = make([]byte, 8, s.initialSize)
+	state.Segs = make([][]byte, 1)
+	state.Segs[0] = state.HeaderBuf[8:16]
 	return
 }
 
-func (s SimpleSingleAllocator) Allocate(prevState AllocState, preferred SegmentID, size WordCount) (nextState AllocState, seg SegmentID, off WordOffset, err error) {
-	segbuf := prevState.Segs[0]
+func (s SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
+	segbuf := state.Segs[0]
 	sizeBytes := int(size.ByteCount())
 	freeCap := cap(segbuf) - len(segbuf)
-	nextState = prevState
 	if freeCap < sizeBytes {
 		// Resize needed.
-		nextState.HeaderBuf = slices.Grow(nextState.HeaderBuf, len(segbuf)+sizeBytes)
-		nextState.Segs[0] = nextState.HeaderBuf[8:len(segbuf)]
-		segbuf = nextState.Segs[0]
+		state.HeaderBuf = slices.Grow(state.HeaderBuf, len(segbuf)+sizeBytes)
+		state.Segs[0] = state.HeaderBuf[8:len(segbuf)]
+		segbuf = state.Segs[0]
 	}
 
 	// Increase len of segment 0.
 	off = WordOffset(len(segbuf) / WordSize)
-	nextState.Segs[0] = segbuf[:len(segbuf)+sizeBytes]
+	state.Segs[0] = segbuf[:len(segbuf)+sizeBytes]
 	return
 }
 
-func (s SimpleSingleAllocator) Reset(lastState AllocState) (blankState AllocState, err error) {
-	// Truncate segment 0.
-	blankState = lastState
-	clear(blankState.HeaderBuf)
-	clear(blankState.Segs[0])
-	blankState.Segs[0] = blankState.Segs[0][:8]
+func (s SimpleSingleAllocator) Reset(state *AllocState) (err error) {
+	// Truncate segment 0 to root word.
+	clear(state.HeaderBuf)
+	clear(state.Segs[0])
+	state.Segs[0] = state.Segs[0][:8]
 	return
 }
 

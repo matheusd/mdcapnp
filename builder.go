@@ -48,15 +48,27 @@ func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
 }
 
 type Allocator interface {
-	Init() (initState AllocState, err error)
-	Allocate(prevState AllocState, preferred SegmentID, size WordCount) (nextState AllocState, seg SegmentID, off WordOffset, err error)
-	Reset(lastState AllocState) (blankState AllocState, err error)
+	Init(state *AllocState) (err error)
+	Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error)
+	Reset(state *AllocState) (err error)
 }
 
 type AllocState struct {
 	HeaderBuf []byte
 	Segs      [][]byte
 	Extra     any
+}
+
+// ValidAfterInitReset checks if the AllocState is valid after having been
+// (re-)initialized by an [Allocator] Init() or Reset() call.
+func (as *AllocState) ValidAfterInitReset() error {
+	if len(as.Segs) < 1 {
+		return errAllocNoFirstSeg
+	}
+	if len(as.Segs[0]) < WordSize {
+		return errAllocNoRootWord
+	}
+	return nil
 }
 
 // headerBufPrefixesSeg0Buf returns true if the underlying array in HeaderBuf
@@ -102,32 +114,23 @@ type MessageBuilder struct {
 }
 
 func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
-	mb = new(MessageBuilder)
-	if mb.state, err = alloc.Init(); err != nil {
+	mb = &MessageBuilder{alloc: alloc}
+	if err := alloc.Init(&mb.state); err != nil {
 		return nil, err
 	}
-	if len(mb.state.Segs) < 1 {
-		return nil, errAllocInitNoFirstSeg
+	if err := mb.state.ValidAfterInitReset(); err != nil {
+		return nil, err
 	}
-	if len(mb.state.Segs[0]) < WordSize {
-		return nil, errAllocInitNoRootWord
-	}
-	mb.alloc = alloc
 	return mb, nil
 }
 
 func (mb *MessageBuilder) Reset() error {
-	newState, err := mb.alloc.Reset(mb.state)
-	if err != nil {
+	if err := mb.alloc.Reset(&mb.state); err != nil {
 		return err
 	}
-	if len(newState.Segs) < 1 {
-		return errAllocInitNoFirstSeg
+	if err := mb.state.ValidAfterInitReset(); err != nil {
+		return err
 	}
-	if len(newState.Segs[0]) < WordSize {
-		return errAllocInitNoRootWord
-	}
-	mb.state = newState
 	return nil
 }
 
@@ -135,11 +138,10 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (Segment
 	if size > MaxValidWordCount {
 		return SegmentBuilder{}, 0, errAllocOverMaxWordCount
 	}
-	newState, segID, offset, err := mb.alloc.Allocate(mb.state, preferred, size)
+	segID, offset, err := mb.alloc.Allocate(&mb.state, preferred, size)
 	if err != nil {
 		return SegmentBuilder{}, 0, err
 	}
-	mb.state = newState
 	return SegmentBuilder{id: segID, mb: mb}, offset, nil
 }
 
