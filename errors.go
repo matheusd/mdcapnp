@@ -116,3 +116,9 @@ var errMsgBuilderNoSegData = errors.New("message builder does not have any segme
 var errAllocOverMaxWordCount = errors.New("cannot allocate more than the max word count")
 
 var errStructSizeTooLarge = errors.New("struct size is too large")
+
+type errStructBuilderDoesNotContainDataField uint16
+
+func (err errStructBuilderDoesNotContainDataField) Error() string {
+	return fmt.Sprintf("struct builder did not allocate space for field %d", int(err))
+}

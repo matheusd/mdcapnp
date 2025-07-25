@@ -6,7 +6,6 @@ package mdcapnp
 
 import (
 	"encoding/binary"
-	"errors"
 	"unsafe"
 )
 
@@ -21,17 +20,17 @@ func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
 	return dataIndex < DataFieldIndex(sb.sz.DataSectionSize)
 }
 
-func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) error {
+func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error) {
 	if !sb.hasData(dataIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
 		// or error out?
-		return errors.New("cannot resize struct")
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
 		sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(v))
-		return nil
 	}
+	return
 }
 
 type SegmentBuilder struct {
