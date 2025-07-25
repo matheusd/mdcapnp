@@ -102,3 +102,17 @@ func (err errShortStreamSegSize) Error() string {
 	return fmt.Sprintf("remaining stream length %d smaller than expected segment size %d",
 		err.streamLen, err.segSize)
 }
+
+var errAllocInitNoFirstSeg = errors.New("allocator Init() did not initialize the first segment")
+
+var errAllocInitNoRootWord = errors.New("allocator Init() did not initialize the root struct pointer")
+
+var errAllocStateNoRootWord = errors.New("builder state does not have space for root pointer")
+
+var errMsgBuilderNoSegments = errors.New("message builder does not have any segments")
+
+var errMsgBuilderNoSegData = errors.New("message builder does not have any segment data")
+
+var errAllocOverMaxWordCount = errors.New("cannot allocate more than the max word count")
+
+var errStructSizeTooLarge = errors.New("struct size is too large")

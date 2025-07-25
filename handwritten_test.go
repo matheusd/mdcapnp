@@ -61,6 +61,17 @@ func (st *GoserbenchSmallStruct) Money() float64 {
 	return (*Struct)(st).Float64(2)
 }
 
+type GoserbenchSmallStructBuilder StructBuilder
+
+func NewGoserbenchSmallStruct(mb *MessageBuilder) (GoserbenchSmallStructBuilder, error) {
+	r, err := mb.NewStruct(StructSize{DataSectionSize: 3, PointerSectionSize: 2})
+	return GoserbenchSmallStructBuilder(r), err
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetSiblings(v int64) {
+	(*StructBuilder)(stb).SetInt64(0, v)
+}
+
 // goserbenchSmallStruct is a copy of goserbench's SmallStruct benchmark
 // structure.
 type goserbenchSmallStruct struct {
