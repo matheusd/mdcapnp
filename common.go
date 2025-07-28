@@ -64,7 +64,7 @@ func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) 
 	return addWordOffsets(off, WordOffset(c))
 }
 
-const MaxValidWordCount = 1<<30 - 1
+const MaxValidWordCount = 1<<29 - 1
 
 type ByteCount uint64
 
@@ -75,4 +75,9 @@ type StructSize struct {
 
 func (ss StructSize) TotalSize() WordCount {
 	return WordCount(ss.DataSectionSize) + WordCount(ss.PointerSectionSize)
+}
+
+type ListSize struct {
+	elSize   listElementSize
+	listSize listSize
 }

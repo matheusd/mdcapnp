@@ -161,3 +161,13 @@ func NewSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) *Arena {
 	arena.Reset(b, writable)
 	return &arena
 }
+
+func DecodeArena(fb []byte, rl *ReadLimiter) (*Arena, error) {
+	// TODO: decode
+	var arena Arena
+	arena.rl = rl
+	if err := arena.DecodeSingleSegment(fb); err != nil {
+		return nil, err
+	}
+	return &arena, nil
+}

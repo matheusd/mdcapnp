@@ -27,7 +27,7 @@ func (ptr pointer) pointerSectionSize() wordCount16 {
 }
 
 func (ptr pointer) elSize() listElementSize {
-	return listElementSize(ptr & 0x300000000 >> 32)
+	return listElementSize((ptr >> 32) & 0b111)
 }
 
 func (ptr pointer) listSize() listSize {
@@ -77,13 +77,23 @@ type structPointer struct {
 }
 
 func (sp structPointer) toPointer() pointer {
-	return 1 | pointer(sp.dataOffset)<<2 | pointer(sp.dataOffset)<<32 | pointer(sp.dataOffset)<<48
+	return pointer(pointerTypeStruct) |
+		pointer(uint32(sp.dataOffset<<2)) |
+		pointer(sp.dataSectionSize)<<32 |
+		pointer(sp.pointerSectionSize)<<48
 }
 
 type listPointer struct {
 	startOffset WordOffset
 	elSize      listElementSize
 	listSize    listSize
+}
+
+func (lp listPointer) toPointer() pointer {
+	return pointer(pointerTypeList) |
+		pointer(uint32(lp.startOffset<<2)) |
+		pointer(lp.elSize)<<32 |
+		pointer(lp.listSize)<<35
 }
 
 // derefFarPointer de-references a far pointer into a concrete segment pointer.

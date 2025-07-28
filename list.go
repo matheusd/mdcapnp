@@ -32,6 +32,11 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 	}
 }
 
+const (
+	// MaxListSize is the max number of elements in a list.
+	MaxListSize = (1 << 29) - 1
+)
+
 func listByteCount(elSize listElementSize, lsSize listSize) ByteCount {
 	return ByteCount(listWordCount(elSize, lsSize)) * WordSize
 }

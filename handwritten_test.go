@@ -68,8 +68,32 @@ func NewGoserbenchSmallStruct(mb *MessageBuilder) (GoserbenchSmallStructBuilder,
 	return GoserbenchSmallStructBuilder(r), err
 }
 
-func (stb *GoserbenchSmallStructBuilder) SetSiblings(v int64) {
+func (stb *GoserbenchSmallStructBuilder) SetAsRoot(mb *MessageBuilder) error {
+	return mb.SetRoot((*StructBuilder)(stb))
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetBirthDay(v int64) {
 	(*StructBuilder)(stb).SetInt64(0, v)
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetSiblings(v int32) {
+	(*StructBuilder)(stb).SetInt32(1, Int32FieldSetMaskLo, v)
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetSpouse(v bool) {
+	(*StructBuilder)(stb).SetBool(1, 32, v)
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetMoney(v float64) {
+	(*StructBuilder)(stb).SetFloat64(2, v)
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetName(v string) error {
+	return (*StructBuilder)(stb).SetString(0, v)
+}
+
+func (stb *GoserbenchSmallStructBuilder) SetPhone(v string) error {
+	return (*StructBuilder)(stb).SetString(1, v)
 }
 
 // goserbenchSmallStruct is a copy of goserbench's SmallStruct benchmark

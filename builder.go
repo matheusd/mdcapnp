@@ -7,8 +7,15 @@ package mdcapnp
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"unsafe"
 )
+
+type ListBuilder struct {
+	off WordOffset
+	sz  ListSize
+	seg SegmentBuilder
+}
 
 type StructBuilder struct {
 	off WordOffset // Concrete offset into segment where struct data begins.
@@ -20,6 +27,10 @@ func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
 	return dataIndex < DataFieldIndex(sb.sz.DataSectionSize)
 }
 
+func (sb *StructBuilder) hasPointer(ptrIndex PointerFieldIndex) bool {
+	return ptrIndex < PointerFieldIndex(sb.sz.PointerSectionSize)
+}
+
 func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error) {
 	if !sb.hasData(dataIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
@@ -28,9 +39,83 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(v))
+		finalOff := dataIndex.uncheckedWordOffset(sb.off)
+		sb.seg.uncheckedSetWord(finalOff, Word(v))
 	}
 	return
+}
+
+func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, mask Int32DataFieldSetMask, v int32) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
+	}
+	return
+}
+
+func (sb *StructBuilder) SetBool(dataIndex DataFieldIndex, bit byte, v bool) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), ^(1 << bit), boolToWord(v)<<bit)
+	}
+	return
+}
+
+func (sb *StructBuilder) SetFloat64(dataIndex DataFieldIndex, v float64) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
+	}
+	return
+}
+
+func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err error) {
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		return errStructBuilderDoesNotContainPointerField(ptrIndex)
+	}
+
+	// Allocate the string as a new object (list of bytes).
+	//
+	// TODO: handle allocs in new segments.
+	ls, err := sb.seg.mb.StringToNewList(sb.seg.id, v)
+	if err != nil {
+		return err
+	}
+
+	// Determine concrete pointer offset inside struct. This doesn't need
+	// overflow checks because the entire struct has been allocated, thus
+	// this pointer offset is known to be in bounds.
+	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
+
+	// Determine the concrete offset from this pointer offset to the actual
+	// data. This finishes the construction of the list pointer.
+	lsPtr := listPointer{
+		startOffset: ls.off - ptrOff - 1,
+		elSize:      ls.sz.elSize,
+		listSize:    ls.sz.listSize,
+	}
+
+	// Structure already fully allocated, no need to check for
+	// bounds.
+	sb.seg.uncheckedSetWord(ptrOff, Word(lsPtr.toPointer()))
+	return nil
 }
 
 type SegmentBuilder struct {
@@ -48,8 +133,22 @@ func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
 	// binary.LittleEndian.PutUint64(sb.b[offset*WordSize:(offset+1)*WordSize], uint64(value))
 }
 
+func (sb *SegmentBuilder) uncheckedMaskAndMergeWord(offset WordOffset, mask, value Word) {
+	old := binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:])
+	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&uint64(mask)|uint64(value))
+}
+
 func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
 	return Word(binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:]))
+}
+
+// uncheckedSegSlice slices part of a segment (aligned to a word) without
+// checking for valid bounds.
+//
+// This must only be called when the assumption holds that the bounds have
+// already been validated.
+func (sb *SegmentBuilder) uncheckedSegSlice(offset WordOffset, size WordCount) []byte {
+	return (*sb.b)[offset*WordSize : (offset+WordOffset(size))*WordSize]
 }
 
 type Allocator interface {
@@ -233,6 +332,30 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 		seg: seg,
 		off: off,
 		sz:  size,
+	}, nil
+}
+
+func (mb *MessageBuilder) StringToNewList(preferSeg SegmentID, s string) (ls ListBuilder, err error) {
+	if len(s) > MaxListSize-1 {
+		return ListBuilder{}, errStringTooLarge
+	}
+
+	// Length of texts (strings) in capnp is +1 due to null at the end.
+	textLen := uint(len(s) + 1)
+	words := WordCount(uintBytesToWordAligned(textLen))
+	seg, off, err := mb.allocate(preferSeg, words)
+	if err != nil {
+		return ListBuilder{}, err
+	}
+	copy(seg.uncheckedSegSlice(off, words), s)
+
+	return ListBuilder{
+		off: off,
+		sz: ListSize{
+			elSize:   listElSizeByte,
+			listSize: listSize(textLen),
+		},
+		seg: seg,
 	}, nil
 }
 

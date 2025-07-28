@@ -18,6 +18,10 @@ import (
 // words in its pointer section, it can have up to 2^16 pointer fields.
 type PointerFieldIndex uint16
 
+func (i PointerFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
+	return base + WordOffset(i)
+}
+
 // DataFieldIndex is the index of a data field in a struct (in words). When the
 // field is smaller than one word, then further indexing may be necessary to
 // extract its value.
@@ -64,6 +68,13 @@ type Int32DataFieldShift int
 const (
 	Int32FieldLo Int32DataFieldShift = 0
 	Int32FieldHi Int32DataFieldShift = 32
+)
+
+type Int32DataFieldSetMask Word
+
+const (
+	Int32FieldSetMaskLo Int32DataFieldSetMask = 0x00000000ffffffff
+	Int32FieldSetMaskHi Int32DataFieldSetMask = 0xffffffff0000000
 )
 
 // Int32 returns a data field as an int32. Given that an int32 field occupies

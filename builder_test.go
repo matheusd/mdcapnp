@@ -99,6 +99,9 @@ func TestAllocStateHeaderBufSeg0Prefix(t *testing.T) {
 	}
 }
 
+// TestSegmentBuilderPreservesBufAfterRealloc tests that re-allocating the
+// underlying buffer maintains the correct references within SegmentBuilder
+// objects.
 func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	alloc := &alwaysReallocAllocator{segsCapacity: 2}
 	mb, err := NewMessageBuilder(alloc)
@@ -167,7 +170,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 }
 
 func BenchmarkBuilderSetInt64(b *testing.B) {
-	alloc := MakeSimpleSingleAllocator(10)
+	alloc := NewSimpleSingleAllocator(10, false)
 
 	b.Run("reuse all", func(b *testing.B) {
 		mb, err := NewMessageBuilder(alloc)
@@ -180,7 +183,7 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 		b.ResetTimer()
 
 		for i := range b.N {
-			st.SetSiblings(int64(i))
+			st.SetBirthDay(int64(i))
 		}
 
 		ser, err := mb.Serialize()
@@ -201,7 +204,7 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			st.SetSiblings(int64(i))
+			st.SetBirthDay(int64(i))
 			err = mb.Reset()
 			if err != nil {
 				b.Fatal(err)
@@ -228,7 +231,7 @@ func BenchmarkBuilderSetInt64(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			st.SetSiblings(int64(i))
+			st.SetBirthDay(int64(i))
 			err = mb.Reset()
 			if err != nil {
 				b.Fatal(err)

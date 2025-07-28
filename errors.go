@@ -121,8 +121,16 @@ var errDifferentMsgBuilders = errors.New("different message builders")
 
 var errCannotChangeSegsCap = errors.New("cannot change capacity of segments during Allocate")
 
+var errStringTooLarge = errors.New("string is too large")
+
 type errStructBuilderDoesNotContainDataField uint16
 
 func (err errStructBuilderDoesNotContainDataField) Error() string {
 	return fmt.Sprintf("struct builder did not allocate space for field %d", int(err))
+}
+
+type errStructBuilderDoesNotContainPointerField uint16
+
+func (err errStructBuilderDoesNotContainPointerField) Error() string {
+	return fmt.Sprintf("struct builder did not allocate space for pointer %d", int(err))
 }

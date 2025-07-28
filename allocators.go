@@ -4,49 +4,64 @@
 
 package mdcapnp
 
-import "slices"
+import (
+	"slices"
+)
 
+// SimpleSingleAllocator is a simple, single-segment allocator. It uses the
+// standard go procedure to allocate and resize the segment data, without
+// additional logic for trying to determine how to best size the segment.
+//
+// It can be configured to either truncate or re-allocate the segment buffer on
+// resets.
 type SimpleSingleAllocator struct {
-	initialSize WordCount
+	initialSize    WordCount
+	reallocOnReset bool
 }
 
-func MakeSimpleSingleAllocator(initialSize WordCount) SimpleSingleAllocator {
+func NewSimpleSingleAllocator(initialSize WordCount, reallocOnReset bool) *SimpleSingleAllocator {
 	// One word for header + one word for root pointer.
 	if initialSize < 2 {
 		panic("minimum initial size is 2 words")
 	}
-	return SimpleSingleAllocator{initialSize: initialSize}
+	if initialSize > MaxValidWordCount {
+		panic("initial size is larger than max valid word count")
+	}
+	return &SimpleSingleAllocator{initialSize: initialSize, reallocOnReset: reallocOnReset}
 }
 
-func (s SimpleSingleAllocator) Init(state *AllocState) (err error) {
+func (s *SimpleSingleAllocator) Init(state *AllocState) (err error) {
 	state.HeaderBuf = make([]byte, WordSize, s.initialSize*WordSize)
 	state.FirstSeg = state.HeaderBuf[8:16]
 	return
 }
 
-func (s SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
-	segbuf := state.FirstSeg
+func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
-	freeCap := cap(segbuf) - len(segbuf)
+	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
 	if freeCap < sizeBytes {
 		// Resize needed.
-		state.HeaderBuf = slices.Grow(state.HeaderBuf, len(segbuf)+sizeBytes)
-		state.FirstSeg = state.HeaderBuf[8:len(segbuf)]
-		segbuf = state.Segs[0]
+		state.HeaderBuf = slices.Grow(state.HeaderBuf, len(state.FirstSeg)+sizeBytes)
+		state.FirstSeg = state.HeaderBuf[8 : 8+len(state.FirstSeg)]
 	}
 
 	// Increase len of segment 0.
-	off = WordOffset(len(segbuf) / WordSize)
-	state.FirstSeg = segbuf[:len(segbuf)+sizeBytes]
+	off = WordOffset(len(state.FirstSeg) / WordSize)
+	state.FirstSeg = state.FirstSeg[:len(state.FirstSeg)+sizeBytes]
 	return
 }
 
-func (s SimpleSingleAllocator) Reset(state *AllocState) (err error) {
-	// Truncate segment 0 to root word.
-	clear(state.HeaderBuf)
-	clear(state.FirstSeg)
-	state.FirstSeg = state.FirstSeg[:8]
+func (s *SimpleSingleAllocator) Reset(state *AllocState) (err error) {
+	if s.reallocOnReset {
+		s.Init(state)
+	} else {
+		clear(state.HeaderBuf)
+		clear(state.FirstSeg)
+
+		// Truncate segment 0 to root word.
+		state.FirstSeg = state.FirstSeg[:8]
+	}
 	return
 }
 
-var DefaultSimpleSingleAllocator = SimpleSingleAllocator{initialSize: 1024 / WordSize}
+var DefaultSimpleSingleAllocator = &SimpleSingleAllocator{initialSize: 1024 / WordSize}
