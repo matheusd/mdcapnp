@@ -189,20 +189,20 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 func (s *Struct) UnsafeString(ptrIndex PointerFieldIndex) string {
 	seg, lp, _, err := s.readListPtr(ptrIndex)
-	if err != nil {
+	if err != nil || lp.elSize != listElSizeByte || lp.listSize == 0 {
 		return ""
 	}
 
-	buf := seg.uncheckedSlice(lp.startOffset, listByteCount(lp.elSize, lp.listSize))
+	buf := seg.uncheckedSlice(lp.startOffset, ByteCount(lp.listSize)-1) // -1 to remove last null
 	return *(*string)(unsafe.Pointer(&buf))
 }
 
 func (s *Struct) String(ptrIndex PointerFieldIndex) string {
 	seg, lp, _, err := s.readListPtr(ptrIndex)
-	if err != nil {
+	if err != nil || lp.elSize != listElSizeByte || lp.listSize == 0 {
 		return ""
 	}
 
-	buf := seg.uncheckedSlice(lp.startOffset, listByteCount(lp.elSize, lp.listSize))
+	buf := seg.uncheckedSlice(lp.startOffset, ByteCount(lp.listSize)-1) // -1 to remove last null
 	return string(buf)
 }

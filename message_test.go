@@ -37,13 +37,14 @@ func BenchmarkMsgReadRoot(b *testing.B) {
 
 // BenchmarkMsgReadList benchmarks reading a list field from a message.
 func BenchmarkMsgReadList(b *testing.B) {
-	targetName := []byte("mynameisslimshady   ")
+	targetName := []byte("mynameisslimshady\u0000") // Text + null marker.
 	buf := appendWords(nil,
 		0x0001000000000000,
 		// 0x0000000200000001,
-		0x000000ba00000001,
+		0x0000009200000001,
 	)
 	buf = append(buf, targetName...)
+	buf = append(buf, []byte{5: 0}...) // Pad to word boundary
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
 		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
@@ -86,7 +87,7 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 	checkOA := func(b *testing.B) {
 		require.Equal(b, "slimshady0123456", oa.Name)
 		require.Equal(b, int64(0x1011121314151617), oa.BirthDay.Unix())
-		require.Equal(b, "phone678", oa.Phone) // FIXME phone67890
+		require.Equal(b, "phone67890", oa.Phone) // FIXME phone67890
 		require.Equal(b, int(0x66669999), oa.Siblings)
 		require.Equal(b, true, oa.Spouse)
 		require.Equal(b, uint64(0xabcd0000ef01), math.Float64bits(oa.Money))

@@ -22,11 +22,10 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 	case listElSizeVoid:
 		return 0
 	case listElSizeBit:
-		return WordCount(lsSize) // FIXME calc and align to word
+		return WordCount((lsSize + 63) / 64)
 	case listElSizeByte:
-		return WordCount(lsSize / WordSize) // FIXME: align to word
-	case listElSizeComposite:
-		return WordCount(lsSize) + 1 // +1 because of tag word
+		return WordCount((lsSize + 7) / 8)
+	// FIXME: add missing types
 	default:
 		panic("unknown el size")
 	}
@@ -61,7 +60,10 @@ func (ls *List) Read(b []byte) (n int, err error) {
 }
 
 func (ls *List) String() string {
-	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ls.LenBytes())
+	if ls.ptr.listSize == 0 {
+		return ""
+	}
+	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ByteCount(ls.ptr.listSize-1)) // -1 to skip final null
 	return string(buf)
 }
 
@@ -75,7 +77,7 @@ func (ls *List) CheckCanGetUnsafeString() error {
 	if ls.ptr.elSize != listElSizeByte {
 		return errNotOneByteElList
 	}
-	if err := ls.seg.checkSliceBounds(ls.ptr.startOffset, ls.LenBytes()); err != nil {
+	if err := ls.seg.checkSliceBounds(ls.ptr.startOffset, ByteCount(ls.ptr.listSize)); err != nil {
 		return err
 	}
 	return nil
@@ -89,6 +91,9 @@ func (ls *List) CheckCanGetUnsafeString() error {
 // If the arena is modified, attempting to use the string may result in
 // undefined behavior.
 func (ls *List) UnsafeString() string {
-	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ls.LenBytes())
+	if ls.ptr.listSize == 0 {
+		return ""
+	}
+	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ByteCount(ls.ptr.listSize-1)) // -1 to skip final null
 	return *(*string)(unsafe.Pointer(&buf))
 }

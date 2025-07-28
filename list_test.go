@@ -5,13 +5,50 @@
 package mdcapnp
 
 import (
+	"fmt"
 	"testing"
+
+	"matheusd.com/depvendoredtestify/require"
 )
 
+// TestListWordCount tests the various cases of the listWordCount function.
+func TestListWordCount(t *testing.T) {
+	maxsz := listSize(MaxListSize)
+
+	tests := []struct {
+		el listElementSize
+		sz listSize
+		w  WordCount
+	}{
+		{el: listElSizeVoid, sz: 0, w: 0},
+		{el: listElSizeVoid, sz: 1, w: 0},
+		{el: listElSizeVoid, sz: maxsz, w: 0},
+		{el: listElSizeBit, sz: 0, w: 0},
+		{el: listElSizeBit, sz: 1, w: 1},
+		{el: listElSizeBit, sz: 64, w: 1},
+		{el: listElSizeBit, sz: 65, w: 2},
+		{el: listElSizeBit, sz: maxsz, w: WordCount(maxsz)/64 + 1},
+		{el: listElSizeByte, sz: 0, w: 0},
+		{el: listElSizeByte, sz: 1, w: 1},
+		{el: listElSizeByte, sz: 8, w: 1},
+		{el: listElSizeByte, sz: 9, w: 2},
+		{el: listElSizeByte, sz: maxsz, w: WordCount(maxsz)/8 + 1},
+	}
+
+	for _, tc := range tests {
+		name := fmt.Sprintf("%d/%d", tc.el, tc.sz)
+		t.Run(name, func(t *testing.T) {
+			got := listWordCount(tc.el, tc.sz)
+			require.EqualValues(t, tc.w, got)
+		})
+	}
+}
+
 func BenchmarkListGetUnsafeString(b *testing.B) {
-	name := "mynameisslimshad"
+	name := "mynameisslimsha"
 	buf := appendWords(nil, 0x0000008200000001)
 	buf = append(buf, []byte(name)...)
+	buf = append(buf, 0) // Null mark for text
 
 	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
 		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
@@ -22,7 +59,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from list no check", func(b *testing.B) {
 			ls := &List{
 				seg: seg,
-				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name) + 1), startOffset: 1},
 				dl:  noDepthLimit,
 			}
 			if err := ls.CheckCanGetUnsafeString(); err != nil {
@@ -43,7 +80,7 @@ func BenchmarkListGetUnsafeString(b *testing.B) {
 		b.Run("from list", func(b *testing.B) {
 			ls := &List{
 				seg: seg,
-				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name)), startOffset: 1},
+				ptr: listPointer{elSize: listElSizeByte, listSize: listSize(len(name) + 1), startOffset: 1},
 				dl:  noDepthLimit,
 			}
 
