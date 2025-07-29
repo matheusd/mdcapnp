@@ -17,7 +17,8 @@ import (
 // BenchmarkMsgReadRoot benchmarks reading the root struct of a message.
 func BenchmarkMsgReadRoot(b *testing.B) {
 	buf := appendWords(nil, 0x0000000100000000, 0x0000000000000000)
-	arena := NewSingleSegmentArena(buf, false, nil)
+	arena := NewSingleSegmentArena(buf)
+	arena.ReadLimiter().InitNoLimit()
 	msg := MakeMsg(arena)
 
 	var st Struct
@@ -46,8 +47,9 @@ func BenchmarkMsgReadList(b *testing.B) {
 	buf = append(buf, targetName...)
 	buf = append(buf, []byte{5: 0}...) // Pad to word boundary
 
-	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
+	benchmarkRLMatrix(b, func(b *testing.B, rlt readLimiterType) {
+		arena := NewSingleSegmentArena(buf)
+		rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 		seg, _ := arena.Segment(0)
 		st := &SmallTestStruct{
 			seg:   seg,
@@ -97,22 +99,22 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 	segBuf := testdata.GoserbenchSampleA[8:] // Skip the header.
 
 	tests := []struct {
-		rl     newRLFunc
+		rlt    readLimiterType
 		unsafe bool
 	}{
-		{rl: nilReadLimiter, unsafe: true},
-		{rl: nilReadLimiter, unsafe: false},
-		{rl: NewConcurrentUnsafeReadLimiter, unsafe: true},
-		{rl: NewConcurrentUnsafeReadLimiter, unsafe: false},
-		{rl: NewReadLimiter, unsafe: true},
-		{rl: NewReadLimiter, unsafe: false},
+		{rlt: rlTypeNoLimit, unsafe: true},
+		{rlt: rlTypeNoLimit, unsafe: false},
+		{rlt: rlTypeUnsafe, unsafe: true},
+		{rlt: rlTypeUnsafe, unsafe: false},
+		{rlt: rlTypeSafe, unsafe: true},
+		{rlt: rlTypeSafe, unsafe: false},
 	}
 
 	for _, tc := range tests {
-		b.Run(fmt.Sprintf("%v/unsafe=%v", rlTestName(tc.rl), tc.unsafe), func(b *testing.B) {
+		b.Run(fmt.Sprintf("%v/unsafe=%v", tc.rlt, tc.unsafe), func(b *testing.B) {
 			b.Run("reuse all", func(b *testing.B) {
-				rl := tc.rl(MaxReadLimiterLimit)
-				arena := NewSingleSegmentArena(segBuf, false, rl)
+				arena := NewSingleSegmentArena(segBuf)
+				tc.rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 				msg := MakeMsg(arena)
 				var st GoserbenchSmallStruct
 
@@ -142,14 +144,14 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 			})
 
 			b.Run("reuse arena", func(b *testing.B) {
-				rl := tc.rl(MaxReadLimiterLimit)
-				arena := NewSingleSegmentArena(segBuf, false, rl)
+				arena := NewSingleSegmentArena(segBuf)
+				tc.rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 
 				b.ReportAllocs()
 				b.ResetTimer()
 
 				for range b.N {
-					arena.Reset(segBuf, false)
+					arena.Reset(segBuf)
 					msg := MakeMsg(arena)
 					var st GoserbenchSmallStruct
 
@@ -176,8 +178,8 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 			})
 
 			b.Run("reuse arena deserialize", func(b *testing.B) {
-				rl := tc.rl(MaxReadLimiterLimit)
-				arena := NewSingleSegmentArena(segBuf, false, rl)
+				arena := NewSingleSegmentArena(segBuf)
+				tc.rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -216,8 +218,8 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 				b.ResetTimer()
 
 				for range b.N {
-					rl := tc.rl(MaxReadLimiterLimit)
-					arena := NewSingleSegmentArena(segBuf, false, rl)
+					arena := NewSingleSegmentArena(segBuf)
+					tc.rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 					msg := MakeMsg(arena)
 					var st GoserbenchSmallStruct
 
@@ -242,7 +244,6 @@ func BenchmarkDecodeGoserbenchSmallStruct(b *testing.B) {
 
 				checkOA(b)
 			})
-
 		})
 	}
 }

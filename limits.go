@@ -10,50 +10,76 @@ import (
 	"sync/atomic"
 )
 
+// MaxReadLimiterLimit is the maximum allowed limit that can be used when
+// initializing a [ReadLimiter].
 const MaxReadLimiterLimit = math.MaxInt64
 
 var errLimitOverMaxReadLimiter = fmt.Errorf("cannot read more than %d words", MaxReadLimiterLimit)
 
+// readLimiterType determines the type of the ReadLimiter.
+type readLimiterType int
+
+const (
+	rlTypeSafe readLimiterType = iota
+	rlTypeUnsafe
+	rlTypeNoLimit
+)
+
+func (rlt readLimiterType) String() string {
+	switch rlt {
+	case rlTypeSafe:
+		return "safe RL"
+	case rlTypeUnsafe:
+		return "unsafe RL"
+	case rlTypeNoLimit:
+		return "no RL"
+	default:
+		panic(fmt.Sprintf("unknown read limiter type %d", rlt))
+	}
+}
+
 // ReadLimiter limits the amount of data read while traversing structures.
 //
-// A nil ReadLimiter will always allow reads ([CanRead] will always return
-// true). A zero-valued ReadLimiter will reject all read attempts ([CanRead]
-// will always return false).
+// A zero-valued ReadLimiter will reject all read attempts ([CanRead] will
+// always return false).
+//
+// A read limit may be imposed by calling one of the Init* functions. These
+// functions are not safe for concurrent access and should in general be called
+// only once per read limiter.
 type ReadLimiter struct {
-	limit            atomic.Int64
-	unsafeLimit      int64
-	originalLimit    int64
-	concurrentUnsafe bool
+	limit         atomic.Int64
+	unsafeLimit   int64
+	originalLimit int64
+	rlType        readLimiterType
 }
 
-// NewReadLimiter creates a new read limiter.
-//
-// NOTE: limit cannot be higher than [math.MaxInt64]. This is unlikely to be an
-// actual limitation during regular use.
-func NewReadLimiter(limit uint64) *ReadLimiter {
+// Init sets up the read limiter so that it is concurrent safe for reads and up
+// to limit words can be read.
+func (rl *ReadLimiter) Init(limit uint64) {
 	if limit > MaxReadLimiterLimit {
 		panic(errLimitOverMaxReadLimiter)
 	}
-	rl := &ReadLimiter{originalLimit: int64(limit)}
+
+	rl.rlType = rlTypeSafe
+	rl.originalLimit = int64(limit)
 	rl.limit.Store(int64(limit))
-	return rl
 }
 
-// NewConcurrentUnsafeReadLimiter creates a new read limiter that is NOT safe
-// for concurrent access by multiple goroutines.
-//
-// This limiter may be used when the caller is certain that only a single
-// goroutine accesses an arena/message (and any objects/structs/lists/unsafe
-// strings derived from such).
-func NewConcurrentUnsafeReadLimiter(limit uint64) *ReadLimiter {
+// InitConcurrentUnsafe sets up the read limiter so that it is NOT safe for
+// concurrent access and up to limit words can be read.
+func (rl *ReadLimiter) InitConcurrentUnsafe(limit uint64) {
 	if limit > MaxReadLimiterLimit {
 		panic(errLimitOverMaxReadLimiter)
 	}
-	return &ReadLimiter{
-		originalLimit:    int64(limit),
-		unsafeLimit:      int64(limit),
-		concurrentUnsafe: true,
-	}
+
+	rl.rlType = rlTypeUnsafe
+	rl.originalLimit = int64(limit)
+	rl.unsafeLimit = int64(limit)
+}
+
+// InitNoLimit sets up the read limiter so that no limit is imposed.
+func (rl *ReadLimiter) InitNoLimit() {
+	rl.rlType = rlTypeNoLimit
 }
 
 // testName returns a description of this RL for tests.
@@ -61,7 +87,10 @@ func (rl *ReadLimiter) testName() string {
 	if rl == nil {
 		return "nil RL"
 	}
-	if rl.concurrentUnsafe {
+	if rl.rlType == rlTypeNoLimit {
+		return "no RL"
+	}
+	if rl.rlType == rlTypeUnsafe {
 		return "unsafe RL"
 	}
 	return "safe RL"
@@ -70,8 +99,8 @@ func (rl *ReadLimiter) testName() string {
 // Reset the read limiter to its original limit. This is valid even for nil
 // read limiters.
 func (rl *ReadLimiter) Reset() {
-	if rl != nil {
-		if rl.concurrentUnsafe {
+	if rl.rlType != rlTypeNoLimit {
+		if rl.rlType == rlTypeSafe {
 			rl.limit.Store(rl.originalLimit)
 		} else {
 			rl.unsafeLimit = rl.originalLimit
@@ -88,13 +117,14 @@ func (rl *ReadLimiter) CanRead(wc WordCount) (err error) {
 		return errLimitOverMaxReadLimiter
 	}
 
-	if rl == nil {
+	// No limit imposed.
+	if rl.rlType == rlTypeNoLimit {
 		return
 	}
 
 	// Version used when concurrent safety is not necessary (i.e. only one
 	// goroutine is assured to be using the arena). A simple test and dec.
-	if rl.concurrentUnsafe {
+	if rl.rlType == rlTypeUnsafe {
 		if rl.unsafeLimit < wcu {
 			return ErrReadLimitExceeded{Target: wc}
 		} else {

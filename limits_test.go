@@ -13,8 +13,23 @@ import (
 	"matheusd.com/depvendoredtestify/require"
 )
 
-// nilReadLimiter is an aux func with the same signature as New*ReadLimiter.
-func nilReadLimiter(uint64) *ReadLimiter { return nil }
+func newNoReadLimiter(uint64) *ReadLimiter {
+	var rl ReadLimiter
+	rl.InitNoLimit()
+	return &rl
+}
+
+func newUnsafeReadLimiter(limit uint64) *ReadLimiter {
+	var rl ReadLimiter
+	rl.InitConcurrentUnsafe(limit)
+	return &rl
+}
+
+func newSafeReadLimiter(limit uint64) *ReadLimiter {
+	var rl ReadLimiter
+	rl.Init(limit)
+	return &rl
+}
 
 type newRLFunc func(uint64) *ReadLimiter
 
@@ -23,23 +38,32 @@ func rlTestName(newRL newRLFunc) string {
 	return rl.testName()
 }
 
+func (rlt readLimiterType) newRL(limit uint64) *ReadLimiter {
+	return rlt.initRL(new(ReadLimiter), limit)
+}
+
+func (rlt readLimiterType) initRL(rl *ReadLimiter, limit uint64) *ReadLimiter {
+	switch rlt {
+	case rlTypeNoLimit:
+		rl.InitNoLimit()
+	case rlTypeUnsafe:
+		rl.InitConcurrentUnsafe(limit)
+	case rlTypeSafe:
+		rl.Init(limit)
+	}
+	return rl
+}
+
 // rlTestCases is the test matrix for tests and benchmarks that use different
 // ReadLimiters.
-var rlTestCases = []struct {
-	name  string
-	newRL newRLFunc
-}{
-	{name: "nil RL", newRL: nilReadLimiter},
-	{name: "unsafe RL", newRL: NewConcurrentUnsafeReadLimiter},
-	{name: "safe RL", newRL: NewReadLimiter},
-}
+var rlTestCases = []readLimiterType{rlTypeNoLimit, rlTypeUnsafe, rlTypeSafe}
 
 // benchmarkRLMatrix executes a benchmark using the various possible read
 // limiters.
-func benchmarkRLMatrix(b *testing.B, f func(b *testing.B, newRL newRLFunc)) {
+func benchmarkRLMatrix(b *testing.B, f func(b *testing.B, rlType readLimiterType)) {
 	for _, rltc := range rlTestCases {
-		b.Run(rltc.name, func(b *testing.B) {
-			f(b, rltc.newRL)
+		b.Run(rltc.String(), func(b *testing.B) {
+			f(b, rltc)
 		})
 	}
 }
@@ -86,8 +110,8 @@ func TestReadLimiterCorrectness(t *testing.T) {
 		name  string
 		newRL func(uint64) *ReadLimiter
 	}{
-		{name: "safe", newRL: NewReadLimiter},
-		{name: "unsafe", newRL: NewConcurrentUnsafeReadLimiter},
+		{name: "safe", newRL: newSafeReadLimiter},
+		{name: "unsafe", newRL: newUnsafeReadLimiter},
 	}
 
 	for _, rltc := range rlTypes {
@@ -185,7 +209,9 @@ func BenchmarkCanReadLimiter(b *testing.B) {
 
 	// This MUST be the first test to ensure rl is nil.
 	b.Run("nil limiter", func(b *testing.B) {
+		rl := newNoReadLimiter(0)
 		b.ReportAllocs()
+		b.ResetTimer()
 		for range b.N {
 			got := rl.CanRead(readSz) == nil
 			if got != true {
@@ -195,7 +221,7 @@ func BenchmarkCanReadLimiter(b *testing.B) {
 	})
 
 	b.Run("concurrent unsafe", func(b *testing.B) {
-		rl = NewConcurrentUnsafeReadLimiter(uint64((b.N - 1) * readSz))
+		rl = newUnsafeReadLimiter(uint64((b.N - 1) * readSz))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := range b.N {
@@ -208,7 +234,7 @@ func BenchmarkCanReadLimiter(b *testing.B) {
 	})
 
 	b.Run("concurrent safe", func(b *testing.B) {
-		rl = NewReadLimiter(uint64((b.N - 1) * readSz))
+		rl = newSafeReadLimiter(uint64((b.N - 1) * readSz))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := range b.N {

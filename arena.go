@@ -113,11 +113,11 @@ type Arena struct {
 	// at index 0 is the segment with id 1, and so on.
 	segs *[]*Segment
 
-	rl *ReadLimiter
+	rl ReadLimiter
 }
 
 func (arena *Arena) ReadLimiter() *ReadLimiter {
-	return arena.rl
+	return &arena.rl
 }
 
 func (arena *Arena) Segment(id SegmentID) (*Segment, error) {
@@ -144,28 +144,26 @@ func (arena *Arena) DecodeSingleSegment(fb []byte) error {
 	if err != nil {
 		return err
 	}
-	arena.Reset(b, false)
+	arena.Reset(b)
 	arena.fb = fb
 	return nil
 }
 
-func (arena *Arena) Reset(b []byte, writable bool) {
+func (arena *Arena) Reset(b []byte) {
 	arena.s.b = b
 	arena.fb = nil
 	arena.rl.Reset()
 }
 
-func NewSingleSegmentArena(b []byte, writable bool, rl *ReadLimiter) *Arena {
+func NewSingleSegmentArena(b []byte) *Arena {
 	var arena Arena
-	arena.rl = rl
-	arena.Reset(b, writable)
+	arena.Reset(b)
 	return &arena
 }
 
-func DecodeArena(fb []byte, rl *ReadLimiter) (*Arena, error) {
+func DecodeArena(fb []byte) (*Arena, error) {
 	// TODO: decode
 	var arena Arena
-	arena.rl = rl
 	if err := arena.DecodeSingleSegment(fb); err != nil {
 		return nil, err
 	}

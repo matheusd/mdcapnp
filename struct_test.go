@@ -18,7 +18,8 @@ func BenchmarkStructGetInt64(b *testing.B) {
 
 	// No need to test multiple ReadLimiter values because GetInt64 does not
 	// depend on them.
-	arena := NewSingleSegmentArena(buf, false, nil)
+	arena := NewSingleSegmentArena(buf)
+	arena.ReadLimiter().InitNoLimit()
 	seg, _ := arena.Segment(0)
 	st := &SmallTestStruct{
 		seg:   seg,
@@ -41,8 +42,9 @@ func BenchmarkStructGetInt64(b *testing.B) {
 func BenchmarkStructReadList(b *testing.B) {
 	buf := appendWords(nil, 0x00000000fffffffd)
 
-	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
-		arena := NewSingleSegmentArena(buf, false, newRL(MaxReadLimiterLimit))
+	benchmarkRLMatrix(b, func(b *testing.B, rlt readLimiterType) {
+		arena := NewSingleSegmentArena(buf)
+		rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 		seg, _ := arena.Segment(0)
 
 		b.Run("single struct", func(b *testing.B) {
@@ -112,9 +114,10 @@ func BenchmarkStructReadList(b *testing.B) {
 }
 
 func BenchmarkStructUnsafeString(b *testing.B) {
-	benchmarkRLMatrix(b, func(b *testing.B, newRL newRLFunc) {
+	benchmarkRLMatrix(b, func(b *testing.B, rlt readLimiterType) {
 		segBuf := testdata.GoserbenchSampleA[8:]
-		arena := NewSingleSegmentArena(segBuf, false, newRL(MaxReadLimiterLimit))
+		arena := NewSingleSegmentArena(segBuf)
+		rlt.initRL(arena.ReadLimiter(), MaxReadLimiterLimit)
 		msg := MakeMsg(arena)
 		var st GoserbenchSmallStruct
 
