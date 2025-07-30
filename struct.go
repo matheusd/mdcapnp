@@ -124,7 +124,9 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	// Determine the offset of the pointer word (given its index) and fetch
 	// it.
 	//
-	// TODO: check if sum won't overflow?
+	// This does not need an overflow check because the entire struct
+	// (including this pointer offset which is known to be <=
+	// pointerSectionSize) is known to be in bounds.
 	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
 	ptr := seg.uncheckedGetWordAsPointer(pointerOffset)
 
@@ -138,7 +140,7 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 		ptrType = ptr.pointerType()
 	}
 
-	// Check if it is a list pointer.
+	// Check if the final pointer (after potential deref) is a list pointer.
 	if ptrType != pointerTypeList {
 		err = errNotListPointer
 		return

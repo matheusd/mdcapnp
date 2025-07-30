@@ -4,7 +4,7 @@
 
 package mdcapnp
 
-type pointerType byte
+type pointerType int
 
 const (
 	pointerTypeStruct     pointerType = 0x00
@@ -34,12 +34,12 @@ func (ptr pointer) listSize() listSize {
 	return listSize(ptr & 0xfffffff800000000 >> 35)
 }
 
-func (ptr pointer) isListPointer() bool {
-	return (ptr & 0x03) == 1
-}
-
 func (ptr pointer) isStructPointer() bool {
 	return (ptr & 0x03) == 0
+}
+
+func (ptr pointer) isListPointer() bool {
+	return (ptr & 0x03) == 1
 }
 
 func (ptr pointer) isFarPointer() bool {
