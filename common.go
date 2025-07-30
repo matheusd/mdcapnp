@@ -47,11 +47,7 @@ type WordCount uint32
 
 // Valid returns true if this is a valid word count.
 func (wc WordCount) Valid() bool {
-	// Valid counts cannot be negative and cannot have more than 29 bits
-	// set. Thus to test for validity, check if any of the highest bits in
-	// the most significant nibble are set.
-	const invalidBitsMask = 0b1111 << 28
-	return wc&invalidBitsMask == 0
+	return wc <= MaxValidWordCount
 }
 
 // ByteCount returns the number of bytes that correspond to this number of
