@@ -41,14 +41,14 @@ func (err ErrReadLimitExceeded) Is(target error) bool {
 var ErrNotStructPointer = errors.New("pointer is not a struct pointer")
 
 type ErrObjectOutOfBounds struct {
-	Offset WordOffset
-	Size   WordCount
-	Len    int
+	Offset  WordOffset
+	Size    WordCount
+	WordLen WordCount
 }
 
 func (err ErrObjectOutOfBounds) Error() string {
-	return fmt.Sprintf("object at offset 0x%016x with size %d is out of bounds (segment length is %d)",
-		err.Offset, err.Size, err.Len)
+	return fmt.Sprintf("object at offset 0x%016x with size %d is out of bounds (segment has %d words)",
+		err.Offset, err.Size, err.WordLen)
 }
 
 type ErrUnknownSegment SegmentID
@@ -66,6 +66,8 @@ var errNotOneByteElList = errors.New("list is not a one-byte-per-element list")
 var errDepthLimitExceeded = errors.New("depth limit exceeded")
 
 var errNotListPointer = errors.New("not a list pointer")
+
+var errNoRootPointer = errors.New("message does not have a root pointer")
 
 var errInvalidNegativeStructOffset = errors.New("invalid negative struct offset")
 

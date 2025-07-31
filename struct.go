@@ -5,9 +5,7 @@
 package mdcapnp
 
 import (
-	"errors"
 	"math"
-	"unsafe"
 )
 
 // PointerFieldIndex is the index of a pointer field in a struct. The first
@@ -111,13 +109,11 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 		return
 	}
 
-	seg = s.seg
-
 	// Check if this pointer is set within the pointer section.
 	if ptrIndex >= PointerFieldIndex(s.ptr.pointerSectionSize) {
 		// TODO: return default if it exists? Or handle this at a higher
 		// level?
-		err = errors.New("pointer at offset not set in struct")
+		err = errStructBuilderDoesNotContainPointerField(s.ptr.pointerSectionSize)
 		return
 	}
 
@@ -125,23 +121,25 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	// it.
 	//
 	// This does not need an overflow check because the entire struct
-	// (including this pointer offset which is known to be <=
-	// pointerSectionSize) is known to be in bounds.
+	// (including this pointer offset which is <= pointerSectionSize) is
+	// known to be in bounds.
 	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
-	ptr := seg.uncheckedGetWordAsPointer(pointerOffset)
+	ptr := s.seg.uncheckedGetWordAsPointer(pointerOffset)
 
 	// De-ref far pointers into the concrete list segment and near pointer.
 	ptrType := ptr.pointerType()
-	if ptrType == pointerTypeFarPointer {
+	if ptrType == pointerTypeFarPointer /*ptr.isFarPointer()*/ {
 		seg, ptr, listDL, err = derefFarPointer(s.arena, listDL, ptr)
 		if err != nil {
 			return
 		}
 		ptrType = ptr.pointerType()
+	} else {
+		seg = s.seg
 	}
 
 	// Check if the final pointer (after potential deref) is a list pointer.
-	if ptrType != pointerTypeList {
+	if ptrType != pointerTypeList /*!ptr.isListPointer() */ {
 		err = errNotListPointer
 		return
 	}
@@ -149,18 +147,14 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.
-	if pointerOffset, ok = addWordOffsets(pointerOffset, 1); !ok {
-		err = errWordOffsetSumOverflows{pointerOffset, 1}
-		return
-	}
-	if lp.startOffset, ok = addWordOffsets(lp.startOffset, pointerOffset); !ok {
+	if lp.startOffset, ok = addWordOffsetsWithCarry(pointerOffset, lp.startOffset, 1); !ok {
 		err = errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
 		return
 	}
 
 	// Check if entire list is readable.
 	fullSize := listWordCount(lp.elSize, lp.listSize)
-	if err = s.seg.CheckBounds(lp.startOffset, fullSize); err != nil {
+	if err = seg.checkBounds(lp.startOffset, fullSize); err != nil {
 		return
 	}
 
@@ -195,8 +189,7 @@ func (s *Struct) UnsafeString(ptrIndex PointerFieldIndex) string {
 		return ""
 	}
 
-	buf := seg.uncheckedSlice(lp.startOffset, ByteCount(lp.listSize)-1) // -1 to remove last null
-	return *(*string)(unsafe.Pointer(&buf))
+	return seg.uncheckedUnsafeString(lp.startOffset, ByteCount(lp.listSize)-1)
 }
 
 func (s *Struct) String(ptrIndex PointerFieldIndex) string {

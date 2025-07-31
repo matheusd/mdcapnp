@@ -113,6 +113,8 @@ func BenchmarkStructReadList(b *testing.B) {
 	})
 }
 
+// BenchmarkStructUnsafeString benchmarks calling the UnsafeString() method of a
+// struct.
 func BenchmarkStructUnsafeString(b *testing.B) {
 	benchmarkRLMatrix(b, func(b *testing.B, rlt readLimiterType) {
 		segBuf := testdata.GoserbenchSampleA[8:]

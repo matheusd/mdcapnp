@@ -12,7 +12,7 @@ import (
 
 // BenchmarkMsgReadRoot benchmarks reading the root struct of a message.
 func BenchmarkMsgReadRoot(b *testing.B) {
-	buf := appendWords(nil, 0x0000000100000000, 0x0000000000000000)
+	buf := appendWords(nil, 0x0000000100000000, 0x0000000000000000, 0x0000000000000000)
 	arena := NewSingleSegmentArena(buf)
 	arena.ReadLimiter().InitNoLimit()
 	msg := MakeMsg(arena)

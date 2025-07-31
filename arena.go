@@ -5,7 +5,7 @@
 package mdcapnp
 
 import (
-	"encoding/binary"
+	"unsafe"
 )
 
 type SegmentID uint32
@@ -27,31 +27,10 @@ func (ms *Segment) intLen() int {
 	return len(ms.b)
 }
 
-// uncheckedGetWord returns the word at the given offset without checking for
-// valid bounds.
-//
-// The assumption is that this method is only called in instances where the
-// offset has already been determined to exist.
-func (ms *Segment) uncheckedGetWord(offset WordOffset) Word {
-	return Word(binary.LittleEndian.Uint64(ms.uncheckedTailSlice(offset)))
-}
-
-func (ms *Segment) GetWord(offset WordOffset) (res Word, err error) {
-	if byteOffset := offset * WordSize; len(ms.b) < int(byteOffset+WordSize) {
-		err = ErrInvalidMemOffset{AvailableLen: len(ms.b), Offset: int(byteOffset)}
-	} else {
-		res = Word(binary.LittleEndian.Uint64(ms.b[byteOffset:]))
-	}
-	return
-}
-
-// uncheckedGetWord returns the word at the given offset as a pointer without
-// checking for valid bounds.
-//
-// The assumption is that this method is only called in instances where the
-// offset has already been determined to exist.
-func (ms *Segment) uncheckedGetWordAsPointer(offset WordOffset) pointer {
-	return pointer(binary.LittleEndian.Uint64(ms.uncheckedTailSlice(offset)))
+// wordLen returns the number of words in the segment. This assumes the segment
+// has a valid length (i.e. <= MaxValidWordCount).
+func (ms *Segment) wordLen() WordCount {
+	return WordCount(len(ms.b) / 8)
 }
 
 func (ms *Segment) getWordAsPointer(offset WordOffset) (pointer, error) {
@@ -81,6 +60,18 @@ func (ms *Segment) uncheckedSlice(offset WordOffset, size ByteCount) []byte {
 	return ms.b[startOffset : startOffset+int(size)]
 }
 
+// uncheckedUnsafeString returns a subslice of the segment as an unsafe string
+// without performing a bounds check.
+func (ms *Segment) uncheckedUnsafeString(offset WordOffset, size ByteCount) string {
+	startOffset := int(offset * WordSize)
+	buf := ms.b[startOffset : startOffset+int(size)]
+	return *(*string)(unsafe.Pointer(&buf))
+}
+
+func (ms *Segment) hasRootPointer() bool {
+	return len(ms.b) >= WordSize
+}
+
 func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
 	byteOffset := int(offset * WordSize)
 	if byteOffset >= ms.intLen() {
@@ -91,13 +82,13 @@ func (ms *Segment) Read(offset WordOffset, b []byte) (int, error) {
 	return n, nil
 }
 
-func (ms *Segment) CheckBounds(offset WordOffset, size WordCount) error {
-	byteOffset := int(offset) * WordSize // TODO: check if 32 bits arch?
-	byteSize := int(size) * WordSize
-	if byteOffset < 0 || byteOffset+byteSize > ms.intLen() {
-		return ErrObjectOutOfBounds{Offset: offset, Size: size, Len: ms.intLen()}
+// checkBounds checks whether the given offset and size are within bounds of
+// this segment.
+func (ms *Segment) checkBounds(offset WordOffset, size WordCount) (err error) {
+	if wordLen := ms.wordLen(); offset < 0 || WordCount(offset)+size > wordLen {
+		err = ErrObjectOutOfBounds{Offset: offset, Size: size, WordLen: wordLen}
 	}
-	return nil
+	return
 }
 
 type Arena struct {

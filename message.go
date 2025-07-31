@@ -46,6 +46,12 @@ func (msg *Message) RemoveDepthLimit() {
 }
 
 func (msg *Message) ReadRoot(s *Struct) error {
+	// TODO: abstract this function to extract struct fields from a struct.
+	//
+	// This implementation has been extensively reviewed to yield the
+	// best performance for extracting the root struct, so when
+	// generalizing, be mindful not to downgrade it.
+
 	structDL, ok := msg.dl.dec()
 	if !ok {
 		return errDepthLimitExceeded
@@ -56,10 +62,11 @@ func (msg *Message) ReadRoot(s *Struct) error {
 		return err
 	}
 
-	ptr, err := seg.getWordAsPointer(0)
-	if err != nil {
-		return err
+	segWordLen := seg.wordLen()
+	if segWordLen < 1 {
+		return errNoRootPointer
 	}
+	ptr := seg.uncheckedGetWordAsPointer(0)
 
 	// De-ref far pointers into the concrete list segment and near pointer.
 	ptrType := ptr.pointerType()
@@ -69,6 +76,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 			return err
 		}
 		ptrType = ptr.pointerType()
+		segWordLen = seg.wordLen()
 	}
 
 	// The resulting pointer (after de-ref) MUST be a struct pointer.
@@ -76,52 +84,54 @@ func (msg *Message) ReadRoot(s *Struct) error {
 		return ErrNotStructPointer
 	}
 
+	// All fields in sp are necessarily valid, because we're decoding it
+	// from a generic pointer word.
 	sp := ptr.toStructPointer()
-
-	// Calculate full size of struct in words. Doesn't need an overflow
-	// check because the section sizes are both uint16, so their sum can't
-	// overflow uint32.
-	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
 
 	// The only negative value allowed as an offset is -1, to denote a
 	// zero-sized struct.
 	//
-	// TODO: double check if this is true.
+	// For the root pointer, this is also the only valid negative offset,
+	// because any other would put the struct contents outside the bounds of
+	// the first segment.
+	//
+	// TODO: double check if this is true for other structs.
 	if sp.dataOffset < -1 {
 		return errInvalidNegativeStructOffset
 	}
 
-	// Perform a bounds check when either a data offset or fields were
-	// specified (i.e. non-null struct).
+	// Calculate full size of struct in words. Doesn't need an overflow
+	// check because the section sizes are both uint16, so their sum can't
+	// overflow uint32.
 	//
-	// Note that the gap for the case where (dataOffset == -1) && (fullSize
-	// == 0) does not need to be checked because for that case (empty
-	// struct), the offset points to the pointer itself (which was already
-	// obtained and thus necessarily in bounds). Therefore we elide the
-	// redundant check.
-	if sp.dataOffset > 0 || fullSize > 0 {
-		// TODO: abstract and add base struct offset when obtaining a
-		// struct field from a struct.
+	// The resulting size is also necessarily a valid word count, because it
+	// can only be up to 2^17-2 which is < 2^29-1.
+	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
 
-		// Concrete offset is always one more than the encoded start
-		// offset.
-		if sp.dataOffset, ok = addWordOffsets(sp.dataOffset, 1); !ok {
-			return errWordOffsetSumOverflows{sp.dataOffset, 1}
-		}
-		if !fullSize.Valid() {
-			return errInvalidStructSectionSizes{sp.dataSectionSize, sp.pointerSectionSize, fullSize}
-		}
-		if err := seg.CheckBounds(sp.dataOffset, fullSize); err != nil {
-			return err
-		}
-		if err := msg.arena.ReadLimiter().CanRead(fullSize); err != nil {
-			return err
-		}
+	// Bounds check that the entire struct (all data fields + all pointers)
+	// is readable.
+	//
+	// Concrete offset is always one more than the encoded start offset.
+	if sp.dataOffset, ok = addWordOffsets(sp.dataOffset, 1); !ok {
+		return errWordOffsetSumOverflows{sp.dataOffset, 1}
 	}
 
-	s.seg = seg
-	s.arena = msg.arena
-	s.ptr = sp
-	s.dl = structDL
+	// The end offset must be valid word offset and must come before the end
+	// of the segment.
+	if endOffset, ok := addWordOffsets(sp.dataOffset, WordOffset(fullSize)); !ok || endOffset >= WordOffset(segWordLen) {
+		return ErrObjectOutOfBounds{Offset: sp.dataOffset, Size: fullSize, WordLen: segWordLen}
+	}
+
+	// Safety check that the caller allows us to read this many words.
+	if err := msg.arena.ReadLimiter().CanRead(fullSize); err != nil {
+		return err
+	}
+
+	*s = Struct{
+		seg:   seg,
+		arena: msg.arena,
+		ptr:   sp,
+		dl:    structDL,
+	}
 	return nil
 }

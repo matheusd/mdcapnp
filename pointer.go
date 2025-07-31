@@ -4,7 +4,9 @@
 
 package mdcapnp
 
-type pointerType int
+import "errors"
+
+type pointerType pointer
 
 const (
 	pointerTypeStruct     pointerType = 0x00
@@ -100,7 +102,9 @@ func (lp listPointer) toPointer() pointer {
 // It follows pointers (up to the depth limit) until a non-far pointer is found.
 //
 // Returns the resulting pointer and the remaining depth limit.
+//
+//go:noinline
 func derefFarPointer(arena *Arena, dl depthLimit, ptr pointer) (*Segment, pointer, depthLimit, error) {
 	// TODO: implement.
-	return nil, 0, 0, nil
+	return nil, 0, 0, errors.New("not implemented")
 }

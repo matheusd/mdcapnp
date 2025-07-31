@@ -4,6 +4,8 @@
 
 package mdcapnp
 
+import "math/bits"
+
 type Word uint64
 
 const WordSize = 8
@@ -20,8 +22,9 @@ type wordCount16 uint16
 type WordOffset int32
 
 const (
-	maxWordOffset = (1 << 29) - 1
-	minWordOffset = -(1 << 29)
+	maxWordOffset                = (1 << 29) - 1
+	minWordOffset                = -(1 << 29)
+	minWordOffsetAsUint64 uint64 = 0xffffffffe0000000 // This MUST be equal to minWordOffset.
 )
 
 // Valid determines if the value of this offset is valid.
@@ -34,9 +37,32 @@ func (w WordOffset) Valid() bool {
 //
 // Returns true if the sum was valid.
 func addWordOffsets(a, b WordOffset) (c WordOffset, ok bool) {
-	sum64 := int64(a) + int64(b)
-	ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	sum64 := uint64(a) + uint64(b)
 	c = WordOffset(sum64)
+	// ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	ok = (sum64 - minWordOffsetAsUint64) <= (maxWordOffset - minWordOffset)
+	return
+}
+
+// add3WordOffsets adds 3 word offsets, determining whether the resulting offset
+// is valid.
+func add3WordOffsets(a, b, c WordOffset) (d WordOffset, ok bool) {
+	sum64 := uint64(a) + uint64(b) + uint64(c)
+	d = WordOffset(sum64)
+	// ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	ok = (sum64 - minWordOffsetAsUint64) <= (maxWordOffset - minWordOffset)
+	return
+}
+
+// addWordOffsetsWithCarry returns a + b + c, with c being a carry (a value of
+// either 0 or 1). If c is not 0 or 1, the results are undefined.
+//
+// It returns ok if the resulting value is a valid word offset.
+func addWordOffsetsWithCarry(a, b WordOffset, c uint64) (d WordOffset, ok bool) {
+	sum64, _ := bits.Add64(uint64(int64(a)), uint64(int64(b)), c)
+	d = WordOffset(sum64)
+	// ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	ok = (sum64 - minWordOffsetAsUint64) <= (maxWordOffset - minWordOffset)
 	return
 }
 
