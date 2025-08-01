@@ -6,15 +6,20 @@ package mdcapnp
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"unsafe"
 )
 
 type ListBuilder struct {
-	off WordOffset
-	sz  ListSize
 	seg SegmentBuilder
+
+	elSize   listElementSize
+	listSize listSize
+
+	// sz  ListSize
+	off WordOffset
 }
 
 type StructBuilder struct {
@@ -92,11 +97,14 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 	}
 
 	// Allocate the string as a new object (list of bytes).
-	//
-	// TODO: handle allocs in new segments.
-	ls, err := sb.seg.mb.StringToNewList(sb.seg.id, v)
+	segb, lsPtr, err := sb.seg.mb.newText(sb.seg.id, v)
 	if err != nil {
 		return err
+	}
+
+	// TODO: handle allocs in new segments.
+	if segb.id != sb.seg.id {
+		return errors.New("needs handling")
 	}
 
 	// Determine concrete pointer offset inside struct. This doesn't need
@@ -104,13 +112,10 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 	// this pointer offset is known to be in bounds.
 	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
 
-	// Determine the concrete offset from this pointer offset to the actual
-	// data. This finishes the construction of the list pointer.
-	lsPtr := listPointer{
-		startOffset: ls.off - ptrOff - 1,
-		elSize:      ls.sz.elSize,
-		listSize:    ls.sz.listSize,
-	}
+	// Determine the relative offset from the field pointer offset to the
+	// actual data. This finishes the construction of the list pointer.
+	// lsPtr.startOffset = lsPtr.startOffset - ptrOff - 1
+	lsPtr.startOffset = lsPtr.startOffset - ptrOff - 1
 
 	// Structure already fully allocated, no need to check for
 	// bounds.
@@ -149,6 +154,11 @@ func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
 // already been validated.
 func (sb *SegmentBuilder) uncheckedSegSlice(offset WordOffset, size WordCount) []byte {
 	return (*sb.b)[offset*WordSize : (offset+WordOffset(size))*WordSize]
+}
+
+// copyStringTo copies s into the segment, starting at the given offset.
+func (sb *SegmentBuilder) copyStringTo(offset WordOffset, s string) {
+	copy((*sb.b)[offset*WordSize:], s)
 }
 
 type Allocator interface {
@@ -259,16 +269,30 @@ func (mb *MessageBuilder) Reset() error {
 	return nil
 }
 
-func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (SegmentBuilder, WordOffset, error) {
+// allocate allocates size words, preferably (but not necessarily) on the
+// preferred segment.
+//
+// If size has already been validated to be a valid word count, use
+// allocateValidSize().
+func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
 	if size > MaxValidWordCount {
-		return SegmentBuilder{}, 0, errAllocOverMaxWordCount
+		err = errAllocOverMaxWordCount
+		return
 	}
+	return mb.allocateValidSize(preferred, size)
+}
+
+// allocateValidSize allocates size words, preferably (but not necessarily) on
+// the preferred segment.
+//
+// This does NOT validate that size is a valid word count.
+func (mb *MessageBuilder) allocateValidSize(preferred SegmentID, size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
 	oldSegsCap := cap(mb.state.Segs)
 
 	// Ask the allocator to allocate.
-	segID, offset, err := mb.alloc.Allocate(&mb.state, preferred, size)
+	segb.id, offset, err = mb.alloc.Allocate(&mb.state, preferred, size)
 	if err != nil {
-		return SegmentBuilder{}, 0, err
+		return
 	}
 
 	// This assertion is necessary because SegmentBuilders track the segment
@@ -282,17 +306,27 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (Segment
 		return SegmentBuilder{}, 0, errCannotChangeSegsCap
 	}
 
-	b := &mb.state.FirstSeg
-	if segID != 0 {
-		b = &mb.state.Segs[segID-1]
+	if segb.id == 0 {
+		segb.b = &mb.state.FirstSeg
+	} else {
+		segb.b = &mb.state.Segs[segb.id-1]
+	}
+
+	// Sanity check allocator didn't do something silly.
+	lenB := len(*segb.b)
+	if lenB > maxValidBytes {
+		return SegmentBuilder{}, 0, errAllocatedTooLargeSeg
+	}
+	if !isWordAligned(lenB) {
+		return SegmentBuilder{}, 0, errAllocatedUnalignedSeg
+	}
+	if endOff, ok := addWordOffsets(offset, WordOffset(size)); !ok || endOff > WordOffset(lenB/WordSize) {
+		return SegmentBuilder{}, 0, errAllocatedOutOfRange
 	}
 
 	// All good.
-	return SegmentBuilder{
-		id: segID,
-		mb: mb,
-		b:  b,
-	}, offset, nil
+	segb.mb = mb
+	return
 }
 
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
@@ -323,7 +357,9 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 }
 
 func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err error) {
-	seg, off, err := mb.allocate(0, size.TotalSize())
+	// TotalSize() is necessarily a valid size because it is only up to
+	// 2^17-2 words.
+	seg, off, err := mb.allocateValidSize(0, size.TotalSize())
 	if err != nil {
 		return StructBuilder{}, err
 	}
@@ -335,28 +371,26 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 	}, nil
 }
 
-func (mb *MessageBuilder) StringToNewList(preferSeg SegmentID, s string) (ls ListBuilder, err error) {
-	if len(s) > MaxListSize-1 {
-		return ListBuilder{}, errStringTooLarge
-	}
-
+func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (segb SegmentBuilder, ptr listPointer, err error) {
 	// Length of texts (strings) in capnp is +1 due to null at the end.
 	textLen := uint(len(s) + 1)
-	words := WordCount(uintBytesToWordAligned(textLen))
-	seg, off, err := mb.allocate(preferSeg, words)
-	if err != nil {
-		return ListBuilder{}, err
+	if textLen > MaxListSize {
+		return SegmentBuilder{}, listPointer{}, errStringTooLarge
 	}
-	copy(seg.uncheckedSegSlice(off, words), s)
 
-	return ListBuilder{
-		off: off,
-		sz: ListSize{
-			elSize:   listElSizeByte,
-			listSize: listSize(textLen),
-		},
-		seg: seg,
-	}, nil
+	words := WordCount(uintBytesToWordAligned(textLen))
+	segb, off, err := mb.allocateValidSize(preferSeg, words)
+	if err != nil {
+		return SegmentBuilder{}, listPointer{}, err
+	}
+	segb.copyStringTo(off, s)
+
+	return segb,
+		listPointer{
+			startOffset: off,
+			elSize:      listElSizeByte,
+			listSize:    listSize(textLen),
+		}, nil
 }
 
 func (mb *MessageBuilder) Serialize() ([]byte, error) {

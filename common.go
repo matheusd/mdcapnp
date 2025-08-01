@@ -86,7 +86,11 @@ func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) 
 	return addWordOffsets(off, WordOffset(c))
 }
 
+// MaxValidWordCount is the maximum number of words a segment may have.
 const MaxValidWordCount = 1<<29 - 1
+
+// maxValidBytes is the maximum number of bytes a segment may have.
+const maxValidBytes = MaxValidWordCount * WordSize
 
 type ByteCount uint64
 
@@ -102,4 +106,9 @@ func (ss StructSize) TotalSize() WordCount {
 type ListSize struct {
 	elSize   listElementSize
 	listSize listSize
+}
+
+func isWordAligned(i int) bool {
+	const alignMask = WordSize - 1 // Only works because WordSize is a power of 2.
+	return i&alignMask == 0
 }

@@ -11,6 +11,8 @@ import (
 	"matheusd.com/depvendoredtestify/require"
 )
 
+// TestAllocStateHeaderBufSeg0Prefix verifies that the headerBufPrefixesSeg0Buf
+// which verifies whether the HeaderBuf slice prefixes seg0's slice is correct.
 func TestAllocStateHeaderBufSeg0Prefix(t *testing.T) {
 	// Allocate two slices which are contiguous in memory in order to ensure
 	// the tests below assert the false cases between the two slices
@@ -169,6 +171,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	require.Equal(t, v4, seg4.uncheckedGetWord(off4))
 }
 
+// BenchmarkBuilderSetInt64 benchmarks the SetInt64 function.
 func BenchmarkBuilderSetInt64(b *testing.B) {
 	alloc := NewSimpleSingleAllocator(10, false)
 
@@ -247,13 +250,21 @@ func BenchmarkMsgBuilderAllocate(b *testing.B) {
 	mb, err := NewMessageBuilder(&nopAllocator{})
 	require.NoError(b, err)
 
+	var sb SegmentBuilder
+	var off WordOffset
+
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for range b.N {
-		_, _, err := mb.allocate(0, 0)
+		sb, off, err = mb.allocate(0, 0)
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+
+	// Ensure off and sb are not eliminated by the compiler.
+	if off == 666 {
+		b.Logf("%v", sb)
 	}
 }

@@ -6,7 +6,7 @@ package mdcapnp
 
 import "unsafe"
 
-type listElementSize byte
+type listElementSize int
 
 const (
 	listElSizeVoid      listElementSize = 0

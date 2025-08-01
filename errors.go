@@ -125,6 +125,12 @@ var errCannotChangeSegsCap = errors.New("cannot change capacity of segments duri
 
 var errStringTooLarge = errors.New("string is too large")
 
+var errAllocatedTooLargeSeg = errors.New("allocator allocated a segment larger than max allowed")
+
+var errAllocatedUnalignedSeg = errors.New("allocator allocated unaligned segment buffer")
+
+var errAllocatedOutOfRange = errors.New("allocator allocated new buffer out of valid range")
+
 type errStructBuilderDoesNotContainDataField uint16
 
 func (err errStructBuilderDoesNotContainDataField) Error() string {
