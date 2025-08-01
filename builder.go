@@ -244,8 +244,9 @@ func (as *AllocState) putSingleSegHeaderInBuf() {
 }
 
 type MessageBuilder struct {
-	state AllocState
-	alloc Allocator
+	state   AllocState
+	alloc   Allocator
+	segsCap int
 }
 
 func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
@@ -256,6 +257,7 @@ func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
 	if err := mb.state.ValidAfterInitReset(); err != nil {
 		return nil, err
 	}
+	mb.segsCap = cap(mb.state.Segs)
 	return mb, nil
 }
 
@@ -266,6 +268,7 @@ func (mb *MessageBuilder) Reset() error {
 	if err := mb.state.ValidAfterInitReset(); err != nil {
 		return err
 	}
+	mb.segsCap = cap(mb.state.Segs)
 	return nil
 }
 
@@ -287,22 +290,20 @@ func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (segb Se
 //
 // This does NOT validate that size is a valid word count.
 func (mb *MessageBuilder) allocateValidSize(preferred SegmentID, size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
-	oldSegsCap := cap(mb.state.Segs)
-
 	// Ask the allocator to allocate.
 	segb.id, offset, err = mb.alloc.Allocate(&mb.state, preferred, size)
 	if err != nil {
 		return
 	}
 
-	// This assertion is necessary because SegmentBuilders track the segment
-	// buffers by pointers into mb.state.Segs. Changing the capacity (but
-	// _not_ the length) would invalidate such pointers (because of the
-	// reallocation of the Segs slice). Thus we impose this restriction on
-	// allocators, that they must define at init time the max number of
-	// segments they are likely to use (while actual usage is still dynamic,
-	// given by the length of Segs).
-	if cap(mb.state.Segs) != oldSegsCap {
+	// This assertion is necessary because SegmentBuilders track the
+	// segment buffers by pointers into mb.state.Segs. Changing the
+	// capacity (but _not_ the length) would invalidate such pointers
+	// (because of the reallocation of the Segs slice). Thus we impose this
+	// restriction on allocators, that they must define at init time the
+	// max number of segments they are likely to use (while actual usage is
+	// still dynamic, given by the length of Segs).
+	if cap(mb.state.Segs) != mb.segsCap {
 		return SegmentBuilder{}, 0, errCannotChangeSegsCap
 	}
 
@@ -330,8 +331,8 @@ func (mb *MessageBuilder) allocateValidSize(preferred SegmentID, size WordCount)
 }
 
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
-	// NewMessageBuilder() ensure the allocator returns at least one segment
-	// with at least enough room for the root pointer.
+	// NewMessageBuilder() ensures the allocator returns at least one
+	// segment with at least enough room for the root pointer.
 	if mb == nil || mb.state.FirstSeg == nil || len(mb.state.FirstSeg) < WordSize {
 		return errAllocStateNoRootWord
 	}
