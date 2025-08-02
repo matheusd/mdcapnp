@@ -46,6 +46,33 @@ func TestGoserbenchMarshal(t *testing.T) {
 	}
 }
 
+// TestGoserbenchWrite tests writing a goserbench struct.
+func TestGoserbenchWrite(t *testing.T) {
+	alloc := NewSimpleSingleAllocator(12, false)
+
+	mb, err := NewMessageBuilder(alloc)
+	require.NoError(t, err)
+
+	var sst GoserbenchSmallStructType
+	sst.BirthDay = 0x1011121314151617
+	sst.Siblings = 0x66669999
+	sst.Spouse = true
+	sst.Money = math.Float64frombits(0xabcd0000ef01)
+	sst.Name = "slimshady0123456"
+	sst.Phone = "phone67890"
+
+	WriteRootGoserbenchSmallStructType(&sst, mb)
+
+	ser, err := mb.Serialize()
+	require.NoError(t, err)
+
+	if !bytes.Equal(ser, testdata.GoserbenchSampleA) {
+		t.Logf("    ser %x", ser)
+		t.Logf(" sample %x", testdata.GoserbenchSampleA)
+		t.Fatal("Generated and sample are not equal")
+	}
+}
+
 // BenchmarkGoserbenchUnmarhsmal benchmarks decoding a goserbench SmallStruct
 // under various configurations.
 func BenchmarkGoserbenchUnmarshal(b *testing.B) {
@@ -310,6 +337,37 @@ func BenchmarkGoserbenchMarshal(b *testing.B) {
 				b.Fatal(err)
 			}
 
+			_, err = mb.Serialize()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			err = mb.Reset()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("write reuse all", func(b *testing.B) {
+		mb, err := NewMessageBuilder(alloc)
+		require.NoError(b, err)
+
+		var sst GoserbenchSmallStructType
+		sst.BirthDay = 0x1011121314151617
+		sst.Siblings = 0x66669999
+		sst.Spouse = true
+		sst.Money = math.Float64frombits(0xabcd0000ef01)
+		sst.Name = "slimshady0123456"
+		sst.Phone = "phone67890"
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for range b.N {
+			if err := WriteRootGoserbenchSmallStructType(&sst, mb); err != nil {
+				b.Fatal(err)
+			}
 			_, err = mb.Serialize()
 			if err != nil {
 				b.Fatal(err)

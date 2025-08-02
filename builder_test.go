@@ -5,6 +5,7 @@
 package mdcapnp
 
 import (
+	"encoding/binary"
 	"testing"
 	"unsafe"
 
@@ -268,3 +269,47 @@ func BenchmarkMsgBuilderAllocate(b *testing.B) {
 		b.Logf("%v", sb)
 	}
 }
+
+// BenchmarkAllocStatePutSingleSegHeaderInBuf benchmarks the
+// putSingleSegHeaderInBuf method.
+func BenchmarkAllocStatePutSingleSegHeaderInBuf(b *testing.B) {
+	const nbWords = 16
+	as := &AllocState{
+		HeaderBuf: make([]byte, 8, 8),
+		FirstSeg:  make([]byte, nbWords*WordSize),
+	}
+
+	b.ResetTimer()
+
+	for range b.N {
+		as.putSingleSegHeaderInBuf()
+	}
+
+	gotSeg0len := binary.LittleEndian.Uint32(as.HeaderBuf[4:])
+	require.EqualValues(b, uint32(nbWords), gotSeg0len, "%016x", as.HeaderBuf)
+}
+
+/*
+// BenchmarkSegBuilderUncheckedMaskAndMergeWord benchmarks the
+// uncheckedMaskAndMergeWord method of a SegmentBuilder.
+func BenchmarkSegBuilderUncheckedMaskAndMergeWord(b *testing.B) {
+	const nbWords = 10
+	buf := make([]byte, nbWords*WordSize)
+
+	sb := &SegmentBuilder{b: &buf}
+
+	b.ResetTimer()
+	for i := range b.N {
+		offset := WordOffset(i % nbWords)
+		bit := i % 64
+		mask := Word(1 << bit)
+		value := Word((i % 2) << bit)
+		sb.uncheckedMaskAndMergeWord(offset, mask, value)
+	}
+
+	// Ensure compiler keeps the contents around.
+	if binary.LittleEndian.Uint64(*sb.b) == 666 {
+		b.Logf("%x", sb.b)
+	}
+}
+*/

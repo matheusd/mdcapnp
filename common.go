@@ -44,6 +44,14 @@ func addWordOffsets(a, b WordOffset) (c WordOffset, ok bool) {
 	return
 }
 
+func addWordCounts(a, b WordCount) (c WordCount, ok bool) {
+	sum64 := uint64(a) + uint64(b)
+	c = WordCount(sum64)
+	// ok = sum64 >= minWordOffset && sum64 <= maxWordOffset
+	ok = sum64 < MaxValidWordCount
+	return
+}
+
 // add3WordOffsets adds 3 word offsets, determining whether the resulting offset
 // is valid.
 func add3WordOffsets(a, b, c WordOffset) (d WordOffset, ok bool) {
@@ -82,6 +90,19 @@ func (wc WordCount) ByteCount() ByteCount {
 	return ByteCount(wc) * WordSize
 }
 
+func (wc WordCount) AddByteCount16(bc uint16, valid bool) (sum WordCount, stillValid bool) {
+	sum = WordCount((WordCount(bc) + (WordSize - 1)) / WordSize) // Divide and align to WordSize.
+	sum, stillValid = addWordCounts(wc, sum)
+	return sum, valid && stillValid
+}
+
+func (wc WordCount) AddByteCount(bc ByteCount, valid bool) (sum WordCount, stillValid bool) {
+	// valid = valid && bc < maxValidBytes
+	sum = WordCount((bc + (WordSize - 1)) / WordSize) // Divide and align to WordSize.
+	sum, stillValid = addWordCounts(wc, sum)
+	return sum, valid && bc < maxValidBytes && stillValid
+}
+
 func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) {
 	return addWordOffsets(off, WordOffset(c))
 }
@@ -111,4 +132,8 @@ type ListSize struct {
 func isWordAligned(i int) bool {
 	const alignMask = WordSize - 1 // Only works because WordSize is a power of 2.
 	return i&alignMask == 0
+}
+
+func alignToWord(v Word) Word {
+	return ((v + (WordSize - 1)) / WordSize)
 }

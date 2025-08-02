@@ -85,6 +85,13 @@ func (sp structPointer) toPointer() pointer {
 		pointer(sp.pointerSectionSize)<<48
 }
 
+func buildRawStructPointer(off WordOffset, sz StructSize) pointer {
+	return pointer(pointerTypeStruct) |
+		pointer(uint32(off<<2)) |
+		pointer(sz.DataSectionSize)<<32 |
+		pointer(sz.PointerSectionSize)<<48
+}
+
 type listPointer struct {
 	startOffset WordOffset
 	elSize      listElementSize
@@ -96,6 +103,13 @@ func (lp listPointer) toPointer() pointer {
 		pointer(uint32(lp.startOffset<<2)) |
 		pointer(lp.elSize)<<32 |
 		pointer(lp.listSize)<<35
+}
+
+func buildRawListPointer(startOffset WordOffset, elSize listElementSize, lsSize listSize) pointer {
+	return pointer(pointerTypeList) |
+		pointer(uint32(startOffset<<2)) |
+		pointer(elSize)<<32 |
+		pointer(lsSize)<<35
 }
 
 // derefFarPointer de-references a far pointer into a concrete segment pointer.

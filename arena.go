@@ -10,6 +10,8 @@ import (
 
 type SegmentID uint32
 
+type SegmentCount uint32
+
 type Segment struct {
 	b []byte
 }

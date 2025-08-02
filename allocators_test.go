@@ -4,6 +4,11 @@
 
 package mdcapnp
 
+import (
+	"fmt"
+	"testing"
+)
+
 // alwaysReallocAllocator is a test allocator. It has the following properties:
 //
 // - Always re-allocates buffers.
@@ -75,4 +80,47 @@ func (n *nopAllocator) Allocate(state *AllocState, preferred SegmentID, size Wor
 func (n *nopAllocator) Reset(state *AllocState) (err error) {
 	state.FirstSeg = globalNopFirstSeg
 	return
+}
+
+// BenchmarkAllocatorsAllocate benchmarks allocation for various word count
+// sizes.
+func BenchmarkAllocatorsAllocate(b *testing.B) {
+	testSizes := []WordCount{1, 8, 16, 32, 128, 1024, 4096, 16384, 65536}
+	allocs := []struct {
+		name  string
+		alloc Allocator
+	}{
+		{name: "small simple alloc", alloc: NewSimpleSingleAllocator(32, false)},
+		{name: "default simple alloc", alloc: DefaultSimpleSingleAllocator},
+	}
+
+	doBench := func(b *testing.B, alloc Allocator, size WordCount) {
+		state := &AllocState{}
+		if err := alloc.Init(state); err != nil {
+			b.Fatal(err)
+		}
+
+		b.ResetTimer()
+
+		for range b.N {
+			_, _, err := alloc.Allocate(state, 0, size)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			if err := alloc.Reset(state); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+
+	for _, tc := range allocs {
+		b.Run(tc.name, func(b *testing.B) {
+			for _, ts := range testSizes {
+				b.Run(fmt.Sprintf("%d", ts), func(b *testing.B) {
+					doBench(b, tc.alloc, ts)
+				})
+			}
+		})
+	}
 }

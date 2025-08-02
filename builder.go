@@ -123,10 +123,89 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 	return nil
 }
 
+type RawBuilder struct {
+	ptr unsafe.Pointer
+}
+
+func (rb *RawBuilder) SetWord(offset WordOffset, value Word) {
+	*(*Word)(unsafe.Add(rb.ptr, offset*WordSize)) = Word(value)
+}
+
+func (rb *RawBuilder) SetString(ptrOffset WordOffset, v string, startOffset WordOffset) (nextOffset WordOffset) {
+	textLen := uint(len(v) + 1)
+	copy(unsafe.Slice((*byte)(unsafe.Add(rb.ptr, startOffset*WordSize)), len(v)), v)
+	nextOffset = startOffset + WordOffset(uintBytesToWordAligned(textLen))
+	/*
+		lsPtr := listPointer{
+			startOffset: startOffset - ptrOffset - 1,
+			elSize:      listElSizeByte,
+			listSize:    listSize(textLen),
+		}
+	*/
+	lsPtr := buildRawListPointer(startOffset-ptrOffset-1, listElSizeByte, listSize(textLen))
+	*(*Word)(unsafe.Add(rb.ptr, ptrOffset)) = Word(lsPtr)
+	return
+}
+
+func (rb *RawBuilder) SetSelfPointerAsStruct(parent RawBuilder, ptrOff, stOff WordOffset, size StructSize) {
+	parent.SetWord(ptrOff, Word(buildRawStructPointer(stOff-ptrOff-1, size)))
+}
+
+func (rb *RawBuilder) AliasChild(offset WordOffset, child *RawBuilder) {
+	child.ptr = unsafe.Add(rb.ptr, offset*WordSize)
+}
+
+type RawSliceBuilder struct {
+	b []Word
+}
+
+func (rb *RawSliceBuilder) SetWord(offset WordOffset, value Word) {
+	// binary.LittleEndian.PutUint64(rb.b[offset*WordSize:], uint64(value))
+	rb.b[offset] = value
+	// *(*Word)(unsafe.Add(rb.ptr, offset*WordSize)) = Word(value)
+}
+
+func (rb *RawSliceBuilder) SetString(ptrOffset WordOffset, v string, startOffset WordOffset) (nextOffset WordOffset) {
+	textLen := uint(len(v) + 1)
+	// copy(unsafe.Slice((*byte)(unsafe.Add(rb.ptr, startOffset*WordSize)), len(v)), v)
+	// copy(rb.b[startOffset*WordSize:], v)
+	copy([]byte(unsafe.Slice((*byte)(unsafe.Pointer(&rb.b[startOffset])), textLen)), v)
+	nextOffset = startOffset + WordOffset(uintBytesToWordAligned(textLen))
+	/*
+		lsPtr := listPointer{
+			startOffset: startOffset - ptrOffset - 1,
+			elSize:      listElSizeByte,
+			listSize:    listSize(textLen),
+		}
+	*/
+	// *(*Word)(unsafe.Add(rb.ptr, ptrOffset)) = Word(lsPtr.toPointer())
+
+	lsPtr := buildRawListPointer(startOffset-ptrOffset-1, listElSizeByte, listSize(textLen))
+	// binary.LittleEndian.PutUint64(rb.b[ptrOffset*WordSize:], uint64(lsPtr))
+	rb.b[ptrOffset] = Word(lsPtr)
+	return
+}
+
+func (rb *RawSliceBuilder) SetSelfPointerAsStruct(parent RawSliceBuilder, ptrOff, stOff WordOffset, size StructSize) {
+	parent.SetWord(ptrOff, Word(buildRawStructPointer(stOff-ptrOff-1, size)))
+}
+
+func (rb *RawSliceBuilder) AliasChild(offset WordOffset, child *RawSliceBuilder) {
+	// child.ptr = unsafe.Add(rb.ptr, offset*WordSize)
+	// child.b = rb.b[offset*WordSize:]
+	child.b = rb.b[offset:]
+	// child.b = unsafe.Slice(&rb.b[offset], len(rb.b)-int(offset))
+}
+
 type SegmentBuilder struct {
 	mb *MessageBuilder
-	b  *[]byte
-	id SegmentID
+	// b   *[]byte
+	ptr unsafe.Pointer
+	id  SegmentID
+}
+
+func (sb *SegmentBuilder) ID() SegmentID {
+	return sb.id
 }
 
 // uncheckedSetWord sets the word at the given offset in the segment. This must
@@ -134,19 +213,54 @@ type SegmentBuilder struct {
 // the segment.
 func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
 	// binary.LittleEndian.PutUint64(sb.as.uncheckedSegSlice(sb.id, offset, 1), uint64(value))
-	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], uint64(value))
+	//binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], uint64(value))
 	// binary.LittleEndian.PutUint64(sb.b[offset*WordSize:(offset+1)*WordSize], uint64(value))
+	*(*Word)(unsafe.Add(sb.ptr, offset*WordSize)) = value
+}
+
+func (sb *SegmentBuilder) uncheckedSetBit(offset WordOffset, bit int) {
+	ptr := (*Word)(unsafe.Add(sb.ptr, offset*WordSize))
+	*ptr = *ptr | 1<<bit
+}
+
+func (sb *SegmentBuilder) uncheckedClearBit(offset WordOffset, bit int) {
+	ptr := (*Word)(unsafe.Add(sb.ptr, offset*WordSize))
+	*ptr = *ptr &^ 1 << bit
 }
 
 func (sb *SegmentBuilder) uncheckedMaskAndMergeWord(offset WordOffset, mask, value Word) {
-	old := binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:])
-	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&uint64(mask)|uint64(value))
+	/*
+		old := binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:])
+		binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&uint64(mask)|uint64(value))
+	*/
+
+	ptr := (*Word)(unsafe.Add(sb.ptr, offset*WordSize))
+	*ptr = *ptr&mask | value
+
+	/*
+		old := *(*Word)(unsafe.Add(sb.ptr, offset*WordSize))
+		*(*Word)(unsafe.Add(sb.ptr, offset*WordSize)) = old&mask | value
+	*/
+
+	/*
+		buf := (*sb.b)[offset*WordSize:]
+		old := binary.LittleEndian.Uint64(buf)
+		binary.LittleEndian.PutUint64(buf, old&uint64(mask)|uint64(value))
+	*/
+
+	/*
+		ptr := (*uint64)(unsafe.Add(sb.ub, offset*8))
+		old := *ptr
+		*ptr = old&uint64(mask) | uint64(value)
+	*/
 }
 
 func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
-	return Word(binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:]))
+	// return Word(binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:]))
+	return *(*Word)(unsafe.Add(sb.ptr, offset*WordSize))
 }
 
+/*
 // uncheckedSegSlice slices part of a segment (aligned to a word) without
 // checking for valid bounds.
 //
@@ -155,10 +269,35 @@ func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
 func (sb *SegmentBuilder) uncheckedSegSlice(offset WordOffset, size WordCount) []byte {
 	return (*sb.b)[offset*WordSize : (offset+WordOffset(size))*WordSize]
 }
+*/
 
 // copyStringTo copies s into the segment, starting at the given offset.
 func (sb *SegmentBuilder) copyStringTo(offset WordOffset, s string) {
-	copy((*sb.b)[offset*WordSize:], s)
+	// copy((*sb.b)[offset*WordSize:], s)
+	copy(unsafe.Slice((*byte)(unsafe.Add(sb.ptr, offset*WordSize)), len(s)), s)
+}
+
+func (sb *SegmentBuilder) AliasUnsafeStruct(size StructSize, offset WordOffset) UnsafeStructBuilder {
+	return UnsafeStructBuilder{
+		off: offset,
+		sz:  size,
+		seg: *sb,
+	}
+}
+
+func (sb *SegmentBuilder) AliasRawBuilder(offset WordOffset, ust *RawBuilder) {
+	*ust = RawBuilder{
+		ptr: unsafe.Add(sb.ptr, offset*WordSize),
+	}
+
+}
+
+func (sb *SegmentBuilder) AliasUnsafeStructXXX(size StructSize, offset WordOffset, ust *UnsafeStructBuilder) {
+	*ust = UnsafeStructBuilder{
+		off: offset,
+		sz:  size,
+		seg: *sb,
+	}
 }
 
 type Allocator interface {
@@ -172,16 +311,43 @@ type AllocState struct {
 	FirstSeg  []byte
 	Segs      [][]byte
 	Extra     any
+
+	firstSegPtr unsafe.Pointer
+}
+
+func (as *AllocState) GetHeader() []byte {
+	return as.HeaderBuf
+}
+
+func (as *AllocState) GetSeg0() []byte {
+	return as.FirstSeg
+}
+
+func (as *AllocState) SetSeg0(b []byte) {
+	as.FirstSeg = b
+	as.firstSegPtr = unsafe.Pointer(unsafe.SliceData(as.FirstSeg))
+}
+
+func (as *AllocState) SetHeaderAndSeg0(buf []byte, expectedSegCount SegmentCount) {
+	headerSize := alignToWord(4 + Word(expectedSegCount)*4)
+	as.HeaderBuf = buf[:headerSize]
+	as.FirstSeg = buf[headerSize:]
+	as.firstSegPtr = unsafe.Pointer(unsafe.SliceData(as.FirstSeg))
+}
+
+func (as *AllocState) GetSeg(id SegmentID) []byte {
+	if id == 0 {
+		return as.FirstSeg
+	} else {
+		return as.Segs[id]
+	}
 }
 
 // ValidAfterInitReset checks if the AllocState is valid after having been
 // (re-)initialized by an [Allocator] Init() or Reset() call.
-func (as *AllocState) ValidAfterInitReset() error {
-	if len(as.FirstSeg) == 0 {
-		return errAllocNoFirstSeg
-	}
+func (as *AllocState) ValidAfterInitReset() (err error) {
 	if len(as.FirstSeg) < WordSize {
-		return errAllocNoRootWord
+		err = errAllocNoRootWord
 	}
 	return nil
 }
@@ -234,13 +400,24 @@ func (as *AllocState) headerBufPrefixesSeg0Buf() bool {
 // header buf has enough room for the header.
 func (as *AllocState) putSingleSegHeaderInBuf() {
 	seg0size := uint64(len(as.FirstSeg))
-	if seg0size > MaxValidWordCount*WordSize {
-		// This should never happen for correctly implemented
-		// allocators.
-		panic("allocator allocated single segment too large")
-	}
-	clear(as.HeaderBuf[:4]) // Segment count is all zeroes.
-	binary.LittleEndian.PutUint32(as.HeaderBuf[4:], uint32(len(as.FirstSeg)/WordSize))
+	/*
+		if seg0size > maxValidBytes {
+			// This should never happen for correctly implemented
+			// allocators.
+			panic("allocator allocated single segment too large")
+		}
+	*/
+
+	// clear(as.HeaderBuf[:4]) // Segment count is all zeroes (==1 segment).
+	// binary.LittleEndian.PutUint32(as.HeaderBuf[4:], uint32(len(as.FirstSeg)/WordSize))
+
+	// The capnp spec interprets the first (Q)word as two little-endian
+	// D(words). So we shift the target segment count 32 bits to the left,
+	// so that when converted to little-endian, it ends up in the correct
+	// location. The shift naturally zeroes the LSBs, which clears any
+	// leftover data in segment count DWORD (signifying one segment).
+	// binary.LittleEndian.PutUint64(as.HeaderBuf, (seg0size/WordSize)<<32)
+	*(*uint64)(as.firstSegPtr) = (seg0size / WordSize) << 32
 }
 
 type MessageBuilder struct {
@@ -279,8 +456,7 @@ func (mb *MessageBuilder) Reset() error {
 // allocateValidSize().
 func (mb *MessageBuilder) allocate(preferred SegmentID, size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
 	if size > MaxValidWordCount {
-		err = errAllocOverMaxWordCount
-		return
+		return SegmentBuilder{}, 0, errAllocOverMaxWordCount
 	}
 	return mb.allocateValidSize(preferred, size)
 }
@@ -296,25 +472,31 @@ func (mb *MessageBuilder) allocateValidSize(preferred SegmentID, size WordCount)
 		return
 	}
 
-	// This assertion is necessary because SegmentBuilders track the
-	// segment buffers by pointers into mb.state.Segs. Changing the
-	// capacity (but _not_ the length) would invalidate such pointers
-	// (because of the reallocation of the Segs slice). Thus we impose this
-	// restriction on allocators, that they must define at init time the
-	// max number of segments they are likely to use (while actual usage is
-	// still dynamic, given by the length of Segs).
-	if cap(mb.state.Segs) != mb.segsCap {
-		return SegmentBuilder{}, 0, errCannotChangeSegsCap
-	}
+	/*
+		// This assertion is necessary because SegmentBuilders track the
+		// segment buffers by pointers into mb.state.Segs. Changing the
+		// capacity (but _not_ the length) would invalidate such pointers
+		// (because of the reallocation of the Segs slice). Thus we impose this
+		// restriction on allocators, that they must define at init time the
+		// max number of segments they are likely to use (while actual usage is
+		// still dynamic, given by the length of Segs).
+		if cap(mb.state.Segs) != mb.segsCap {
+			return SegmentBuilder{}, 0, errCannotChangeSegsCap
+		}
+	*/
 
+	var lenB int
 	if segb.id == 0 {
-		segb.b = &mb.state.FirstSeg
+		// segb.b = &mb.state.FirstSeg
+		segb.ptr = mb.state.firstSegPtr
+		lenB = len(mb.state.FirstSeg)
 	} else {
-		segb.b = &mb.state.Segs[segb.id-1]
+		// segb.b = &mb.state.Segs[segb.id-1]
+		panic("missing")
 	}
 
 	// Sanity check allocator didn't do something silly.
-	lenB := len(*segb.b)
+	// lenB := len(*segb.b)
 	if lenB > maxValidBytes {
 		return SegmentBuilder{}, 0, errAllocatedTooLargeSeg
 	}
@@ -372,6 +554,8 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 	}, nil
 }
 
+// newText allocates and places s as a new text in the meesage. The text is
+// preferably (but not necessarily) put into segment preferSeg.
 func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (segb SegmentBuilder, ptr listPointer, err error) {
 	// Length of texts (strings) in capnp is +1 due to null at the end.
 	textLen := uint(len(s) + 1)
@@ -394,10 +578,28 @@ func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (segb SegmentBu
 		}, nil
 }
 
-func (mb *MessageBuilder) Serialize() ([]byte, error) {
-	if mb.state.FirstSeg == nil {
-		return nil, errMsgBuilderNoSegments
+// Allocate a number of words into a segment.
+func (mb *MessageBuilder) Allocate(size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
+	return mb.allocate(0, size)
+}
+
+// func (mb *MessageBuilder) AllocateForFullRootWrite(size WordCount) (rb RawBuilder, err error) {
+func (mb *MessageBuilder) AllocateForFullRootWrite(size WordCount) (rb RawSliceBuilder, err error) {
+	// Ask the allocator to allocate.
+	_, _, err = mb.alloc.Allocate(&mb.state, 0, size)
+	if err != nil {
+		return
 	}
+
+	// FIXME: check segment id == 0 and offset == 1?
+
+	// rb.b = mb.state.FirstSeg
+	fs := mb.state.FirstSeg
+	rb.b = unsafe.Slice((*Word)(unsafe.Pointer(&fs[0])), len(fs))
+	return
+}
+
+func (mb *MessageBuilder) Serialize() ([]byte, error) {
 	if len(mb.state.FirstSeg) == 0 {
 		return nil, errMsgBuilderNoSegData
 	}
@@ -418,4 +620,9 @@ func (mb *MessageBuilder) Serialize() ([]byte, error) {
 
 	// TODO: proceed to standard framing and serialization.
 	panic("boo")
+}
+
+func (mb *MessageBuilder) SerializeXXX() ([]byte, error) {
+	mb.state.putSingleSegHeaderInBuf() // Write single segment header
+	return mb.state.HeaderBuf[:len(mb.state.HeaderBuf)+len(mb.state.FirstSeg)], nil
 }

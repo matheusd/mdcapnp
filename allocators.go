@@ -38,6 +38,24 @@ func (s *SimpleSingleAllocator) Init(state *AllocState) (err error) {
 
 func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
+	seg0 := state.GetSeg0()
+	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
+	if freeCap < sizeBytes {
+		// Resize needed.
+		headerBuf := state.GetHeader()
+		headerBuf = slices.Grow(headerBuf, len(seg0)+sizeBytes)
+		state.SetHeaderAndSeg0(headerBuf, 1)
+	}
+
+	// Increase len of segment 0.
+	off = WordOffset(len(seg0) / WordSize)
+	state.SetSeg0(seg0[:len(seg0)+sizeBytes])
+	return
+
+}
+
+func (s *SimpleSingleAllocator) AllocateXXXX(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
+	sizeBytes := int(size.ByteCount())
 	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
 	if freeCap < sizeBytes {
 		// Resize needed.
@@ -55,8 +73,7 @@ func (s *SimpleSingleAllocator) Reset(state *AllocState) (err error) {
 	if s.reallocOnReset {
 		s.Init(state)
 	} else {
-		clear(state.HeaderBuf)
-		clear(state.FirstSeg)
+		clear(state.HeaderBuf[:len(state.FirstSeg)+8])
 
 		// Truncate segment 0 to root word.
 		state.FirstSeg = state.FirstSeg[:8]

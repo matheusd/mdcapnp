@@ -4,7 +4,10 @@
 
 package mdcapnp
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // SmallTestStruct is a handwritten small test structure.
 type SmallTestStruct Struct
@@ -94,6 +97,72 @@ func (stb *GoserbenchSmallStructBuilder) SetName(v string) error {
 
 func (stb *GoserbenchSmallStructBuilder) SetPhone(v string) error {
 	return (*StructBuilder)(stb).SetString(1, v)
+}
+
+type GoserbenchSmallStructType = struct {
+	Name     string
+	BirthDay int64
+	Phone    string
+	Siblings int32
+	Spouse   bool
+	Money    float64
+}
+
+func GoserbenchSmallStructTypeSize(a *GoserbenchSmallStructType) (wc WordCount, valid bool) {
+	// TODO: optionally cannonicalize by determining which data fields and
+	// pointers are empty?
+	stSize := StructSize{DataSectionSize: 3, PointerSectionSize: 2}
+
+	wc, valid = stSize.TotalSize(), true
+	wc, valid = wc.AddByteCount(ByteCount(len(a.Name)+1), valid)
+	wc, valid = wc.AddByteCount(ByteCount(len(a.Phone)+1), valid)
+	valid = valid &&
+		len(a.Name) < MaxListSize &&
+		len(a.Phone) < MaxListSize
+	return
+}
+
+func UnsafeWriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, segb SegmentBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+	// Get an aliased writer to the desired location.
+	ust := segb.AliasUnsafeStruct(StructSize{DataSectionSize: 3, PointerSectionSize: 2}, startOff)
+
+	// Write the data fields.
+	ust.SetInt64(0, a.BirthDay)
+	ust.SetInt32(1, Int32FieldSetMaskLo, a.Siblings)
+	ust.SetBool(1, 32, a.Spouse)
+	ust.SetFloat64(2, a.Money)
+
+	// Write the variable fields, keeping track of the end of this object.
+	endOff = startOff + WordOffset(StructSize{DataSectionSize: 3, PointerSectionSize: 2}.TotalSize())
+	endOff = ust.SetString(0, a.Name, endOff)
+	endOff = ust.SetString(1, a.Phone, endOff)
+
+	if err := ust.SetSelfPointer(segb, ptrOff); err != nil {
+		panic(err)
+	}
+	return
+}
+
+func WriteRootGoserbenchSmallStructType(a *GoserbenchSmallStructType, mb *MessageBuilder) error {
+	fullWC, valid := GoserbenchSmallStructTypeSize(a)
+	if !valid {
+		return errors.New("invalid size")
+	}
+
+	segb, off, err := mb.Allocate(fullWC)
+	if err != nil {
+		return err
+	}
+	if segb.ID() != 0 {
+		return errors.New("did not allocate on seg 0")
+	}
+	if off != 1 {
+		return errors.New("builder already had stuff allocated")
+	}
+
+	UnsafeWriteGoserbenchSmallStructType(a, segb, 0, 1)
+
+	return nil
 }
 
 // goserbenchSmallStruct is a copy of goserbench's SmallStruct benchmark
