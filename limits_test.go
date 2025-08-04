@@ -6,8 +6,6 @@ package mdcapnp
 
 import (
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"matheusd.com/depvendoredtestify/require"
@@ -138,69 +136,6 @@ func TestReadLimiterCorrectness(t *testing.T) {
 
 		})
 	}
-}
-
-// BenchmarkCanReadAlternatives benchmarks alternatives to the read limiter
-// canRead() function.
-func BenchmarkCanReadAlternatives(b *testing.B) {
-	var readSz uint64 = 1000
-
-	// This is setup so that the last check fails.
-
-	// Original implementation in go-capnp.
-	b.Run("CAS", func(b *testing.B) {
-		var rlimit atomic.Uint64
-		rlimit.Store(uint64(b.N-1) * readSz)
-
-		for i := range b.N {
-			ok := false
-			for {
-				curr := rlimit.Load()
-
-				var new uint64
-				if ok = curr >= readSz; ok {
-					new = curr - readSz
-				}
-
-				if rlimit.CompareAndSwap(curr, new) {
-					break
-				}
-			}
-			if !(ok == (i < b.N-1)) {
-				panic(fmt.Sprintf("invalid result at %d", i))
-			}
-		}
-	})
-
-	b.Run("MUTEX", func(b *testing.B) {
-		var mtx sync.Mutex
-		var rlimit uint64 = uint64(b.N-1) * readSz
-		for i := range b.N {
-			mtx.Lock()
-			ok := rlimit >= readSz
-			if ok {
-				rlimit -= readSz
-			}
-			mtx.Unlock()
-
-			if !(ok == (i < b.N-1)) {
-				panic(fmt.Sprintf("invalid result at %d", i))
-			}
-		}
-	})
-
-	// Suggested implementation.
-	b.Run("CHECK", func(b *testing.B) {
-		var rlimit atomic.Uint64
-		readLimit := uint64(b.N-1) * readSz
-		for i := range b.N {
-			curr := rlimit.Add(readSz)
-			ok := curr <= readLimit
-			if !(ok == (i < b.N-1)) {
-				panic("invalid result")
-			}
-		}
-	})
 }
 
 func BenchmarkCanReadLimiter(b *testing.B) {
