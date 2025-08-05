@@ -6,6 +6,7 @@ package mdcapnp
 
 import (
 	"errors"
+	"math"
 	"time"
 )
 
@@ -122,24 +123,58 @@ func GoserbenchSmallStructTypeSize(a *GoserbenchSmallStructType) (wc WordCount, 
 	return
 }
 
-func UnsafeWriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, segb SegmentBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+func UnsafeWriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent UnsafeRawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
 	// Get an aliased writer to the desired location.
-	ust := segb.AliasUnsafeStruct(StructSize{DataSectionSize: 3, PointerSectionSize: 2}, startOff)
+	var urb UnsafeRawBuilder
+	parent.AliasChild(startOff, &urb)
 
 	// Write the data fields.
-	ust.SetInt64(0, a.BirthDay)
-	ust.SetInt32(1, Int32FieldSetMaskLo, a.Siblings)
-	ust.SetBool(1, 32, a.Spouse)
-	ust.SetFloat64(2, a.Money)
+	urb.SetWord(0, Word(a.BirthDay))
+	urb.SetWord(1, Word(a.Siblings)|BoolToWord(a.Spouse)<<32)
+	urb.SetWord(2, Word(math.Float64bits(a.Money)))
 
 	// Write the variable fields, keeping track of the end of this object.
-	endOff = startOff + WordOffset(StructSize{DataSectionSize: 3, PointerSectionSize: 2}.TotalSize())
-	endOff = ust.SetString(0, a.Name, endOff)
-	endOff = ust.SetString(1, a.Phone, endOff)
+	endOff = WordOffset(StructSize{DataSectionSize: 3, PointerSectionSize: 2}.TotalSize())
+	endOff = urb.SetString(3, a.Name, endOff)
+	endOff = urb.SetString(4, a.Phone, endOff)
 
-	if err := ust.SetSelfPointer(segb, ptrOff); err != nil {
-		panic(err)
+	parent.SetStruct(ptrOff, startOff, StructSize{DataSectionSize: 3, PointerSectionSize: 2})
+	endOff += startOff
+	return
+}
+
+func UnsafeWriteRootGoserbenchSmallStructType(a *GoserbenchSmallStructType, mb *MessageBuilder) error {
+	fullWC, valid := GoserbenchSmallStructTypeSize(a)
+	if !valid {
+		return errors.New("invalid size")
 	}
+
+	rootRB, err := mb.AllocateRootRawBuilder(fullWC)
+	if err != nil {
+		return err
+	}
+	WriteGoserbenchSmallStructType(a, rootRB, 0, 1)
+
+	return nil
+}
+
+func WriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent RawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+	// Get an aliased writer to the desired location.
+	var rb RawBuilder
+	parent.AliasChild(startOff, &rb)
+
+	// Write the data fields.
+	rb.SetWord(0, Word(a.BirthDay))
+	rb.SetWord(1, Word(a.Siblings)|BoolToWord(a.Spouse)<<32)
+	rb.SetWord(2, Word(math.Float64bits(a.Money)))
+
+	// Write the variable fields, keeping track of the end of this object.
+	endOff = WordOffset(StructSize{DataSectionSize: 3, PointerSectionSize: 2}.TotalSize())
+	endOff = rb.SetString(3, a.Name, endOff)
+	endOff = rb.SetString(4, a.Phone, endOff)
+
+	parent.SetStruct(ptrOff, startOff, StructSize{DataSectionSize: 3, PointerSectionSize: 2})
+	endOff += startOff
 	return
 }
 
@@ -149,18 +184,11 @@ func WriteRootGoserbenchSmallStructType(a *GoserbenchSmallStructType, mb *Messag
 		return errors.New("invalid size")
 	}
 
-	segb, off, err := mb.Allocate(fullWC)
+	rootRB, err := mb.AllocateRootRawBuilder(fullWC)
 	if err != nil {
 		return err
 	}
-	if segb.ID() != 0 {
-		return errors.New("did not allocate on seg 0")
-	}
-	if off != 1 {
-		return errors.New("builder already had stuff allocated")
-	}
-
-	UnsafeWriteGoserbenchSmallStructType(a, segb, 0, 1)
+	WriteGoserbenchSmallStructType(a, rootRB, 0, 1)
 
 	return nil
 }

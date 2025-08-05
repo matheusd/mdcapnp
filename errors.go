@@ -131,6 +131,10 @@ var errAllocatedUnalignedSeg = errors.New("allocator allocated unaligned segment
 
 var errAllocatedOutOfRange = errors.New("allocator allocated new buffer out of valid range")
 
+var errRootNotOnSeg0 = errors.New("root struct was not allocated on segment 0")
+
+var errRootNotAtOffset1 = errors.New("root struct not allocated at offset 1")
+
 type errStructBuilderDoesNotContainDataField uint16
 
 func (err errStructBuilderDoesNotContainDataField) Error() string {

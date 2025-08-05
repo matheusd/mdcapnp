@@ -36,25 +36,26 @@ func (s *SimpleSingleAllocator) Init(state *AllocState) (err error) {
 	return
 }
 
-func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
+func (s *SimpleSingleAllocator) AllocateXXXX(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
 	seg0 := state.GetSeg0()
 	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
 	if freeCap < sizeBytes {
 		// Resize needed.
+		newSeg0Size := len(seg0) + sizeBytes
 		headerBuf := state.GetHeader()
-		headerBuf = slices.Grow(headerBuf, len(seg0)+sizeBytes)
+		headerBuf = slices.Grow(headerBuf, newSeg0Size)[:8+newSeg0Size]
 		state.SetHeaderAndSeg0(headerBuf, 1)
+	} else {
+		// Increase len of segment 0.
+		off = WordOffset(len(seg0) / WordSize)
+		state.SetSeg0(seg0[:len(seg0)+sizeBytes])
 	}
-
-	// Increase len of segment 0.
-	off = WordOffset(len(seg0) / WordSize)
-	state.SetSeg0(seg0[:len(seg0)+sizeBytes])
 	return
 
 }
 
-func (s *SimpleSingleAllocator) AllocateXXXX(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
+func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
 	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
 	if freeCap < sizeBytes {
