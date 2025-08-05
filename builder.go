@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 	"unsafe"
 )
 
@@ -25,7 +24,10 @@ type ListBuilder struct {
 type StructBuilder struct {
 	off WordOffset // Concrete offset into segment where struct data begins.
 	sz  StructSize
-	seg SegmentBuilder
+	// seg SegmentBuilder
+	mb  *MessageBuilder
+	urb UnsafeRawBuilder
+	sid SegmentID
 }
 
 func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
@@ -44,8 +46,9 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		finalOff := dataIndex.uncheckedWordOffset(sb.off)
-		sb.seg.uncheckedSetWord(finalOff, Word(v))
+		// finalOff := dataIndex.uncheckedWordOffset(sb.off)
+		// sb.seg.uncheckedSetWord(finalOff, Word(v))
+		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
 	}
 	return
 }
@@ -58,7 +61,8 @@ func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, mask Int32DataFieldS
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
+		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(mask), Word(v))
 	}
 	return
 }
@@ -71,7 +75,8 @@ func (sb *StructBuilder) SetBool(dataIndex DataFieldIndex, bit byte, v bool) (er
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), ^(1 << bit), boolToWord(v)<<bit)
+		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), ^(1 << bit), boolToWord(v)<<bit)
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), ^(1 << bit), boolToWord(v)<<bit)
 	}
 	return
 }
@@ -84,7 +89,8 @@ func (sb *StructBuilder) SetFloat64(dataIndex DataFieldIndex, v float64) (err er
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
+		// sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
+		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
 	}
 	return
 }
@@ -97,13 +103,17 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 	}
 
 	// Allocate the string as a new object (list of bytes).
-	segb, lsPtr, err := sb.seg.mb.newText(sb.seg.id, v)
+	// segb, lsPtr, err := sb.seg.mb.newText(sb.seg.id, v)
+	// segb, lsPtr, err := sb.mb.newText(sb.sid, v)
+	sid, lsPtr, err := sb.mb.newText(sb.sid, v)
 	if err != nil {
 		return err
 	}
 
 	// TODO: handle allocs in new segments.
-	if segb.id != sb.seg.id {
+	// if segb.id != sb.seg.id {
+	// if segb.id != sb.sid {
+	if sid != sb.sid {
 		return errors.New("needs handling")
 	}
 
@@ -119,7 +129,8 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 
 	// Structure already fully allocated, no need to check for
 	// bounds.
-	sb.seg.uncheckedSetWord(ptrOff, Word(lsPtr.toPointer()))
+	// sb.seg.uncheckedSetWord(ptrOff, Word(lsPtr.toPointer()))
+	sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
 	return nil
 }
 
@@ -397,18 +408,64 @@ func (mb *MessageBuilder) allocateValidSize(preferred SegmentID, size WordCount)
 	return
 }
 
+func (mb *MessageBuilder) allocateValidSizeXXX(preferred SegmentID, size WordCount) (sid SegmentID, b []byte, offset WordOffset, err error) {
+	// Ask the allocator to allocate.
+	sid, offset, err = mb.alloc.Allocate(&mb.state, preferred, size)
+	if err != nil {
+		return
+	}
+
+	// This assertion is necessary because SegmentBuilders track the
+	// segment buffers by pointers into mb.state.Segs. Changing the
+	// capacity (but _not_ the length) would invalidate such pointers
+	// (because of the reallocation of the Segs slice). Thus we impose this
+	// restriction on allocators, that they must define at init time the
+	// max number of segments they are likely to use (while actual usage is
+	// still dynamic, given by the length of Segs).
+	if cap(mb.state.Segs) != mb.segsCap {
+		err = errCannotChangeSegsCap
+		return
+	}
+
+	if sid == 0 {
+		b = mb.state.FirstSeg
+		// segb.ptr = mb.state.firstSegPtr
+	} else {
+		b = mb.state.Segs[sid-1]
+	}
+
+	// Sanity check allocator didn't do something silly.
+	lenB := len(b)
+	if lenB > maxValidBytes {
+		err = errAllocatedTooLargeSeg
+		return
+	}
+	if !isWordAligned(lenB) {
+		err = errAllocatedUnalignedSeg
+		return
+	}
+	if endOff, ok := addWordOffsets(offset, WordOffset(size)); !ok || endOff > WordOffset(lenB/WordSize) {
+		err = errAllocatedOutOfRange
+		return
+	}
+
+	// All good.
+	return
+}
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 	// NewMessageBuilder() ensures the allocator returns at least one
 	// segment with at least enough room for the root pointer.
 	if mb == nil || mb.state.FirstSeg == nil || len(mb.state.FirstSeg) < WordSize {
 		return errAllocStateNoRootWord
 	}
-	if sb.seg.mb != mb {
+	// if sb.seg.mb != mb {
+	if sb.mb != mb {
 		return fmt.Errorf("sb.mb vs mb: %w", errDifferentMsgBuilders)
 	}
 
 	// TODO: handle inter-segment pointer.
-	if sb.seg.id != 0 {
+	// if sb.seg.id != 0 {
+	if sb.sid != 0 {
 		panic("needs handling")
 	}
 
@@ -427,13 +484,17 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err error) {
 	// TotalSize() is necessarily a valid size because it is only up to
 	// 2^17-2 words.
-	seg, off, err := mb.allocateValidSize(0, size.TotalSize())
+	// seg, off, err := mb.allocateValidSize(0, size.TotalSize())
+	sid, b, off, err := mb.allocateValidSizeXXX(0, size.TotalSize())
 	if err != nil {
 		return StructBuilder{}, err
 	}
 
 	return StructBuilder{
-		seg: seg,
+		// seg: seg,
+		mb:  mb,
+		sid: sid, // seg.id,
+		urb: UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[off*WordSize]))},
 		off: off,
 		sz:  size,
 	}, nil
@@ -441,21 +502,30 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 
 // newText allocates and places s as a new text in the meesage. The text is
 // preferably (but not necessarily) put into segment preferSeg.
-func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (segb SegmentBuilder, ptr listPointer, err error) {
+func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) ( /*segb SegmentBuilder, ptr listPointer*/ sid SegmentID, ptr listPointer, err error) {
 	// Length of texts (strings) in capnp is +1 due to null at the end.
 	textLen := uint(len(s) + 1)
 	if textLen > MaxListSize {
-		return SegmentBuilder{}, listPointer{}, errStringTooLarge
+		// return SegmentBuilder{}, listPointer{}, errStringTooLarge
+		return 0, listPointer{}, errStringTooLarge
 	}
 
 	words := WordCount(uintBytesToWordAligned(textLen))
-	segb, off, err := mb.allocateValidSize(preferSeg, words)
+	/*
+		segb, off, err := mb.allocateValidSize(preferSeg, words)
+		if err != nil {
+			return SegmentBuilder{}, listPointer{}, err
+		}
+		segb.copyStringTo(off, s)
+	*/
+	sid, b, off, err := mb.allocateValidSizeXXX(preferSeg, words)
 	if err != nil {
-		return SegmentBuilder{}, listPointer{}, err
+		// return SegmentBuilder{}, listPointer{}, err
+		return 0, listPointer{}, err
 	}
-	segb.copyStringTo(off, s)
+	copy(b[off*WordSize:], s)
 
-	return segb,
+	return sid,
 		listPointer{
 			startOffset: off,
 			elSize:      listElSizeByte,

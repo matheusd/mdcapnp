@@ -14,6 +14,11 @@ func (rb *UnsafeRawBuilder) SetWord(offset WordOffset, value Word) {
 	*(*Word)(unsafe.Add(rb.ptr, offset*WordSize)) = Word(value)
 }
 
+func (rb *UnsafeRawBuilder) maskAndMergeWord(offset WordOffset, mask, value Word) {
+	ptr := (*Word)(unsafe.Add(rb.ptr, offset*WordSize))
+	*ptr = *ptr&mask | value
+}
+
 func (rb *UnsafeRawBuilder) SetString(ptrOffset WordOffset, v string, startOffset WordOffset) (nextOffset WordOffset) {
 	textLen := uint(len(v) + 1)
 	copy(unsafe.Slice((*byte)(unsafe.Add(rb.ptr, startOffset*WordSize)), len(v)), v)
@@ -41,7 +46,7 @@ func (rb *RawBuilder) SetWord(offset WordOffset, value Word) {
 
 func (rb *RawBuilder) SetString(ptrOffset WordOffset, v string, startOffset WordOffset) (nextOffset WordOffset) {
 	textLen := uint(len(v) + 1)
-	copy([]byte(unsafe.Slice((*byte)(unsafe.Pointer(&rb.b[startOffset])), textLen)), v)
+	copy([]byte(unsafe.Slice((*byte)(unsafe.Pointer(&rb.b[startOffset])), len(rb.b)*WordSize)), v)
 	nextOffset = startOffset + WordOffset(uintBytesToWordAligned(textLen))
 	lsPtr := buildRawListPointer(startOffset-ptrOffset-1, listElSizeByte, listSize(textLen))
 	rb.b[ptrOffset] = Word(lsPtr)

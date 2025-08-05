@@ -57,16 +57,18 @@ func (s *SimpleSingleAllocator) AllocateXXXX(state *AllocState, preferred Segmen
 
 func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
-	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
+	lenSeg0 := len(state.FirstSeg)
+	newLenSeg0 := lenSeg0 + sizeBytes
+	freeCap := cap(state.FirstSeg) - lenSeg0
+	off = WordOffset(lenSeg0 / WordSize)
 	if freeCap < sizeBytes {
 		// Resize needed.
-		state.HeaderBuf = slices.Grow(state.HeaderBuf, len(state.FirstSeg)+sizeBytes)
-		state.FirstSeg = state.HeaderBuf[8 : 8+len(state.FirstSeg)]
+		state.HeaderBuf = slices.Grow(state.HeaderBuf, newLenSeg0)
+		state.FirstSeg = state.HeaderBuf[8 : 8+newLenSeg0]
+	} else {
+		state.FirstSeg = state.FirstSeg[:newLenSeg0]
 	}
 
-	// Increase len of segment 0.
-	off = WordOffset(len(state.FirstSeg) / WordSize)
-	state.FirstSeg = state.FirstSeg[:len(state.FirstSeg)+sizeBytes]
 	return
 }
 
