@@ -5,6 +5,8 @@
 package experiments
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math/bits"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -241,4 +244,91 @@ func BenchmarkSetWordAlternatives(b *testing.B) {
 		}
 		doBench(b, f)
 	})
+}
+
+const CHANINXBUFSIZE = 256
+
+// BenchmarkChanInStack verifies passing values through channels don't cause
+// heap allocations.
+func BenchmarkChanInStack(b *testing.B) {
+	const BUFSIZE = CHANINXBUFSIZE
+	type testStruct struct {
+		b [BUFSIZE]byte
+	}
+	c := make(chan testStruct)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		rng := rand.NewChaCha8([32]byte{0: 0x01})
+		var b [BUFSIZE]byte
+		for {
+			rng.Read(b[:])
+			select {
+			case <-ctx.Done():
+				return
+			case c <- testStruct{b: b}:
+			}
+		}
+	}()
+
+	var out, zero [BUFSIZE]byte
+	time.Sleep(time.Millisecond)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		v := <-c
+		out = v.b
+	}
+
+	if bytes.Equal(out[:], zero[:]) {
+		b.Fatal("boo")
+	}
+}
+
+// BenchmarkChanHeapWithSyncPool verifies passing heap allocated values in the
+// channel.
+func BenchmarkChanHeapWithSyncPool(b *testing.B) {
+	const BUFSIZE = CHANINXBUFSIZE
+	type testStruct struct {
+		b *[BUFSIZE]byte
+	}
+	c := make(chan testStruct)
+
+	pool := sync.Pool{
+		New: func() any {
+			b := new([BUFSIZE]byte)
+			return b
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		rng := rand.NewChaCha8([32]byte{0: 0x01})
+		for {
+			b := pool.Get().(*[BUFSIZE]byte)
+			rng.Read((*b)[:])
+			select {
+			case <-ctx.Done():
+				return
+			case c <- testStruct{b: b}:
+			}
+		}
+	}()
+
+	var out, zero [BUFSIZE]byte
+	time.Sleep(time.Millisecond)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		v := <-c
+		out = *v.b
+		pool.Put(v.b)
+	}
+
+	if bytes.Equal(out[:], zero[:]) {
+		b.Fatal("boo")
+	}
+
 }
