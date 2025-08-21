@@ -118,7 +118,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 
 	// The end offset must be valid word offset and must come before the end
 	// of the segment.
-	if endOffset, ok := addWordOffsets(sp.dataOffset, WordOffset(fullSize)); !ok || endOffset >= WordOffset(segWordLen) {
+	if endOffset, ok := addWordOffsets(sp.dataOffset, WordOffset(fullSize)); !ok || endOffset > WordOffset(segWordLen) {
 		return ErrObjectOutOfBounds{Offset: sp.dataOffset, Size: fullSize, WordLen: segWordLen}
 	}
 

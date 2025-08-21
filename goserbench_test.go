@@ -379,4 +379,35 @@ func BenchmarkGoserbenchMarshal(b *testing.B) {
 			}
 		}
 	})
+
+	b.Run("fixed str exp", func(b *testing.B) {
+		mb, err := NewMessageBuilder(alloc)
+		require.NoError(b, err)
+
+		var sst GoserbenchSmallStructType
+		sst.BirthDay = 0x1011121314151617
+		sst.Siblings = 0x66669999
+		sst.Spouse = true
+		sst.Money = math.Float64frombits(0xabcd0000ef01)
+		sst.Name = "slimshady0123456"
+		sst.Phone = "phone67890"
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for range b.N {
+			if err := WriteRootGoserbenchSmallStructTypeXXX(&sst, mb); err != nil {
+				b.Fatal(err)
+			}
+			_, err = mb.Serialize()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			err = mb.Reset()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

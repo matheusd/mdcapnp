@@ -584,7 +584,7 @@ func (mb *MessageBuilder) AllocateRootRawBuilder(size WordCount) (rb RawBuilder,
 	}
 
 	b := &mb.state.FirstSeg
-	rb.b = unsafe.Slice((*Word)(unsafe.Pointer(&(*b)[0])), size)
+	rb.b = unsafe.Slice((*Word)(unsafe.Pointer(&(*b)[0])), size+1)
 	return
 }
 

@@ -193,6 +193,49 @@ func WriteRootGoserbenchSmallStructType(a *GoserbenchSmallStructType, mb *Messag
 	return nil
 }
 
+//***********************************************************
+
+func GoserbenchSmallStructTypeSizeXXX(a *GoserbenchSmallStructType) (wc WordCount, valid bool) {
+	// TODO: optionally cannonicalize by determining which data fields and
+	// pointers are empty?
+	stSize := StructSize{DataSectionSize: 3 + 3 + 2}
+
+	wc, valid = stSize.TotalSize(), true
+	return
+}
+
+func WriteGoserbenchSmallStructTypeXXX(a *GoserbenchSmallStructType, parent RawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+	// Get an aliased writer to the desired location.
+	var rb RawBuilder
+	parent.AliasChild(startOff, &rb)
+
+	// Write the data fields.
+	rb.SetWord(0, Word(a.BirthDay))
+	rb.SetWord(1, Word(a.Siblings)|BoolToWord(a.Spouse)<<32)
+	rb.SetWord(2, Word(math.Float64bits(a.Money)))
+	rb.SetStringXXX(3, 3, a.Name)
+	rb.SetStringXXX(6, 2, a.Phone)
+
+	parent.SetStruct(ptrOff, startOff, StructSize{DataSectionSize: 3 + 3 + 2})
+	endOff += startOff
+	return
+}
+
+func WriteRootGoserbenchSmallStructTypeXXX(a *GoserbenchSmallStructType, mb *MessageBuilder) error {
+	fullWC, valid := GoserbenchSmallStructTypeSizeXXX(a)
+	if !valid {
+		return errors.New("invalid size")
+	}
+
+	rootRB, err := mb.AllocateRootRawBuilder(fullWC)
+	if err != nil {
+		return err
+	}
+	WriteGoserbenchSmallStructTypeXXX(a, rootRB, 0, 1)
+
+	return nil
+}
+
 // goserbenchSmallStruct is a copy of goserbench's SmallStruct benchmark
 // structure.
 type goserbenchSmallStruct struct {

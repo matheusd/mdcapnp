@@ -4,7 +4,9 @@
 
 package mdcapnp
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 type UnsafeRawBuilder struct {
 	ptr unsafe.Pointer
@@ -51,6 +53,12 @@ func (rb *RawBuilder) SetString(ptrOffset WordOffset, v string, startOffset Word
 	lsPtr := buildRawListPointer(startOffset-ptrOffset-1, listElSizeByte, listSize(textLen))
 	rb.b[ptrOffset] = Word(lsPtr)
 	return
+}
+
+func (rb *RawBuilder) SetStringXXX(offset WordOffset, sizeBounds WordCount, v string) {
+	textLen := Word(len(v) + 1)
+	copy([]byte(unsafe.Slice((*byte)(unsafe.Pointer(&rb.b[offset])), len(rb.b)*WordSize)), v)
+	rb.b[offset+WordOffset(sizeBounds)-1] |= textLen << 56
 }
 
 func (rb *RawBuilder) SetStruct(ptrOff, structOff WordOffset, size StructSize) {

@@ -6,6 +6,7 @@ package mdcapnp
 
 import (
 	"math"
+	"unsafe"
 )
 
 // PointerFieldIndex is the index of a pointer field in a struct. The first
@@ -200,4 +201,18 @@ func (s *Struct) String(ptrIndex PointerFieldIndex) string {
 
 	buf := seg.uncheckedSlice(lp.startOffset, ByteCount(lp.listSize)-1) // -1 to remove last null
 	return string(buf)
+}
+
+func (s *Struct) UnsafeStringXXX(dataIndex DataFieldIndex, size WordCount) string {
+	// XXX HasData()
+	hasData := s.ptr.dataOffset > 0 && (dataIndex+DataFieldIndex(size)) <= DataFieldIndex(s.ptr.dataSectionSize)
+	if !hasData {
+		return ""
+	}
+
+	buf := s.seg.uncheckedSlice(dataIndex.uncheckedWordOffset(s.ptr.dataOffset), ByteCount(size*WordSize))
+	strLen := buf[len(buf)-1]
+
+	buf = buf[:strLen-1]
+	return *(*string)(unsafe.Pointer(&buf))
 }
