@@ -21,6 +21,26 @@ type callable struct {
 	// pipelinable
 }
 
+type pipelineStep struct {
+	// something??
+}
+
+type pipeline struct {
+	steps []pipelineStep
+}
+
+type capability interface{}
+
+type future[T any] struct {
+	pipe      *pipeline
+	stepIndex int
+}
+
+func then[T, U any](from future[T]) future[U] {
+	from.pipe.steps = append(from.pipe.steps, pipelineStep{})
+	return future[U]{from.pipe, len(from.pipe.steps) - 1}
+}
+
 type conn struct {
 	in  chan message
 	out chan message
@@ -39,6 +59,10 @@ func (rc *runningConn) queueOut(m message) {
 	case rc.conn.out <- m:
 	case <-rc.ctx.Done():
 	}
+}
+
+func (rc *runningConn) bootstrap() future[capability] {
+	panic("???")
 }
 
 type inMsg struct {
