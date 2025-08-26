@@ -12,6 +12,8 @@ import (
 	"github.com/sourcegraph/conc/pool"
 )
 
+type msgBuilder struct{} // Alias to a serializer MessageBuilder
+
 type message struct {
 	// serialized msg?
 }
@@ -21,24 +23,49 @@ type callable struct {
 	// pipelinable
 }
 
+type callParamsBuilder func(*msgBuilder) error
+
 type pipelineStep struct {
-	// something??
+	conn          *runningConn
+	interfaceId   uint64
+	methodId      uint16
+	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
+	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
 }
 
 type pipeline struct {
 	steps []pipelineStep
 }
 
+//go:noinline
+func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int {
+	pipe.steps = append(pipe.steps, pipelineStep{
+		interfaceId:   iid,
+		methodId:      mid,
+		paramsBuilder: pb,
+	})
+	return len(pipe.steps) - 1
+}
+
 type capability interface{}
 
-type future[T any] struct {
+type futureCap = struct {
 	pipe      *pipeline
 	stepIndex int
 }
 
-func then[T, U any](from future[T]) future[U] {
-	from.pipe.steps = append(from.pipe.steps, pipelineStep{})
-	return future[U]{from.pipe, len(from.pipe.steps) - 1}
+func remoteCall(obj futureCap, iid uint64, mid uint16, pb callParamsBuilder) futureCap {
+	obj.pipe.steps = append(obj.pipe.steps, pipelineStep{
+		interfaceId:   iid,
+		methodId:      mid,
+		paramsBuilder: pb,
+	})
+	return futureCap{obj.pipe, len(obj.pipe.steps) - 1}
+}
+
+func waitResult[T any](ctx context.Context, cap futureCap) (T, error) {
+	// Run cap.pipe
+	panic("boo")
 }
 
 type conn struct {
@@ -61,7 +88,7 @@ func (rc *runningConn) queueOut(m message) {
 	}
 }
 
-func (rc *runningConn) bootstrap() future[capability] {
+func (rc *runningConn) bootstrap() futureCap {
 	panic("???")
 }
 
@@ -83,6 +110,10 @@ type vat struct {
 
 	inMsg  chan inMsg
 	outMsg chan outMsg
+}
+
+func (v *vat) RunConn(c *conn) *runningConn {
+	panic("boo")
 }
 
 func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, c *conn) *runningConn {

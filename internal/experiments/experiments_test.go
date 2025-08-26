@@ -332,3 +332,52 @@ func BenchmarkChanHeapWithSyncPool(b *testing.B) {
 	}
 
 }
+
+type fpFutureStatic = struct {
+	pipe      *pipeline
+	stepIndex int
+}
+
+//go:noinline
+func callFpFutureStatic(obj fpFutureStatic, iid uint64, mid uint16) fpFutureStatic {
+	return fpFutureStatic{obj.pipe, obj.pipe.addStep(iid, mid, nil)}
+}
+
+type fpFutureGeneric[T any] struct {
+	pipe      *pipeline
+	stepIndex int
+}
+
+//go:noinline
+func callFpFutureGeneric[T, U any](obj fpFutureGeneric[T], iid uint64, mid uint16) fpFutureGeneric[U] {
+	return fpFutureGeneric[U]{obj.pipe, obj.pipe.addStep(iid, mid, nil)}
+}
+
+func BenchmarkFuturePossibilities(b *testing.B) {
+	b.Run("static", func(b *testing.B) {
+		f := fpFutureStatic{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := range b.N {
+			f = callFpFutureStatic(f, uint64(i), uint16(i*2))
+		}
+
+		if f.stepIndex != b.N-1 {
+			panic(fmt.Sprintf("%d vs %d", f.stepIndex, b.N))
+		}
+	})
+
+	b.Run("generic", func(b *testing.B) {
+		f := fpFutureGeneric[string]{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := range b.N {
+			f = callFpFutureGeneric[string, string](f, uint64(i), uint16(i*2))
+		}
+
+		if f.stepIndex != b.N-1 {
+			panic(fmt.Sprintf("%d vs %d", f.stepIndex, b.N))
+		}
+	})
+
+}
