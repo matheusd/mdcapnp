@@ -88,7 +88,12 @@ func (rc *runningConn) queueOut(m message) {
 	}
 }
 
-func (rc *runningConn) bootstrap() futureCap {
+type bootstrapCap struct {
+	_bootstrapCap struct{}
+	fc            futureCap
+}
+
+func (rc *runningConn) bootstrap() bootstrapCap {
 	panic("???")
 }
 

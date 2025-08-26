@@ -9,38 +9,54 @@ import (
 	"fmt"
 )
 
-type futureString futureCap
-
-func (fs futureString) wait(ctx context.Context) (string, error) {
-	return waitResult[string](ctx, fs)
+type futureString struct {
+	_futureString struct{}
+	fc            futureCap
 }
 
-type testAPI futureCap
+func (fs futureString) wait(ctx context.Context) (string, error) {
+	return waitResult[string](ctx, fs.fc)
+}
+
+type testAPI struct {
+	_testAPI struct{}
+	fc       futureCap
+}
 
 func (api testAPI) GetUser(id string) testUser {
 	pb := func(*msgBuilder) error {
 		_ = id
 		return nil
 	}
-	return testUser(remoteCall(api, 1000, 10, pb))
+	return testUser{fc: remoteCall(api.fc, 1000, 10, pb)}
 }
 
-type testUser futureCap
+func testAPIAsBootstrap(bt bootstrapCap) testAPI {
+	return testAPI{fc: bt.fc}
+}
+
+type testUser struct {
+	_testUser struct{}
+	fc        futureCap
+}
 
 func (usr testUser) GetProfile() testUserProfile {
 	pb := func(*msgBuilder) error {
 		return nil
 	}
-	return testUserProfile(remoteCall(usr, 1000, 11, pb))
+	return testUserProfile{fc: remoteCall(usr.fc, 1000, 11, pb)}
 }
 
-type testUserProfile futureCap
+type testUserProfile struct {
+	_testUserProfile struct{}
+	fc               futureCap
+}
 
 func (up testUserProfile) GetAvatarData() futureString {
 	pb := func(*msgBuilder) error {
 		return nil
 	}
-	return futureString(remoteCall(up, 1000, 12, pb))
+	return futureString{fc: remoteCall(up.fc, 1000, 12, pb)}
 }
 
 func example01() {
@@ -48,7 +64,7 @@ func example01() {
 	var c *conn
 	rc := v.RunConn(c)
 	boot := rc.bootstrap()
-	api := testAPI(boot)
+	api := testAPIAsBootstrap(boot)
 	user := api.GetUser("1000")
 	prof := user.GetProfile()
 	avatar := prof.GetAvatarData()

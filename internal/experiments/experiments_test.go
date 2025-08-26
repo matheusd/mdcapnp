@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/bits"
 	"math/rand/v2"
@@ -333,14 +334,16 @@ func BenchmarkChanHeapWithSyncPool(b *testing.B) {
 
 }
 
+var errDummy = errors.New("dummy error")
+
 type fpFutureStatic = struct {
 	pipe      *pipeline
 	stepIndex int
 }
 
 //go:noinline
-func callFpFutureStatic(obj fpFutureStatic, iid uint64, mid uint16) fpFutureStatic {
-	return fpFutureStatic{obj.pipe, obj.pipe.addStep(iid, mid, nil)}
+func callFpFutureStatic(obj fpFutureStatic, iid uint64, mid uint16, pb callParamsBuilder) fpFutureStatic {
+	return fpFutureStatic{obj.pipe, obj.pipe.addStep(iid, mid, pb)}
 }
 
 type fpFutureGeneric[T any] struct {
@@ -349,17 +352,84 @@ type fpFutureGeneric[T any] struct {
 }
 
 //go:noinline
-func callFpFutureGeneric[T, U any](obj fpFutureGeneric[T], iid uint64, mid uint16) fpFutureGeneric[U] {
-	return fpFutureGeneric[U]{obj.pipe, obj.pipe.addStep(iid, mid, nil)}
+func callFpFutureGeneric[T, U any](obj fpFutureGeneric[T], iid uint64, mid uint16, pb callParamsBuilder) fpFutureGeneric[U] {
+	return fpFutureGeneric[U]{obj.pipe, obj.pipe.addStep(iid, mid, pb)}
 }
 
-func BenchmarkFuturePossibilities(b *testing.B) {
-	b.Run("static", func(b *testing.B) {
-		f := fpFutureStatic{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
+// API type simulation for a defined type
+type fpStaticAPITypeDefined fpFutureStatic
+
+//go:noinline
+func (f fpStaticAPITypeDefined) next(s string) fpStaticAPITypeDefined {
+	pb := func(*msgBuilder) error {
+		if s == "666" {
+			return errDummy
+		}
+		return nil
+	}
+	return callFpFutureStatic(f, uint64(100), uint16(1000), pb)
+}
+
+// API type simulation for an embedded type.
+type fpStaticAPITypeEmbedded struct {
+	fc fpFutureStatic
+}
+
+//go:noinline
+func (f fpStaticAPITypeEmbedded) next(s string) fpStaticAPITypeEmbedded {
+	pb := func(*msgBuilder) error {
+		if s == "666" {
+			return errDummy
+		}
+		return nil
+	}
+	return fpStaticAPITypeEmbedded{fc: callFpFutureStatic(f.fc, uint64(100), uint16(1000), pb)}
+}
+
+// API type simulation for an embedded type with a discriminator tag.
+type fpStaticAPITypeTagged struct {
+	_fpStaticAPITypeTagged struct{} // Zero sized, unique discriminator field.
+	fc                     fpFutureStatic
+}
+
+//go:noinline
+func (f fpStaticAPITypeTagged) next(s string) fpStaticAPITypeTagged {
+	pb := func(*msgBuilder) error {
+		if s == "666" {
+			return errDummy
+		}
+		return nil
+	}
+	return fpStaticAPITypeTagged{fc: callFpFutureStatic(f.fc, uint64(100), uint16(1000), pb)}
+}
+
+type fpGenericAPIType fpFutureGeneric[string]
+
+//go:noinline
+func (f fpGenericAPIType) next(s string) fpGenericAPIType {
+	pb := func(*msgBuilder) error {
+		if s == "666" {
+			return errDummy
+		}
+		return nil
+	}
+	return fpGenericAPIType(callFpFutureGeneric[string, string](fpFutureGeneric[string](f), uint64(100), uint16(1000), pb))
+}
+
+func TestFutureTypeAlternativesSizes(t *testing.T) {
+	t.Logf(" Defined: size: %v, align: %v", unsafe.Sizeof(fpStaticAPITypeDefined{}), unsafe.Alignof(fpStaticAPITypeDefined{}))
+	t.Logf("Embedded: size: %v, align: %v", unsafe.Sizeof(fpStaticAPITypeEmbedded{}), unsafe.Alignof(fpStaticAPITypeEmbedded{}))
+	t.Logf("  Tagged: size: %v, align: %v", unsafe.Sizeof(fpStaticAPITypeTagged{}), unsafe.Alignof(fpStaticAPITypeTagged{}))
+	t.Logf(" Generic: size: %v, align: %v", unsafe.Sizeof(fpGenericAPIType{}), unsafe.Alignof(fpGenericAPIType{}))
+}
+
+func BenchmarkFutureTypeAlternatives(b *testing.B) {
+	b.Run("defined", func(b *testing.B) {
+		f := fpStaticAPITypeDefined{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := range b.N {
-			f = callFpFutureStatic(f, uint64(i), uint16(i*2))
+		for range b.N {
+			f = f.next("fooo")
 		}
 
 		if f.stepIndex != b.N-1 {
@@ -367,12 +437,38 @@ func BenchmarkFuturePossibilities(b *testing.B) {
 		}
 	})
 
-	b.Run("generic", func(b *testing.B) {
-		f := fpFutureGeneric[string]{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
+	b.Run("embedded", func(b *testing.B) {
+		f := fpStaticAPITypeEmbedded{fc: fpFutureStatic{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := range b.N {
-			f = callFpFutureGeneric[string, string](f, uint64(i), uint16(i*2))
+		for range b.N {
+			f = f.next("fooo")
+		}
+
+		if f.fc.stepIndex != b.N-1 {
+			panic(fmt.Sprintf("%d vs %d", f.fc.stepIndex, b.N))
+		}
+	})
+
+	b.Run("tagged", func(b *testing.B) {
+		f := fpStaticAPITypeTagged{fc: fpFutureStatic{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			f = f.next("fooo")
+		}
+
+		if f.fc.stepIndex != b.N-1 {
+			panic(fmt.Sprintf("%d vs %d", f.fc.stepIndex, b.N))
+		}
+	})
+
+	b.Run("generic", func(b *testing.B) {
+		f := fpGenericAPIType{pipe: &pipeline{steps: make([]pipelineStep, 0, b.N)}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			f = f.next("fooo")
 		}
 
 		if f.stepIndex != b.N-1 {
