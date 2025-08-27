@@ -37,6 +37,14 @@ type pipeline struct {
 	steps []pipelineStep
 }
 
+func newPipeline(sizeHint int) *pipeline {
+	var steps []pipelineStep
+	if sizeHint > 0 {
+		steps = make([]pipelineStep, 0, sizeHint)
+	}
+	return &pipeline{steps: steps}
+}
+
 //go:noinline
 func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int {
 	pipe.steps = append(pipe.steps, pipelineStep{
