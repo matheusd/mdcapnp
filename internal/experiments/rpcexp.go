@@ -31,11 +31,16 @@ type pipelineStep struct {
 	methodId      uint16
 	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
 	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
+	sides         []*pipeline
 }
 
 type pipeline struct {
-	steps []pipelineStep
+	parent        *pipeline
+	parentStepIdx int
+	steps         []pipelineStep
 }
+
+const defaultPipelineSizeHint = 5
 
 func newPipeline(sizeHint int) *pipeline {
 	var steps []pipelineStep
@@ -45,7 +50,10 @@ func newPipeline(sizeHint int) *pipeline {
 	return &pipeline{steps: steps}
 }
 
-//go:noinline
+func (pipe *pipeline) wouldFork(i int) bool {
+	return i != len(pipe.steps)-1
+}
+
 func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int {
 	pipe.steps = append(pipe.steps, pipelineStep{
 		interfaceId:   iid,
@@ -53,6 +61,16 @@ func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int 
 		paramsBuilder: pb,
 	})
 	return len(pipe.steps) - 1
+}
+
+func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
+	fork := newPipeline(sizeHint)
+	fork.parent = pipe
+	fork.parentStepIdx = i
+	if i > -1 {
+		pipe.steps[i].sides = append(pipe.steps[i].sides, fork)
+	} // else add root info?
+	return fork
 }
 
 type capability interface{}
@@ -63,13 +81,25 @@ type futureCap[T any] struct {
 	stepIndex int
 }
 
-func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) futureCap[U] {
-	obj.pipe.steps = append(obj.pipe.steps, pipelineStep{
-		interfaceId:   iid,
-		methodId:      mid,
-		paramsBuilder: pb,
-	})
-	return futureCap[U]{pipe: obj.pipe, stepIndex: len(obj.pipe.steps) - 1}
+func (fc futureCap[T]) wouldForkPipe() bool {
+	return fc.pipe.wouldFork(fc.stepIndex)
+}
+
+func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
+	return futureCap[T]{
+		pipe:      newPipeline(pipeSizeHint),
+		stepIndex: -1,
+	}
+}
+
+func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
+	if obj.wouldForkPipe() {
+		res.pipe = obj.pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
+	} else {
+		res.pipe = obj.pipe
+		res.stepIndex = obj.pipe.addStep(iid, mid, pb)
+	}
+	return
 }
 
 func waitResult[T any](ctx context.Context, cap futureCap[T]) (T, error) {

@@ -26,7 +26,7 @@ func (tcf testCapFuture) nextNoInline() testCapFuture {
 // under various circumstances.
 func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	b.Run("no hint/inline", func(b *testing.B) {
-		f := testCapFuture{pipe: newPipeline(0)}
+		f := testCapFuture(newRootFutureCap[testCap](0))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -36,7 +36,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	})
 
 	b.Run("no hint/no inline", func(b *testing.B) {
-		f := testCapFuture{pipe: newPipeline(0)}
+		f := testCapFuture(newRootFutureCap[testCap](0))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -46,7 +46,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	})
 
 	b.Run("hint/inline", func(b *testing.B) {
-		f := testCapFuture{pipe: newPipeline(b.N)}
+		f := testCapFuture(newRootFutureCap[testCap](b.N))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -56,12 +56,23 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	})
 
 	b.Run("hint/no inline", func(b *testing.B) {
-		f := testCapFuture{pipe: newPipeline(b.N)}
+		f := testCapFuture(newRootFutureCap[testCap](b.N))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
 			f = f.nextNoInline()
 		}
 		require.Equal(b, f.stepIndex, b.N-1)
+	})
+
+	b.Run("fork/inline", func(b *testing.B) {
+		f := testCapFuture(newRootFutureCap[testCap](b.N))
+		var final testCapFuture
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			final = f.next()
+		}
+		require.Equal(b, 0, final.stepIndex)
 	})
 }
