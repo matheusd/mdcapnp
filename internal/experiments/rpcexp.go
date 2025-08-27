@@ -49,21 +49,22 @@ func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int 
 
 type capability interface{}
 
-type futureCap = struct {
+type futureCap[T any] struct {
+	_         [0]T // Tag.
 	pipe      *pipeline
 	stepIndex int
 }
 
-func remoteCall(obj futureCap, iid uint64, mid uint16, pb callParamsBuilder) futureCap {
+func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) futureCap[U] {
 	obj.pipe.steps = append(obj.pipe.steps, pipelineStep{
 		interfaceId:   iid,
 		methodId:      mid,
 		paramsBuilder: pb,
 	})
-	return futureCap{obj.pipe, len(obj.pipe.steps) - 1}
+	return futureCap[U]{pipe: obj.pipe, stepIndex: len(obj.pipe.steps) - 1}
 }
 
-func waitResult[T any](ctx context.Context, cap futureCap) (T, error) {
+func waitResult[T any](ctx context.Context, cap futureCap[T]) (T, error) {
 	// Run cap.pipe
 	panic("boo")
 }
@@ -88,9 +89,11 @@ func (rc *runningConn) queueOut(m message) {
 	}
 }
 
-type bootstrapCap struct {
-	_bootstrapCap struct{}
-	fc            futureCap
+type _bootstrapCap struct{}
+type bootstrapCap futureCap[_bootstrapCap]
+
+func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
+	return futureCap[T]{pipe: bc.pipe, stepIndex: bc.stepIndex}
 }
 
 func (rc *runningConn) bootstrap() bootstrapCap {

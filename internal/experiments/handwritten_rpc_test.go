@@ -9,54 +9,45 @@ import (
 	"fmt"
 )
 
-type futureString struct {
-	_futureString struct{}
-	fc            futureCap
-}
+type futureString futureCap[string]
 
 func (fs futureString) wait(ctx context.Context) (string, error) {
-	return waitResult[string](ctx, fs.fc)
+	return waitResult(ctx, futureCap[string](fs))
 }
 
-type testAPI struct {
-	_testAPI struct{}
-	fc       futureCap
-}
+type testAPICap struct{}
+type testAPI futureCap[testAPICap]
 
 func (api testAPI) GetUser(id string) testUser {
 	pb := func(*msgBuilder) error {
 		_ = id
 		return nil
 	}
-	return testUser{fc: remoteCall(api.fc, 1000, 10, pb)}
+	return testUser(remoteCall[testAPICap, testUserCap](futureCap[testAPICap](api), 1000, 10, pb))
 }
 
 func testAPIAsBootstrap(bt bootstrapCap) testAPI {
-	return testAPI{fc: bt.fc}
+	return testAPI(castBootstrap[testAPICap](bt))
 }
 
-type testUser struct {
-	_testUser struct{}
-	fc        futureCap
-}
+type testUserCap struct{}
+type testUser futureCap[testUserCap]
 
 func (usr testUser) GetProfile() testUserProfile {
 	pb := func(*msgBuilder) error {
 		return nil
 	}
-	return testUserProfile{fc: remoteCall(usr.fc, 1000, 11, pb)}
+	return testUserProfile(remoteCall[testUserCap, testUserProfileCap](futureCap[testUserCap](usr), 1000, 11, pb))
 }
 
-type testUserProfile struct {
-	_testUserProfile struct{}
-	fc               futureCap
-}
+type testUserProfileCap struct{}
+type testUserProfile futureCap[testUserProfileCap]
 
 func (up testUserProfile) GetAvatarData() futureString {
 	pb := func(*msgBuilder) error {
 		return nil
 	}
-	return futureString{fc: remoteCall(up.fc, 1000, 12, pb)}
+	return futureString(remoteCall[testUserProfileCap, string](futureCap[testUserProfileCap](up), 1000, 11, pb))
 }
 
 func example01() {
@@ -79,4 +70,6 @@ func example01() {
 		GetProfile().
 		GetAvatarData().
 		wait(context.Background()))
+
+	// _ = testUser(api).GetProfile() // Should not compile
 }
