@@ -13,8 +13,6 @@ import (
 )
 
 type vat struct {
-	conns []*conn
-
 	newConn  chan *runningConn
 	connDone chan conn
 
@@ -137,7 +135,11 @@ type vatRunState struct {
 
 func (s *vatRunState) delConn(c conn) {
 	s.conns = slices.DeleteFunc(s.conns, func(rc *runningConn) bool {
-		return rc.c == c
+		if rc.c == c {
+			rc.cancel()
+			return true
+		}
+		return false
 	})
 }
 
