@@ -19,10 +19,5 @@ type callParamsBuilder func(*msgBuilder) error
 
 type inMsg struct {
 	rc  *runningConn
-	msg message
-}
-
-type outMsg struct {
-	conn conn
-	msg  message
+	msg *message
 }

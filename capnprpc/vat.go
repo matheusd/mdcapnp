@@ -82,7 +82,7 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
-			var msg message // TODO: pool in vat
+			var msg message // TODO: obtain from pool in vat
 			err := rc.c.receive(ctx, &msg)
 			if err != nil {
 				return err
@@ -91,7 +91,7 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case v.inMsg <- inMsg{rc: rc, msg: msg}:
+			case v.inMsg <- inMsg{rc: rc, msg: &msg}:
 			}
 		}
 	})
@@ -123,16 +123,49 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 	})
 }
 
+// processInMessage processes an incoming message from a remote vat.
+func (v *vat) processInMessage(ctx context.Context, rc *runningConn, msg *message) error {
+	// TODO: Check how message affects rc's tables.
+	panic("boo")
+}
+
+// prepareOutMessage prepares an outgoing message message that is part of a
+// pipeline to be sent to the remote vat.
+//
+// Note: this does _not_ commit the changes to the conn's tables yet.
+func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
+	panic("boo")
+}
+
+// commitOutMessage commits the changes of the pipeline step to the local vat's
+// state, under the assumption that the given pipeline step is successfully sent
+// to the remote vat.
+func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
+	panic("boo")
+}
+
+// startPipeline starts processing a pipeline. This sends the entire pipeline to
+// the respective remote vats and modifies the local vat's state according to
+// each step.
 func (v *vat) startPipeline(ctx context.Context, pipe *pipeline) error {
 	for i := range pipe.steps {
 		step := &pipe.steps[i]
 
-		// TODO: Modify runningConn's tables (set questionId, etc).
+		// Modify the state of the local vat as it relates to this
+		// outgoing message.
+		if err := v.prepareOutMessage(ctx, pipe, i); err != nil {
+			return err
+		}
 
 		// Send resulting message to remote side. Generally, this fails
 		// only if ctx is done or if the outbound queue for this conn is
 		// full.
 		if err := step.conn.queue(ctx, step.msg); err != nil {
+			return err
+		}
+
+		// Commit the changes to the local vat.
+		if err := v.commitOutMessage(ctx, pipe, i); err != nil {
 			return err
 		}
 
@@ -191,7 +224,12 @@ func (v *vat) runStep(rs *vatRunState) error {
 
 	case m := <-v.inMsg:
 		// Process input msg.
-		_ = m
+		err := v.processInMessage(rs.ctx, m.rc, m.msg)
+		if err != nil {
+			return err
+		}
+
+		// TODO: return m.msg to vat's msg pool.
 
 	case pipe := <-v.pipelines:
 		err := v.startPipeline(rs.ctx, pipe)
