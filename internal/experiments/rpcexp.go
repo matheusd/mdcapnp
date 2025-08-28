@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/sourcegraph/conc/pool"
+	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
 type msgBuilder struct{} // Alias to a serializer MessageBuilder
@@ -31,22 +32,28 @@ type pipelineStep struct {
 	methodId      uint16
 	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
 	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
-	sides         []*pipeline
+
+	// Filled if this step forks the pipeline.
+	sides       []*pipeline
+	stepRunning *sigvalue.Once[struct{}] // FIXME: what type?
 }
 
 type pipeline struct {
 	parent        *pipeline
 	parentStepIdx int
 	steps         []pipelineStep
+
+	// Filled once the pipeline is running.
+	ctx    context.Context
+	cancel func(error)
 }
 
 const defaultPipelineSizeHint = 5
 
+var errPipelineSuccessful = errors.New("pipeline successful (not a real error)")
+
 func newPipeline(sizeHint int) *pipeline {
-	var steps []pipelineStep
-	if sizeHint > 0 {
-		steps = make([]pipelineStep, 0, sizeHint)
-	}
+	steps := make([]pipelineStep, 1, max(1, sizeHint))
 	return &pipeline{steps: steps}
 }
 
@@ -67,13 +74,15 @@ func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork := newPipeline(sizeHint)
 	fork.parent = pipe
 	fork.parentStepIdx = i
-	if i > -1 {
-		pipe.steps[i].sides = append(pipe.steps[i].sides, fork)
-	} // else add root info?
+
+	step := &pipe.steps[i]
+	step.sides = append(pipe.steps[i].sides, fork)
+	if step.stepRunning == nil {
+		step.stepRunning = new(sigvalue.Once[struct{}])
+	}
+
 	return fork
 }
-
-type capability interface{}
 
 type futureCap[T any] struct {
 	_         [0]T // Tag.
@@ -88,7 +97,7 @@ func (fc futureCap[T]) wouldForkPipe() bool {
 func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
 	return futureCap[T]{
 		pipe:      newPipeline(pipeSizeHint),
-		stepIndex: -1,
+		stepIndex: 0,
 	}
 }
 
@@ -104,27 +113,25 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 
 func waitResult[T any](ctx context.Context, cap futureCap[T]) (T, error) {
 	// Run cap.pipe
+	cap.pipe.steps[0].conn.vat.ExecPipeline(ctx, cap.pipe)
 	panic("boo")
 }
 
-type conn struct {
-	in  chan message
-	out chan message
+type conn interface {
+	send(context.Context, *message) error
+	receive(context.Context, *message) error
+
+	// TODO: Allow conn-owned buffer (io_uring)?
+	// usesReceiverBuffer() bool
+	// receiveMsg(context.Context) (*message, error)
 }
 
 type runningConn struct {
-	*conn
+	c   conn
+	vat *vat
+
 	ctx    context.Context
 	cancel func() // Closes runningConn.
-}
-
-func (rc *runningConn) queueOut(m message) {
-	select {
-	// TODO: what if out is blocked? Impose max limit before
-	// effecting disconnection?
-	case rc.conn.out <- m:
-	case <-rc.ctx.Done():
-	}
 }
 
 type _bootstrapCap struct{}
@@ -134,54 +141,107 @@ func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 	return futureCap[T]{pipe: bc.pipe, stepIndex: bc.stepIndex}
 }
 
-func (rc *runningConn) bootstrap() bootstrapCap {
-	panic("???")
+func (rc *runningConn) Bootstrap() bootstrapCap {
+	res := bootstrapCap(newRootFutureCap[_bootstrapCap](defaultPipelineSizeHint))
+	res.pipe.steps[0].conn = rc
+
+	// TODO: what if bootstrap already resolved?
+
+	return res
 }
 
 type inMsg struct {
-	conn *conn
-	msg  message
+	rc  *runningConn
+	msg message
 }
 
 type outMsg struct {
-	conn *conn
+	conn conn
 	msg  message
 }
 
 type vat struct {
 	conns []*conn
 
-	newConn  chan *conn
-	connDone chan *conn
+	newConn  chan *runningConn
+	connDone chan conn
 
-	inMsg  chan inMsg
-	outMsg chan outMsg
+	inMsg     chan inMsg
+	outMsg    chan outMsg
+	pipelines chan *pipeline
 }
 
-func (v *vat) RunConn(c *conn) *runningConn {
-	panic("boo")
-}
-
-func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, c *conn) *runningConn {
-	connCtx, connCancel := context.WithCancel(ctx)
+func (v *vat) RunConn(c conn) *runningConn {
 	rc := &runningConn{
-		conn:   c,
-		ctx:    connCtx,
-		cancel: connCancel,
+		vat: v,
 	}
 
-	connG := pool.New().WithContext(connCtx).WithCancelOnError().WithFirstError()
+	v.newConn <- rc
+	return rc
+}
+
+func (v *vat) ExecPipeline(ctx context.Context, p *pipeline) error {
+	select {
+	case <-p.ctx.Done():
+		// This is a programmer error. Pipelines aren't concurrent safe
+		// and MUST NOT be executed twice. This is only a soft
+		// protection, because the pipeline could be running but not
+		// done yet.
+		panic("pipeline already executed")
+	default:
+	}
+
+	// If this pipeline is a fork, wait until the its parent step is
+	// running, which means it can proceed.
+	if p.parent != nil {
+		parentStep := &p.parent.steps[p.parentStepIdx]
+		_, err := parentStep.stepRunning.Wait(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Send the pipeline for processing by the vat's goroutine. This cashes
+	// out into vat.startPipeline().
+	p.ctx, p.cancel = context.WithCancelCause(ctx)
+	select {
+	case v.pipelines <- p:
+	case <-p.ctx.Done():
+		return p.ctx.Err()
+	}
+
+	// Wait until pipeline has finished processing. This is signalled by the
+	// pipeline's context getting done.
+	<-p.ctx.Done()
+	err := context.Cause(p.ctx)
+	if errors.Is(err, errPipelineSuccessful) {
+		err = nil
+	}
+
+	return err
+}
+
+func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn) {
+	rc.ctx, rc.cancel = context.WithCancel(ctx)
+
+	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
+			var msg message // TODO: pool in vat
+			err := rc.c.receive(ctx, &msg)
+			if err != nil {
+				return err
+			}
+
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case msg := <-c.in:
-				v.inMsg <- inMsg{conn: c, msg: msg}
+			case v.inMsg <- inMsg{rc: rc, msg: msg}:
 			}
 		}
 	})
 
+	// Add this running conn to the vat's running pool.
 	g.Go(func(ctx context.Context) error {
 		err := connG.Wait()
 		// Consider canceled a graceful conn closure.
@@ -190,8 +250,24 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, c *conn) *runnin
 		}
 		return err
 	})
+}
 
-	return rc
+func (v *vat) startPipeline(_ context.Context, pipe *pipeline) error {
+	for _, step := range pipe.steps {
+		// TODO: run step.
+		_ = step
+
+		// This step is now in flight. Allow forks from it to start. The
+		// forks won't go out after the entirety of this pipeline has
+		// processed, because this is running within the vat's main
+		// goroutine.
+		if step.stepRunning != nil {
+			step.stepRunning.Set(struct{}{})
+		}
+	}
+
+	// Pipeline is in flight.
+	return nil
 }
 
 // vatRunState is the running state of the vat.
@@ -207,14 +283,14 @@ type vatRunState struct {
 	conns []*runningConn
 }
 
-func (s *vatRunState) delConn(c *conn) {
+func (s *vatRunState) delConn(c conn) {
 	s.conns = slices.DeleteFunc(s.conns, func(rc *runningConn) bool {
-		return rc.conn == c
+		return rc.c == c
 	})
 }
 
-func (s *vatRunState) findConn(c *conn) *runningConn {
-	i := slices.IndexFunc(s.conns, func(rc *runningConn) bool { return rc.conn == c })
+func (s *vatRunState) findConn(c conn) *runningConn {
+	i := slices.IndexFunc(s.conns, func(rc *runningConn) bool { return rc.c == c })
 	if i < 0 {
 		return nil
 	}
@@ -223,8 +299,8 @@ func (s *vatRunState) findConn(c *conn) *runningConn {
 
 func (v *vat) runStep(rs *vatRunState) error {
 	select {
-	case nc := <-v.newConn:
-		rc := v.runConn(rs.g, rs.ctx, nc)
+	case rc := <-v.newConn:
+		v.runConn(rs.g, rs.ctx, rc)
 		rs.conns = append(rs.conns, rc)
 
 	case oc := <-v.connDone:
@@ -235,11 +311,16 @@ func (v *vat) runStep(rs *vatRunState) error {
 		_ = m
 
 	case m := <-v.outMsg:
-		// Queue outgoing msg.
-		rc := rs.findConn(m.conn)
-		if rc != nil {
-			rc.queueOut(m.msg)
-		} // TODO: else alert caller conn does not exist anymore?
+		// Queue outgoing msg
+		_ = m // ????
+
+	case pipe := <-v.pipelines:
+		err := v.startPipeline(rs.ctx, pipe)
+		if err != nil {
+			pipe.cancel(err)
+
+			// Do some errors cause the vat to error out?
+		}
 
 	case <-rs.ctx.Done():
 		return rs.ctx.Err()
@@ -254,6 +335,7 @@ func (v *vat) Run(ctx context.Context) (err error) {
 	}
 	rs.g.Go(func(ctx context.Context) error {
 		var err error
+		rs.ctx = ctx
 		for err == nil {
 			err = v.runStep(rs)
 		}

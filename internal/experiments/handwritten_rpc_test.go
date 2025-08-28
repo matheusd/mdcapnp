@@ -52,9 +52,9 @@ func (up testUserProfile) GetAvatarData() futureString {
 
 func example01() {
 	var v *vat
-	var c *conn
+	var c conn
 	rc := v.RunConn(c)
-	boot := rc.bootstrap()
+	boot := rc.Bootstrap()
 	api := testAPIAsBootstrap(boot)
 	user := api.GetUser("1000")
 	prof := user.GetProfile()

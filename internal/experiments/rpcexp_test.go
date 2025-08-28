@@ -32,7 +32,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 		for range b.N {
 			f = f.next()
 		}
-		require.Equal(b, f.stepIndex, b.N-1)
+		require.Equal(b, b.N, f.stepIndex)
 	})
 
 	b.Run("no hint/no inline", func(b *testing.B) {
@@ -42,7 +42,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 		for range b.N {
 			f = f.nextNoInline()
 		}
-		require.Equal(b, f.stepIndex, b.N-1)
+		require.Equal(b, b.N, f.stepIndex)
 	})
 
 	b.Run("hint/inline", func(b *testing.B) {
@@ -52,7 +52,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 		for range b.N {
 			f = f.next()
 		}
-		require.Equal(b, f.stepIndex, b.N-1)
+		require.Equal(b, b.N, f.stepIndex)
 	})
 
 	b.Run("hint/no inline", func(b *testing.B) {
@@ -62,12 +62,12 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 		for range b.N {
 			f = f.nextNoInline()
 		}
-		require.Equal(b, f.stepIndex, b.N-1)
+		require.Equal(b, b.N, f.stepIndex)
 	})
 
 	b.Run("fork/inline", func(b *testing.B) {
 		f := testCapFuture(newRootFutureCap[testCap](b.N))
-		var final testCapFuture
+		var final testCapFuture = f.next() // First one doesn't count.
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
