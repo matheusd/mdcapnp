@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"matheusd.com/depvendoredtestify/require"
+	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
 // BenchmarkCanReadAlternatives benchmarks alternatives to the read limiter
@@ -410,6 +411,57 @@ func BenchmarkPipelineImplAlternatives(b *testing.B) {
 }
 
 var errDummy = errors.New("dummy error")
+
+type msgBuilder struct{} // Alias to a serializer MessageBuilder
+type callParamsBuilder func(*msgBuilder) error
+
+type pipelineStep struct {
+	interfaceId   uint64
+	methodId      uint16
+	paramsBuilder callParamsBuilder // Builds the Params field of an rpc.Call struct
+
+	// Filled if this step forks the pipeline.
+	sides       []*pipeline
+	stepRunning *sigvalue.Once[struct{}] // FIXME: what type?
+}
+
+type pipeline struct {
+	parent        *pipeline
+	parentStepIdx int
+	steps         []pipelineStep
+}
+
+func newPipeline(sizeHint int) *pipeline {
+	steps := make([]pipelineStep, 1, max(1, sizeHint))
+	return &pipeline{steps: steps}
+}
+
+func (pipe *pipeline) wouldFork(i int) bool {
+	return i != len(pipe.steps)-1
+}
+
+func (pipe *pipeline) addStep(iid uint64, mid uint16, pb callParamsBuilder) int {
+	pipe.steps = append(pipe.steps, pipelineStep{
+		interfaceId:   iid,
+		methodId:      mid,
+		paramsBuilder: pb,
+	})
+	return len(pipe.steps) - 1
+}
+
+func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
+	fork := newPipeline(sizeHint)
+	fork.parent = pipe
+	fork.parentStepIdx = i
+
+	step := &pipe.steps[i]
+	step.sides = append(pipe.steps[i].sides, fork)
+	if step.stepRunning == nil {
+		step.stepRunning = new(sigvalue.Once[struct{}])
+	}
+
+	return fork
+}
 
 type fpFutureStatic = struct {
 	pipe      *pipeline
