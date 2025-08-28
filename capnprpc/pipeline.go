@@ -21,6 +21,9 @@ type pipelineStep struct {
 	// Filled if this step forks the pipeline.
 	sides       []*pipeline
 	stepRunning *sigvalue.Once[struct{}] // FIXME: what type?
+
+	// Filled when preparing this step for sending.
+	msg *message
 }
 
 type pipeline struct {

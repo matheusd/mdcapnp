@@ -4,7 +4,10 @@
 
 package capnprpc
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type conn interface {
 	send(context.Context, *message) error
@@ -19,8 +22,23 @@ type runningConn struct {
 	c   conn
 	vat *vat
 
+	outQueue chan *message
+
 	ctx    context.Context
 	cancel func() // Closes runningConn.
+}
+
+func (rc *runningConn) queue(ctx context.Context, msg *message) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+
+	case rc.outQueue <- msg:
+		return nil
+
+	default:
+		return errors.New("outbound queue is full")
+	}
 }
 
 type _bootstrapCap struct{}

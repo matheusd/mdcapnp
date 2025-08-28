@@ -17,13 +17,13 @@ type vat struct {
 	connDone chan conn
 
 	inMsg     chan inMsg
-	outMsg    chan outMsg
 	pipelines chan *pipeline
 }
 
 func (v *vat) RunConn(c conn) *runningConn {
 	rc := &runningConn{
-		vat: v,
+		vat:      v,
+		outQueue: make(chan *message, 1000), // Parametrize buffer size.
 	}
 
 	v.newConn <- rc
@@ -49,6 +49,11 @@ func (v *vat) ExecPipeline(ctx context.Context, p *pipeline) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// TODO: prepare messages for sending.
+	for i := range p.steps {
+		p.steps[i].msg = &message{}
 	}
 
 	// Send the pipeline for processing by the vat's goroutine. This cashes
@@ -91,6 +96,22 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 		}
 	})
 
+	connG.Go(func(ctx context.Context) error {
+		for {
+			select {
+			case msg := <-rc.outQueue:
+				err := rc.c.send(ctx, msg)
+				// TODO: return msg to vat pool
+				if err != nil {
+					return err
+				}
+
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+
 	// Add this running conn to the vat's running pool.
 	g.Go(func(ctx context.Context) error {
 		err := connG.Wait()
@@ -102,10 +123,18 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 	})
 }
 
-func (v *vat) startPipeline(_ context.Context, pipe *pipeline) error {
-	for _, step := range pipe.steps {
-		// TODO: run step.
-		_ = step
+func (v *vat) startPipeline(ctx context.Context, pipe *pipeline) error {
+	for i := range pipe.steps {
+		step := &pipe.steps[i]
+
+		// TODO: Modify runningConn's tables (set questionId, etc).
+
+		// Send resulting message to remote side. Generally, this fails
+		// only if ctx is done or if the outbound queue for this conn is
+		// full.
+		if err := step.conn.queue(ctx, step.msg); err != nil {
+			return err
+		}
 
 		// This step is now in flight. Allow forks from it to start. The
 		// forks won't go out after the entirety of this pipeline has
@@ -163,10 +192,6 @@ func (v *vat) runStep(rs *vatRunState) error {
 	case m := <-v.inMsg:
 		// Process input msg.
 		_ = m
-
-	case m := <-v.outMsg:
-		// Queue outgoing msg
-		_ = m // ????
 
 	case pipe := <-v.pipelines:
 		err := v.startPipeline(rs.ctx, pipe)
