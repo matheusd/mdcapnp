@@ -24,6 +24,7 @@ type pipelineStep struct {
 
 	// Filled when preparing this step for sending.
 	msg *message
+	qid QuetionId
 }
 
 type pipeline struct {

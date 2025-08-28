@@ -10,6 +10,18 @@ type message struct {
 	// serialized msg?
 }
 
+func (m *message) HasBootstrap() bool {
+	panic("fixme")
+}
+
+func (m *message) HasReturn() bool {
+	panic("fixme")
+}
+
+func (m *message) QuestionId() QuestionId {
+	panic("fixme")
+}
+
 type callable struct {
 	// promise || local-callable || remote-capability
 	// pipelinable
@@ -21,3 +33,18 @@ type inMsg struct {
 	rc  *runningConn
 	msg *message
 }
+
+// To be generated from rpc.capnp
+
+type QuestionId uint32
+type AnswerId uint32
+type ExportId uint32
+type ImportId uint32
+
+type question struct {
+	pipe    *pipeline
+	stepIdx int
+}
+type answer struct{}
+type imprt struct{}
+type export struct{}

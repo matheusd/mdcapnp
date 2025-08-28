@@ -18,11 +18,24 @@ type conn interface {
 	// receiveMsg(context.Context) (*message, error)
 }
 
+// runningConn is a connection that is running to another vat.
 type runningConn struct {
+	// Design note: most of the fields are only meant to be accessed from
+	// within a vat's runStep() call. They are not safe for concurrent
+	// access from within client code.
+	//
+	// TODO: maybe convert the public runningConn into a handle instead of
+	// pointer?
+
 	c   conn
 	vat *vat
 
 	outQueue chan *message
+
+	questions table[QuestionId, question]
+	answers   table[AnswerId, answer]
+	imports   table[ImportId, imprt]
+	exports   table[ExportId, export]
 
 	ctx    context.Context
 	cancel func() // Closes runningConn.

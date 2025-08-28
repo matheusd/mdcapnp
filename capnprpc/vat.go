@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/sourcegraph/conc/pool"
@@ -123,10 +124,34 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 	})
 }
 
+func (v *vat) processBootstrap(ctx context.Context, rc *runningConn, msg *message) error {
+	// TODO: get the bootstrap capability from vat.
+	// TODO: send as reply to remote vat.
+	panic("fixme")
+}
+
+func (v *vat) processReturn(ctx context.Context, rc *runningConn, msg *message) error {
+	qid := msg.QuestionId()
+	q, ok := rc.questions.get(qid)
+	if !ok {
+		return fmt.Errorf("question %d not found", q)
+	}
+
+	// TODO: go to pipeline item and fulfill it.
+
+	panic("fixme")
+}
+
 // processInMessage processes an incoming message from a remote vat.
 func (v *vat) processInMessage(ctx context.Context, rc *runningConn, msg *message) error {
-	// TODO: Check how message affects rc's tables.
-	panic("boo")
+	switch {
+	case msg.HasBootstrap():
+		return v.processBootstrap(ctx, rc, msg)
+	case msg.HasReturn():
+		return v.processReturn(ctx, rc, msg)
+	default:
+		return errors.New("unknown message type")
+	}
 }
 
 // prepareOutMessage prepares an outgoing message message that is part of a
@@ -134,13 +159,23 @@ func (v *vat) processInMessage(ctx context.Context, rc *runningConn, msg *messag
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
 func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
-	panic("boo")
+	var ok bool
+	step := &pipe.steps[stepIdx]
+	step.qid, ok = step.conn.questions.nextID()
+	if !ok {
+		return errors.New("too many open questions")
+	}
+
+	return nil
 }
 
 // commitOutMessage commits the changes of the pipeline step to the local vat's
-// state, under the assumption that the given pipeline step is successfully sent
-// to the remote vat.
+// state, under the assumption that the given pipeline step was successfully
+// sent to the remote vat.
 func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
+	step := &pipe.steps[stepIdx]
+
+	step.conn.questions.set(step.qid, question{pipe: pipe, stepIdx: stepIdx})
 	panic("boo")
 }
 
@@ -226,6 +261,8 @@ func (v *vat) runStep(rs *vatRunState) error {
 		// Process input msg.
 		err := v.processInMessage(rs.ctx, m.rc, m.msg)
 		if err != nil {
+			// TODO: should the error cancel the vat or just the
+			// conn?
 			return err
 		}
 
