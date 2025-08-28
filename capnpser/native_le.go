@@ -15,7 +15,7 @@
 
 //go:build nativeleperfimprov && !(mips || mips64 || ppc64)
 
-package mdcapnp
+package capnpser
 
 import "unsafe"
 
