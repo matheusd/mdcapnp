@@ -22,6 +22,8 @@ func (tcf testCapFuture) nextNoInline() testCapFuture {
 	return testCapFuture(remoteCall[testCap, testCap](futureCap[testCap](tcf), 1000, 11, nil))
 }
 
+// TODO: test forking a pipeline with only one step (i.e. bootstrap).
+
 // BenchmarkAddPipeRemoteCall benchmarks adding a remote call to a pipeline
 // under various circumstances.
 func BenchmarkAddPipeRemoteCall(b *testing.B) {

@@ -13,6 +13,8 @@ import (
 var errOnceAlreadySet = errors.New("value can only be set once")
 
 // Once is a value that can only be set once and signals when it is set.
+//
+// After being set, it retains the same value forever.
 type Once[T any] struct {
 	isSet     atomic.Bool
 	isSetChan chan struct{}

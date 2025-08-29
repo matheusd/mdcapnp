@@ -4,23 +4,21 @@
 
 package capnprpc
 
+import "matheusd.com/mdcapnp/capnpser"
+
 type msgBuilder struct{} // Alias to a serializer MessageBuilder
 
-type message struct {
-	// serialized msg?
-}
+type Return capnpser.Struct
 
-func (m *message) HasBootstrap() bool {
-	panic("fixme")
-}
+func (r *Return) AnswerId() AnswerId { panic("fixme") }
 
-func (m *message) HasReturn() bool {
-	panic("fixme")
-}
+type Message capnpser.Struct // RPC message type
 
-func (m *message) QuestionId() QuestionId {
-	panic("fixme")
-}
+func (m *Message) ReadFromRoot(msg *capnpser.Message) error { panic("fixme") }
+func (m *Message) IsBootstrap() bool                        { panic("fixme") }
+func (m *Message) IsReturn() bool                           { panic("fixme") }
+func (m *Message) QuestionId() QuestionId                   { panic("fixme") }
+func (m *Message) AsReturn() Return                         { panic("fixme") }
 
 type callable struct {
 	// promise || local-callable || remote-capability
@@ -31,7 +29,7 @@ type callParamsBuilder func(*msgBuilder) error
 
 type inMsg struct {
 	rc  *runningConn
-	msg *message
+	msg capnpser.Message
 }
 
 // To be generated from rpc.capnp

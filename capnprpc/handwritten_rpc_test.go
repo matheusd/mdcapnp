@@ -65,11 +65,22 @@ func example01() {
 	}
 	fmt.Println(avatarData)
 
+	ctx := context.Background()
+
 	fmt.Println(api.
 		GetUser("10000").
 		GetProfile().
 		GetAvatarData().
 		wait(context.Background()))
+
+	_ = user.GetProfile() // Forked prior pipeline.
+
+	user2 := api.GetUser("1000")
+	prof2 := user2.GetProfile()
+	prof2_2 := user2.GetProfile()        // Fork
+	go prof2_2.GetAvatarData().wait(ctx) // Dispatched fork before original.
+	go prof2.GetAvatarData().wait(ctx)
+	go waitResult(ctx, futureCap[testUserCap](user2)) // Dispatched fork parent after fork children.
 
 	// _ = testUser(api).GetProfile() // Should not compile
 }

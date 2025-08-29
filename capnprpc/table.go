@@ -11,6 +11,12 @@ type table[T ~uint32, U any] struct {
 	entries map[T]U
 }
 
+func makeTable[T ~uint32, U any]() table[T, U] {
+	return table[T, U]{
+		entries: make(map[T]U),
+	}
+}
+
 // nextID returns the next free id. Does NOT track it as used.
 func (t *table[T, U]) nextID() (id T, ok bool) {
 	// TODO: track and reuse low numbered IDs.

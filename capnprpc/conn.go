@@ -7,11 +7,13 @@ package capnprpc
 import (
 	"context"
 	"errors"
+
+	"matheusd.com/mdcapnp/capnpser"
 )
 
 type conn interface {
-	send(context.Context, *message) error
-	receive(context.Context, *message) error
+	send(context.Context, capnpser.Message) error
+	receive(context.Context, capnpser.Message) error
 
 	// TODO: Allow conn-owned buffer (io_uring)?
 	// usesReceiverBuffer() bool
@@ -30,7 +32,9 @@ type runningConn struct {
 	c   conn
 	vat *vat
 
-	outQueue chan *message
+	boot bootstrapCap
+
+	outQueue chan capnpser.Message
 
 	questions table[QuestionId, question]
 	answers   table[AnswerId, answer]
@@ -41,7 +45,7 @@ type runningConn struct {
 	cancel func() // Closes runningConn.
 }
 
-func (rc *runningConn) queue(ctx context.Context, msg *message) error {
+func (rc *runningConn) queue(ctx context.Context, msg capnpser.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -54,6 +58,26 @@ func (rc *runningConn) queue(ctx context.Context, msg *message) error {
 	}
 }
 
+func newRunningConn(c conn, v *vat) *runningConn {
+	// TODO: prepare boot message.
+	boot := bootstrapCap(newRootFutureCap[_bootstrapCap](1))
+
+	rc := &runningConn{
+		c:   c,
+		vat: v,
+
+		boot: boot,
+
+		outQueue:  make(chan capnpser.Message, 1000), // TODO: Parametrize buffer size.
+		questions: makeTable[QuestionId, question](),
+		answers:   makeTable[AnswerId, answer](),
+		imports:   makeTable[ImportId, imprt](),
+		exports:   makeTable[ExportId, export](),
+	}
+
+	return rc
+}
+
 type _bootstrapCap struct{}
 type bootstrapCap futureCap[_bootstrapCap]
 
@@ -62,10 +86,6 @@ func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 }
 
 func (rc *runningConn) Bootstrap() bootstrapCap {
-	res := bootstrapCap(newRootFutureCap[_bootstrapCap](defaultPipelineSizeHint))
-	res.pipe.steps[0].conn = rc
-
-	// TODO: what if bootstrap already resolved?
-
-	return res
+	// Fork the root bootstrap future into a new pipeline.
+	return bootstrapCap(forkFuture[_bootstrapCap](futureCap[_bootstrapCap](rc.boot), defaultPipelineSizeHint))
 }

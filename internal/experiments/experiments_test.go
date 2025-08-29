@@ -330,5 +330,53 @@ func BenchmarkChanHeapWithSyncPool(b *testing.B) {
 	if bytes.Equal(out[:], zero[:]) {
 		b.Fatal("boo")
 	}
+}
+
+func BenchmarkFieldIndexing(b *testing.B) {
+	var off int32
+	b.Run("single mul", func(b *testing.B) {
+		var v int32
+		for range b.N {
+			v = rand.Int32()
+			off = v * 8
+		}
+	})
+
+	b.Run("repeat mult 1 field", func(b *testing.B) {
+		var v int32
+		for range b.N {
+			v = rand.Int32N(2)
+			off = 0
+			for i := 32 - bits.LeadingZeros32(uint32(v)); i > bits.TrailingZeros32(uint32(v)); i-- {
+				off += (v & 1 << i) * 8
+			}
+		}
+	})
+
+	b.Run("repeat mult 10 fields", func(b *testing.B) {
+		var v int32
+		for range b.N {
+			v = rand.Int32N(1 << 11)
+			off = 0
+			for i := 32 - bits.LeadingZeros32(uint32(v)); i > bits.TrailingZeros32(uint32(v)); i-- {
+				off += (v & 1 << i) * 8
+			}
+		}
+	})
+
+	b.Run("repeat mult all", func(b *testing.B) {
+		var v int32
+		for range b.N {
+			v = rand.Int32()
+			off = 0
+			for i := 32 - bits.LeadingZeros32(uint32(v)); i > bits.TrailingZeros32(uint32(v)); i-- {
+				off += (v & 1 << i) * 8
+			}
+		}
+	})
+
+	if off == 666 {
+		b.Log("boop")
+	}
 
 }

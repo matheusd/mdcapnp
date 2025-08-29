@@ -7,10 +7,10 @@ package capnprpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/sourcegraph/conc/pool"
+	"matheusd.com/mdcapnp/capnpser"
 )
 
 type vat struct {
@@ -22,16 +22,12 @@ type vat struct {
 }
 
 func (v *vat) RunConn(c conn) *runningConn {
-	rc := &runningConn{
-		vat:      v,
-		outQueue: make(chan *message, 1000), // Parametrize buffer size.
-	}
-
+	rc := newRunningConn(c, v)
 	v.newConn <- rc
 	return rc
 }
 
-func (v *vat) ExecPipeline(ctx context.Context, p *pipeline) error {
+func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
 	select {
 	case <-p.ctx.Done():
 		// This is a programmer error. Pipelines aren't concurrent safe
@@ -54,7 +50,8 @@ func (v *vat) ExecPipeline(ctx context.Context, p *pipeline) error {
 
 	// TODO: prepare messages for sending.
 	for i := range p.steps {
-		p.steps[i].msg = &message{}
+		p.steps[i].serMsg = capnpser.MakeMsg(nil)
+		p.steps[i].rpcMsg = Message{}
 	}
 
 	// Send the pipeline for processing by the vat's goroutine. This cashes
@@ -83,8 +80,8 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
-			var msg message // TODO: obtain from pool in vat
-			err := rc.c.receive(ctx, &msg)
+			var msg capnpser.Message // TODO: obtain from pool in vat
+			err := rc.c.receive(ctx, msg)
 			if err != nil {
 				return err
 			}
@@ -92,7 +89,7 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case v.inMsg <- inMsg{rc: rc, msg: &msg}:
+			case v.inMsg <- inMsg{rc: rc, msg: msg}:
 			}
 		}
 	})
@@ -113,6 +110,11 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 		}
 	})
 
+	// Start the bootstrap pipeline (sends the bootstrap message).
+	connG.Go(func(ctx context.Context) error {
+		return v.ExecPipeline(ctx, rc.boot.pipe)
+	})
+
 	// Add this running conn to the vat's running pool.
 	g.Go(func(ctx context.Context) error {
 		err := connG.Wait()
@@ -120,63 +122,11 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 		if errors.Is(err, context.Canceled) {
 			err = nil
 		}
+
+		// TODO: returning any errors here will make the vat error out.
+		// Add options to log and not fail.
 		return err
 	})
-}
-
-func (v *vat) processBootstrap(ctx context.Context, rc *runningConn, msg *message) error {
-	// TODO: get the bootstrap capability from vat.
-	// TODO: send as reply to remote vat.
-	panic("fixme")
-}
-
-func (v *vat) processReturn(ctx context.Context, rc *runningConn, msg *message) error {
-	qid := msg.QuestionId()
-	q, ok := rc.questions.get(qid)
-	if !ok {
-		return fmt.Errorf("question %d not found", q)
-	}
-
-	// TODO: go to pipeline item and fulfill it.
-
-	panic("fixme")
-}
-
-// processInMessage processes an incoming message from a remote vat.
-func (v *vat) processInMessage(ctx context.Context, rc *runningConn, msg *message) error {
-	switch {
-	case msg.HasBootstrap():
-		return v.processBootstrap(ctx, rc, msg)
-	case msg.HasReturn():
-		return v.processReturn(ctx, rc, msg)
-	default:
-		return errors.New("unknown message type")
-	}
-}
-
-// prepareOutMessage prepares an outgoing message message that is part of a
-// pipeline to be sent to the remote vat.
-//
-// Note: this does _not_ commit the changes to the conn's tables yet.
-func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
-	var ok bool
-	step := &pipe.steps[stepIdx]
-	step.qid, ok = step.conn.questions.nextID()
-	if !ok {
-		return errors.New("too many open questions")
-	}
-
-	return nil
-}
-
-// commitOutMessage commits the changes of the pipeline step to the local vat's
-// state, under the assumption that the given pipeline step was successfully
-// sent to the remote vat.
-func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
-	step := &pipe.steps[stepIdx]
-
-	step.conn.questions.set(step.qid, question{pipe: pipe, stepIdx: stepIdx})
-	panic("boo")
 }
 
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
@@ -195,7 +145,7 @@ func (v *vat) startPipeline(ctx context.Context, pipe *pipeline) error {
 		// Send resulting message to remote side. Generally, this fails
 		// only if ctx is done or if the outbound queue for this conn is
 		// full.
-		if err := step.conn.queue(ctx, step.msg); err != nil {
+		if err := step.conn.queue(ctx, step.serMsg); err != nil {
 			return err
 		}
 
