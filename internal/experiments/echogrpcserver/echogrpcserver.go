@@ -4,16 +4,30 @@
 
 package main
 
+//go:generate protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative structdef.proto
+
 import (
+	context "context"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+
+	"google.golang.org/grpc"
 )
 
 var flagPort = flag.Int("port", 0, "Port number")
+
+type echoHandler struct {
+	UnimplementedEchoServer
+}
+
+func (e echoHandler) Echo(_ context.Context, in *SmallStruct) (*SmallStruct, error) {
+	log.Printf("Echoing back")
+	return in, nil
+}
 
 func realMain() error {
 	flag.Parse()
@@ -28,34 +42,12 @@ func realMain() error {
 		return err
 	}
 
+	server := grpc.NewServer()
+	RegisterEchoServer(server, echoHandler{})
+
 	errChan := make(chan error, 1)
 	go func() {
-		readBuf := make([]byte, 2048)
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				errChan <- err
-				return
-			}
-
-			log.Printf("Accepted connection from %s", c.RemoteAddr())
-			for {
-				n, err := c.Read(readBuf)
-				if err != nil {
-					log.Printf("TCP Read error: %v", err)
-					break
-				}
-
-				_, err = c.Write(readBuf[:n])
-				if err != nil {
-					log.Printf("TCP Write error: %v", err)
-					break
-				}
-
-				log.Printf("Echoed %d", n)
-			}
-
-		}
+		errChan <- server.Serve(l)
 	}()
 
 	select {
