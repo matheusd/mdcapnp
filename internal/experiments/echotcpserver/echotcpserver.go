@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,9 +36,39 @@ func realMain() error {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *flagPort)
 	log.Printf("Listening on %s", addr)
-	errChan := make(chan error)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	errChan := make(chan error, 1)
 	go func() {
-		errChan <- http.ListenAndServe(addr, echoHandler{})
+		readBuf := make([]byte, 2048)
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			log.Printf("Accepted connection from %s", c.RemoteAddr())
+			for {
+				n, err := c.Read(readBuf)
+				if err != nil {
+					log.Printf("TCP Read error: %v", err)
+					break
+				}
+
+				_, err = c.Write(readBuf[:n])
+				if err != nil {
+					log.Printf("TCP Write error: %v", err)
+					break
+				}
+
+				log.Printf("Echoed %d", n)
+			}
+
+		}
 	}()
 
 	select {
