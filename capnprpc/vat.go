@@ -170,7 +170,7 @@ func (v *vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 		for i := batch.startIdx; i <= batch.endIdx; i++ {
 			// Commit the changes to the local vat.
 			step := &rp.steps[i]
-			if err := v.commitOutMessage(ctx, rp.pipe, step); err != nil {
+			if err := v.commitOutMessage(ctx, rp.pipe, i, step); err != nil {
 				return err
 			}
 

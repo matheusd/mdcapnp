@@ -26,9 +26,14 @@ func (v *vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 	}
 
 	// TODO: go to pipeline item and fulfill it.
-	_ = q
+	step := q.pipe.Step(q.stepIdx)
+	if step.stepDone.IsSet() {
+		// Can it ever be set twice on a return? I don't think so.
+		return errors.New("question resolved twice")
+	}
+	step.stepDone.Set(struct{}{}) // TODO: actually process return into struct or cap.
 
-	panic("fixme")
+	return nil
 }
 
 // processInMessage processes an incoming message from a remote vat.
@@ -53,6 +58,8 @@ func (v *vat) processInMessage(ctx context.Context, rc *runningConn, serMsg capn
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
 func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, step *runningPipelineStep) error {
+	// TODO: what about resolves, returns, etc?
+
 	var ok bool
 	step.qid, ok = step.step.conn.questions.nextID()
 	if !ok {
@@ -65,8 +72,8 @@ func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, step *runni
 // commitOutMessage commits the changes of the pipeline step to the local vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote vat.
-func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, step *runningPipelineStep) error {
-	q := question{pipe: pipe /*, stepIdx: stepIdx*/}
+func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, stepIdx int, step *runningPipelineStep) error {
+	q := question{pipe: pipe, stepIdx: stepIdx}
 	step.step.conn.questions.set(step.qid, q)
-	panic("boo")
+	return nil
 }
