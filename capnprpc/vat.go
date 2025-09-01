@@ -18,7 +18,7 @@ type vat struct {
 	connDone chan conn
 
 	inMsg     chan inMsg
-	pipelines chan *pipeline
+	pipelines chan runningPipeline
 }
 
 func (v *vat) RunConn(c conn) *runningConn {
@@ -28,20 +28,15 @@ func (v *vat) RunConn(c conn) *runningConn {
 }
 
 func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
-	select {
-	case <-p.ctx.Done():
-		// This is a programmer error. Pipelines aren't concurrent safe
-		// and MUST NOT be executed twice. This is only a soft
-		// protection, because the pipeline could be running but not
-		// done yet.
-		panic("pipeline already executed")
-	default:
+	rp, err := p.PrepareRunning()
+	if err != nil {
+		return err
 	}
 
 	// If this pipeline is a fork, wait until the its parent step is
 	// running, which means it can proceed.
 	if p.parent != nil {
-		parentStep := &p.parent.steps[p.parentStepIdx]
+		parentStep := p.parent.Step(p.parentStepIdx)
 		_, err := parentStep.stepRunning.Wait(ctx)
 		if err != nil {
 			return err
@@ -49,25 +44,25 @@ func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
 	}
 
 	// TODO: prepare messages for sending.
-	for i := range p.steps {
-		p.steps[i].serMsg = capnpser.MakeMsg(nil)
-		p.steps[i].rpcMsg = Message{}
+	for i := range rp.steps {
+		rp.steps[i].serMsg = capnpser.MakeMsg(nil)
+		rp.steps[i].rpcMsg = Message{}
 	}
 
 	// Send the pipeline for processing by the vat's goroutine. This cashes
 	// out into vat.startPipeline().
-	p.ctx, p.cancel = context.WithCancelCause(ctx)
+	ctx, rp.cancel = context.WithCancelCause(ctx)
 	select {
-	case v.pipelines <- p:
-	case <-p.ctx.Done():
-		return p.ctx.Err()
+	case v.pipelines <- rp:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
-	// Wait until pipeline has finished processing. This is signalled by the
-	// pipeline's context getting done.
-	<-p.ctx.Done()
-	err := context.Cause(p.ctx)
-	if errors.Is(err, errPipelineSuccessful) {
+	// Wait until pipeline has started processing completely. This is
+	// signalled by the pipeline's context getting done.
+	<-ctx.Done()
+	err = context.Cause(ctx)
+	if errors.Is(err, errPipelineStarted) {
 		err = nil
 	}
 
@@ -112,7 +107,7 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 
 	// Start the bootstrap pipeline (sends the bootstrap message).
 	connG.Go(func(ctx context.Context) error {
-		return v.ExecPipeline(ctx, rc.boot.pipe)
+		return v.execPipeline(ctx, rc.boot.pipe)
 	})
 
 	// Add this running conn to the vat's running pool.
@@ -132,39 +127,63 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
 // the respective remote vats and modifies the local vat's state according to
 // each step.
-func (v *vat) startPipeline(ctx context.Context, pipe *pipeline) error {
-	for i := range pipe.steps {
-		step := &pipe.steps[i]
+func (v *vat) startPipeline(ctx context.Context, rp runningPipeline) error {
+	type outBatch struct { // Needs to support multiple conns on a single pipeline?
+		conn     *runningConn
+		batch    msgBatch
+		startIdx int
+		endIdx   int
+	}
+	batches := make([]outBatch, 0, 1)
 
-		// Modify the state of the local vat as it relates to this
-		// outgoing message.
-		if err := v.prepareOutMessage(ctx, pipe, i); err != nil {
+	// Determine how the local vat will change in response to this
+	// pipeline.
+	var lastConn *runningConn
+	for i, step := range rp.steps {
+		if err := v.prepareOutMessage(ctx, rp.pipe, &step); err != nil {
+			return err
+		}
+		conn := step.step.conn
+		if conn != lastConn {
+			batches = append(batches, outBatch{
+				conn:     conn,
+				batch:    msgBatch{msgs: make([]capnpser.Message, 0, len(rp.steps)-i)},
+				startIdx: i,
+			})
+		}
+		outbToAppend := &batches[len(batches)-1]
+		outbToAppend.batch.msgs = append(outbToAppend.batch.msgs, step.serMsg)
+		outbToAppend.endIdx = i
+		lastConn = conn
+	}
+
+	// Send resulting batch to remote sides.
+	for _, batch := range batches {
+		// Generally, this fails only if ctx is done or if the outbound
+		// queue for this conn is full.
+		err := batch.conn.queue(ctx, batch.batch)
+		if err != nil {
 			return err
 		}
 
-		// Send resulting message to remote side. Generally, this fails
-		// only if ctx is done or if the outbound queue for this conn is
-		// full.
-		if err := step.conn.queue(ctx, step.serMsg); err != nil {
-			return err
-		}
+		// Commit changes of this batch the local vat.
+		for i := batch.startIdx; i <= batch.endIdx; i++ {
+			// Commit the changes to the local vat.
+			step := &rp.steps[i]
+			if err := v.commitOutMessage(ctx, rp.pipe, step); err != nil {
+				return err
+			}
 
-		// Commit the changes to the local vat.
-		if err := v.commitOutMessage(ctx, pipe, i); err != nil {
-			return err
-		}
-
-		// This step is now in flight. Allow forks from it to start. The
-		// forks won't go out after the entirety of this pipeline has
-		// processed, because this is running within the vat's main
-		// goroutine.
-		if step.stepRunning != nil {
-			step.stepRunning.Set(struct{}{})
+			// This step is now in flight. Allow forks from it to
+			// start. The forks won't go out after the entirety of
+			// this pipeline has processed, because this is running
+			// within the vat's main goroutine.
+			step.step.stepRunning.Set(step.qid)
 		}
 	}
 
-	// Pipeline is in flight.
-	return nil
+	// Entire pipeline is in flight.
+	return errPipelineStarted
 }
 
 // vatRunState is the running state of the vat.

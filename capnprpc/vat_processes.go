@@ -26,6 +26,7 @@ func (v *vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 	}
 
 	// TODO: go to pipeline item and fulfill it.
+	_ = q
 
 	panic("fixme")
 }
@@ -51,10 +52,9 @@ func (v *vat) processInMessage(ctx context.Context, rc *runningConn, serMsg capn
 // pipeline to be sent to the remote vat.
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
-func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
+func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, step *runningPipelineStep) error {
 	var ok bool
-	step := &pipe.steps[stepIdx]
-	step.qid, ok = step.conn.questions.nextID()
+	step.qid, ok = step.step.conn.questions.nextID()
 	if !ok {
 		return errors.New("too many open questions")
 	}
@@ -65,9 +65,8 @@ func (v *vat) prepareOutMessage(ctx context.Context, pipe *pipeline, stepIdx int
 // commitOutMessage commits the changes of the pipeline step to the local vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote vat.
-func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, stepIdx int) error {
-	step := &pipe.steps[stepIdx]
-
-	step.conn.questions.set(step.qid, question{pipe: pipe, stepIdx: stepIdx})
+func (v *vat) commitOutMessage(ctx context.Context, pipe *pipeline, step *runningPipelineStep) error {
+	q := question{pipe: pipe /*, stepIdx: stepIdx*/}
+	step.step.conn.questions.set(step.qid, q)
 	panic("boo")
 }

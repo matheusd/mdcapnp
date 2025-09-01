@@ -11,8 +11,13 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
+type msgBatch struct {
+	// TODO: add a `first Message` and use it when only a single message?
+	msgs []capnpser.Message
+}
+
 type conn interface {
-	send(context.Context, capnpser.Message) error
+	send(context.Context, msgBatch) error
 	receive(context.Context, capnpser.Message) error
 
 	// TODO: Allow conn-owned buffer (io_uring)?
@@ -34,7 +39,7 @@ type runningConn struct {
 
 	boot bootstrapCap
 
-	outQueue chan capnpser.Message
+	outQueue chan msgBatch
 
 	questions table[QuestionId, question]
 	answers   table[AnswerId, answer]
@@ -45,12 +50,12 @@ type runningConn struct {
 	cancel func() // Closes runningConn.
 }
 
-func (rc *runningConn) queue(ctx context.Context, msg capnpser.Message) error {
+func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 
-	case rc.outQueue <- msg:
+	case rc.outQueue <- batch:
 		return nil
 
 	default:
@@ -68,7 +73,7 @@ func newRunningConn(c conn, v *vat) *runningConn {
 
 		boot: boot,
 
-		outQueue:  make(chan capnpser.Message, 1000), // TODO: Parametrize buffer size.
+		outQueue:  make(chan msgBatch, 1000), // TODO: Parametrize buffer size.
 		questions: makeTable[QuestionId, question](),
 		answers:   makeTable[AnswerId, answer](),
 		imports:   makeTable[ImportId, imprt](),
