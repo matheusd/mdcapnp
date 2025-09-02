@@ -13,13 +13,13 @@ import (
 	"matheusd.com/testctx"
 )
 
+// TestBootstrapSendSide tests the client side of a vat performing bootsrap.
 func TestBootstrapSendSide(t *testing.T) {
 	th := newTestHarness(t)
 	v := th.newVat("vat")
 	tc := th.newTestConn()
 	rc := v.RunConn(tc)
 	boot := rc.Bootstrap()
-	t.Logf("XXXXXXXX boot has pipe vat %v", boot.pipe.vat)
 	errChan := make(chan error, 1)
 	var finalBootCap capability
 	go func() {
@@ -29,14 +29,12 @@ func TestBootstrapSendSide(t *testing.T) {
 	}()
 
 	// Vat sends a Bootstrap message.
-	t.Logf("XXXXXXXXXXXXXXXXX ok")
 	var bootQid uint32
 	tc.checkNextSent(func(mb msgBatch) error {
 		boot := mb.msgs[0].AsBootstrap()
 		bootQid = uint32(boot.QuestionId())
 		return nil
 	})
-	t.Logf("XXXX vat sent bootstrap %d", bootQid)
 
 	// Remote replies with a Return.
 	targetExportId := ExportId(666)
@@ -57,7 +55,6 @@ func TestBootstrapSendSide(t *testing.T) {
 		},
 	}
 	tc.fillNextReceiveWith(resMsg)
-	t.Logf("XXXX vat received return")
 
 	// Bootstrap() fulfilled.
 	require.Nil(t, chantest.Before(time.Second).AssertRecv(t, errChan))

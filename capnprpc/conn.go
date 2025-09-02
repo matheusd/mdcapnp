@@ -7,6 +7,8 @@ package capnprpc
 import (
 	"context"
 	"errors"
+
+	"github.com/rs/zerolog"
 )
 
 type msgBatch struct {
@@ -17,6 +19,7 @@ type msgBatch struct {
 type conn interface {
 	send(context.Context, msgBatch) error
 	receive(context.Context, *Message) error
+	remoteName() string
 
 	// TODO: Allow conn-owned buffer (io_uring)?
 	// usesReceiverBuffer() bool
@@ -34,6 +37,7 @@ type runningConn struct {
 
 	c   conn
 	vat *Vat
+	log zerolog.Logger
 
 	boot bootstrapCap
 
@@ -49,11 +53,13 @@ type runningConn struct {
 }
 
 func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
+	rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queueing batch of outgoing messages")
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 
 	case rc.outQueue <- batch:
+		rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queued batch of outgoing messages")
 		return nil
 
 	default:
@@ -62,9 +68,12 @@ func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
 }
 
 func newRunningConn(c conn, v *Vat) *runningConn {
+	log := v.log.With().Str("remote", c.remoteName()).Logger()
+
 	rc := &runningConn{
 		c:   c,
 		vat: v,
+		log: log,
 
 		boot: bootstrapCap(newRootFutureCap[capability](1)),
 

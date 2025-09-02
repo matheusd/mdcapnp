@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
 )
 
@@ -20,13 +21,14 @@ type testVat struct {
 }
 
 type testHarness struct {
-	t   testing.TB
-	ctx context.Context
-	g   *pool.ContextPool
+	t      testing.TB
+	ctx    context.Context
+	g      *pool.ContextPool
+	logger zerolog.Logger
 }
 
 func (th *testHarness) newVat(name string) *testVat {
-	v := NewVat()
+	v := NewVat(WithName(name), WithLogger(&th.logger))
 	th.g.Go(func(ctx context.Context) error {
 		err := v.Run(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -49,6 +51,8 @@ func newTestHarness(t testing.TB) *testHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	g := pool.New().WithContext(ctx).WithCancelOnError().WithFirstError()
 
+	logger := zerolog.New(zerolog.NewConsoleWriter(zerolog.ConsoleTestWriter(t)))
+
 	// Add g.Wait first to the cleanup because cancel() should be called
 	// first (FILO).
 	t.Cleanup(func() {
@@ -63,13 +67,11 @@ func newTestHarness(t testing.TB) *testHarness {
 
 	t.Cleanup(cancel)
 
-	go func() {
-	}()
-
 	th := &testHarness{
-		ctx: ctx,
-		t:   t,
-		g:   g,
+		ctx:    ctx,
+		t:      t,
+		g:      g,
+		logger: logger,
 	}
 
 	return th

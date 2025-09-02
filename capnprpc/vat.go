@@ -7,14 +7,16 @@ package capnprpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
+	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
 	"matheusd.com/mdcapnp/capnpser"
 )
 
 type Vat struct {
+	log *zerolog.Logger
+
 	newConn  chan *runningConn
 	connDone chan *runningConn
 
@@ -22,8 +24,12 @@ type Vat struct {
 	pipelines chan runningPipeline
 }
 
-func NewVat() *Vat {
+func NewVat(opts ...VatOption) *Vat {
+	cfg := defaultVatConfig()
+	cfg.applyOptions(opts...)
+
 	v := &Vat{
+		log:       cfg.vatLogger(),
 		newConn:   make(chan *runningConn),
 		connDone:  make(chan *runningConn),
 		inMsg:     make(chan inMsg),
@@ -39,9 +45,6 @@ func (v *Vat) RunConn(c conn) *runningConn {
 }
 
 func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
-	if v == nil {
-		fmt.Println("XXXXX v is nil in execPipline")
-	}
 	rp, err := p.PrepareRunning()
 	if err != nil {
 		return err
@@ -76,13 +79,10 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 
 	// Send the pipeline for processing by the Vat's goroutine. This cashes
 	// out into Vat.startPipeline().
-	fmt.Println("XXXX gonna send pipeline", v.pipelines)
 	ctx, rp.cancel = context.WithCancelCause(ctx)
 	select {
 	case v.pipelines <- rp:
-		fmt.Println("XXXXX sent pipeline")
 	case <-ctx.Done():
-		fmt.Println("XXXXX ctx is done")
 		return ctx.Err()
 	}
 
@@ -141,17 +141,21 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	// Remove conn once it finishes processing.
 	go func() {
 		err := connG.Wait()
-		fmt.Println("XXXXXX conn done due to", err)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			v.log.Debug().Err(err).Msg("Conn goroutines finished due to error")
+		} else {
+			v.log.Trace().Msg("Conn goroutines finished successfully")
+		}
 		v.connDone <- rc
 	}()
-
-	fmt.Println("XXXX running conn")
 }
 
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
 // the respective remote Vats and modifies the local vat's state according to
 // each step.
 func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
+	v.log.Trace().Int("len", len(rp.steps)).Msg("Starting pipeline")
+
 	type outBatch struct { // Needs to support multiple conns on a single pipeline?
 		conn     *runningConn
 		batch    msgBatch
@@ -163,7 +167,6 @@ func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 	// Determine how the local Vat will change in response to this
 	// pipeline.
 	var lastConn *runningConn
-	fmt.Println("XXXXX rp has", len(rp.steps), "steps")
 	for i := range rp.steps {
 		step := &rp.steps[i]
 		if err := v.prepareOutMessage(ctx, rp, i); err != nil {
@@ -182,12 +185,9 @@ func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 		outbToAppend.endIdx = i
 		lastConn = conn
 	}
-	fmt.Println("XXXXXX gonna send", len(batches), "batches")
 
 	// Send resulting batch to remote sides.
 	for _, batch := range batches {
-		fmt.Println("XXXXXXXXX gonna send", len(batch.batch.msgs), "msgs in batch")
-
 		// Generally, this fails only if ctx is done or if the outbound
 		// queue for this conn is full.
 		err := batch.conn.queue(ctx, batch.batch)
@@ -249,7 +249,6 @@ func (s *vatRunState) findConn(c conn) *runningConn {
 func (v *Vat) runStep(rs *vatRunState) error {
 	select {
 	case rc := <-v.newConn:
-		fmt.Println("XXXXXXXXXXXXX got new running conn", rc.vat)
 		v.runConn(rs.ctx, rc)
 		rs.conns = append(rs.conns, rc)
 
@@ -266,9 +265,7 @@ func (v *Vat) runStep(rs *vatRunState) error {
 		// TODO: return m.msg to Vat's msg pool.
 
 	case pipe := <-v.pipelines:
-		fmt.Println("XXXXXXX got new pipeline")
 		err := v.startPipeline(rs.ctx, pipe)
-		fmt.Println("XXXXXXX start pipeline returned", err)
 		if err != nil {
 			pipe.cancel(err)
 
@@ -279,7 +276,6 @@ func (v *Vat) runStep(rs *vatRunState) error {
 		return rs.ctx.Err()
 	}
 
-	defer fmt.Println("XXXXXX  runStep done")
 	return nil
 }
 
@@ -290,10 +286,9 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 	rs.g.Go(func(ctx context.Context) error {
 		var err error
 		rs.ctx = ctx
+		v.log.Info().Msg("Vat is running")
 		for err == nil {
-			fmt.Println("XXXX gonna runStep()")
 			err = v.runStep(rs)
-			fmt.Println("XXXXXX runStep() got err", err)
 		}
 		return err
 	})

@@ -23,9 +23,6 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 		return fmt.Errorf("question %d not found", qid)
 	}
 
-	fmt.Println("XXXXXXX questions", rc.questions)
-	fmt.Println("XXXXXX processReturn got qid", qid, "question", q, "ok", ok)
-
 	// TODO: support exception, cancel, etc
 	if !ret.IsResults() {
 		return fmt.Errorf("only results supported")
@@ -41,7 +38,9 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 		if !entry.IsSenderHosted() {
 			return fmt.Errorf("only senderHosted capabilities supported")
 		}
-		rc.exports.set(entry.AsSenderHosted(), export{typ: exportTypeSenderHosted})
+		eid := entry.AsSenderHosted()
+		rc.exports.set(eid, export{typ: exportTypeSenderHosted})
+		rc.log.Debug().Int("eid", int(eid)).Msg("Set export as senderHosted")
 	}
 
 	// Get contents of result.
@@ -55,13 +54,14 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 		if int(capIndex) >= len(capTable) {
 			return fmt.Errorf("capability referenced index outside cap table")
 		}
-		fmt.Println("XXXXXXXX gonna return cap with index", capIndex)
 		stepResult = capability{eid: ExportId(capTable[capIndex].AsSenderHosted())}
 	} else {
 		// TODO: copy if its a struct? Or release serialized message if
 		// content is just a cap (because it's not needed anymore)?
 		stepResult = content.AsStruct()
 	}
+
+	rc.log.Debug().Int("qid", int(qid)).Msg("Processed Return message")
 
 	// Fulfill pieline waiting for this result.
 	step := q.pipe.Step(q.stepIdx)
@@ -96,12 +96,12 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 	if step.rpcMsg.isBootstrap {
 		var ok bool
 		step.qid, ok = step.step.conn.questions.nextID()
-		fmt.Println("XXXXXX got qid", step.qid)
 		if !ok {
 			return errors.New("too many open questions")
 		}
 
 		step.rpcMsg.boot.qid = step.qid
+		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Prepared Bootstrap() message")
 	}
 
 	return nil
@@ -117,7 +117,7 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe runningPipeline, stepIdx 
 		qid := pipe.steps[stepIdx].qid
 		conn := pipe.steps[stepIdx].step.conn
 		conn.questions.set(qid, q)
-		fmt.Println("XXXXXXXX committing qid", qid, "pipe.pipe is", pipe.pipe)
+		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Comitted Bootstrap() message")
 	}
 
 	return nil

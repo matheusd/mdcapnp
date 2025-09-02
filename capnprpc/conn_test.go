@@ -76,3 +76,7 @@ func (tc *testConn) receive(ctx context.Context, m *Message) error {
 		return tcr.f(m)
 	}
 }
+
+func (tc *testConn) remoteName() string {
+	return "testconn"
+}
