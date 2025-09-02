@@ -7,27 +7,41 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/sourcegraph/conc/pool"
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-type vat struct {
+type Vat struct {
 	newConn  chan *runningConn
-	connDone chan conn
+	connDone chan *runningConn
 
 	inMsg     chan inMsg
 	pipelines chan runningPipeline
 }
 
-func (v *vat) RunConn(c conn) *runningConn {
+func NewVat() *Vat {
+	v := &Vat{
+		newConn:   make(chan *runningConn),
+		connDone:  make(chan *runningConn),
+		inMsg:     make(chan inMsg),
+		pipelines: make(chan runningPipeline, 5),
+	}
+	return v
+}
+
+func (v *Vat) RunConn(c conn) *runningConn {
 	rc := newRunningConn(c, v)
 	v.newConn <- rc
 	return rc
 }
 
-func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
+func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
+	if v == nil {
+		fmt.Println("XXXXX v is nil in execPipline")
+	}
 	rp, err := p.PrepareRunning()
 	if err != nil {
 		return err
@@ -43,18 +57,32 @@ func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
 		}
 	}
 
-	// TODO: prepare messages for sending.
-	for i := range rp.steps {
-		rp.steps[i].serMsg = capnpser.MakeMsg(nil)
-		rp.steps[i].rpcMsg = Message{}
+	// Shortcicuit empty pipelines (caller is likely to wait on parent).
+	if len(rp.steps) == 0 {
+		return nil
 	}
 
-	// Send the pipeline for processing by the vat's goroutine. This cashes
-	// out into vat.startPipeline().
+	// TODO: prepare messages for sending.
+	for i := range rp.steps {
+		step := &rp.steps[i]
+		step.serMsg = capnpser.MakeMsg(nil) // Needed??
+
+		step.rpcMsg = Message{}
+		if step.step.interfaceId == 0 && step.step.methodId == 0 {
+			// Bootstrap.
+			step.rpcMsg.isBootstrap = true
+		}
+	}
+
+	// Send the pipeline for processing by the Vat's goroutine. This cashes
+	// out into Vat.startPipeline().
+	fmt.Println("XXXX gonna send pipeline", v.pipelines)
 	ctx, rp.cancel = context.WithCancelCause(ctx)
 	select {
 	case v.pipelines <- rp:
+		fmt.Println("XXXXX sent pipeline")
 	case <-ctx.Done():
+		fmt.Println("XXXXX ctx is done")
 		return ctx.Err()
 	}
 
@@ -69,21 +97,21 @@ func (v *vat) execPipeline(ctx context.Context, p *pipeline) error {
 	return err
 }
 
-func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn) {
-	rc.ctx, rc.cancel = context.WithCancel(ctx)
+func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
+	rc.ctx, rc.cancel = context.WithCancelCause(ctx)
 
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
-			var msg capnpser.Message // TODO: obtain from pool in vat
-			err := rc.c.receive(ctx, msg)
+			var msg Message // TODO: obtain from pool in Vat
+			err := rc.c.receive(ctx, &msg)
 			if err != nil {
 				return err
 			}
 
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return context.Cause(ctx)
 			case v.inMsg <- inMsg{rc: rc, msg: msg}:
 			}
 		}
@@ -94,13 +122,13 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 			select {
 			case msg := <-rc.outQueue:
 				err := rc.c.send(ctx, msg)
-				// TODO: return msg to vat pool
+				// TODO: return msg to Vat pool
 				if err != nil {
 					return err
 				}
 
 			case <-ctx.Done():
-				return ctx.Err()
+				return context.Cause(ctx)
 			}
 		}
 	})
@@ -110,24 +138,20 @@ func (v *vat) runConn(g *pool.ContextPool, ctx context.Context, rc *runningConn)
 		return v.execPipeline(ctx, rc.boot.pipe)
 	})
 
-	// Add this running conn to the vat's running pool.
-	g.Go(func(ctx context.Context) error {
+	// Remove conn once it finishes processing.
+	go func() {
 		err := connG.Wait()
-		// Consider canceled a graceful conn closure.
-		if errors.Is(err, context.Canceled) {
-			err = nil
-		}
+		fmt.Println("XXXXXX conn done due to", err)
+		v.connDone <- rc
+	}()
 
-		// TODO: returning any errors here will make the vat error out.
-		// Add options to log and not fail.
-		return err
-	})
+	fmt.Println("XXXX running conn")
 }
 
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
-// the respective remote vats and modifies the local vat's state according to
+// the respective remote Vats and modifies the local vat's state according to
 // each step.
-func (v *vat) startPipeline(ctx context.Context, rp runningPipeline) error {
+func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 	type outBatch struct { // Needs to support multiple conns on a single pipeline?
 		conn     *runningConn
 		batch    msgBatch
@@ -136,29 +160,34 @@ func (v *vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 	}
 	batches := make([]outBatch, 0, 1)
 
-	// Determine how the local vat will change in response to this
+	// Determine how the local Vat will change in response to this
 	// pipeline.
 	var lastConn *runningConn
-	for i, step := range rp.steps {
-		if err := v.prepareOutMessage(ctx, rp.pipe, &step); err != nil {
+	fmt.Println("XXXXX rp has", len(rp.steps), "steps")
+	for i := range rp.steps {
+		step := &rp.steps[i]
+		if err := v.prepareOutMessage(ctx, rp, i); err != nil {
 			return err
 		}
 		conn := step.step.conn
 		if conn != lastConn {
 			batches = append(batches, outBatch{
 				conn:     conn,
-				batch:    msgBatch{msgs: make([]capnpser.Message, 0, len(rp.steps)-i)},
+				batch:    msgBatch{msgs: make([]Message, 0, len(rp.steps)-i)},
 				startIdx: i,
 			})
 		}
 		outbToAppend := &batches[len(batches)-1]
-		outbToAppend.batch.msgs = append(outbToAppend.batch.msgs, step.serMsg)
+		outbToAppend.batch.msgs = append(outbToAppend.batch.msgs, step.rpcMsg)
 		outbToAppend.endIdx = i
 		lastConn = conn
 	}
+	fmt.Println("XXXXXX gonna send", len(batches), "batches")
 
 	// Send resulting batch to remote sides.
 	for _, batch := range batches {
+		fmt.Println("XXXXXXXXX gonna send", len(batch.batch.msgs), "msgs in batch")
+
 		// Generally, this fails only if ctx is done or if the outbound
 		// queue for this conn is full.
 		err := batch.conn.queue(ctx, batch.batch)
@@ -166,18 +195,18 @@ func (v *vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 			return err
 		}
 
-		// Commit changes of this batch the local vat.
+		// Commit changes of this batch the local Vat.
 		for i := batch.startIdx; i <= batch.endIdx; i++ {
-			// Commit the changes to the local vat.
-			step := &rp.steps[i]
-			if err := v.commitOutMessage(ctx, rp.pipe, i, step); err != nil {
+			// Commit the changes to the local Vat.
+			if err := v.commitOutMessage(ctx, rp, i); err != nil {
 				return err
 			}
 
 			// This step is now in flight. Allow forks from it to
 			// start. The forks won't go out after the entirety of
 			// this pipeline has processed, because this is running
-			// within the vat's main goroutine.
+			// within the Vat's main goroutine.
+			step := &rp.steps[i]
 			step.step.stepRunning.Set(step.qid)
 		}
 	}
@@ -199,10 +228,10 @@ type vatRunState struct {
 	conns []*runningConn
 }
 
-func (s *vatRunState) delConn(c conn) {
+func (s *vatRunState) delConn(target *runningConn) {
 	s.conns = slices.DeleteFunc(s.conns, func(rc *runningConn) bool {
-		if rc.c == c {
-			rc.cancel()
+		if rc == target {
+			rc.cancel(errors.New("conn deleted")) // Ok to call multiple times if that's the case.
 			return true
 		}
 		return false
@@ -217,10 +246,11 @@ func (s *vatRunState) findConn(c conn) *runningConn {
 	return s.conns[i]
 }
 
-func (v *vat) runStep(rs *vatRunState) error {
+func (v *Vat) runStep(rs *vatRunState) error {
 	select {
 	case rc := <-v.newConn:
-		v.runConn(rs.g, rs.ctx, rc)
+		fmt.Println("XXXXXXXXXXXXX got new running conn", rc.vat)
+		v.runConn(rs.ctx, rc)
 		rs.conns = append(rs.conns, rc)
 
 	case oc := <-v.connDone:
@@ -230,29 +260,30 @@ func (v *vat) runStep(rs *vatRunState) error {
 		// Process input msg.
 		err := v.processInMessage(rs.ctx, m.rc, m.msg)
 		if err != nil {
-			// TODO: should the error cancel the vat or just the
-			// conn?
-			return err
+			m.rc.cancel(err)
 		}
 
-		// TODO: return m.msg to vat's msg pool.
+		// TODO: return m.msg to Vat's msg pool.
 
 	case pipe := <-v.pipelines:
+		fmt.Println("XXXXXXX got new pipeline")
 		err := v.startPipeline(rs.ctx, pipe)
+		fmt.Println("XXXXXXX start pipeline returned", err)
 		if err != nil {
 			pipe.cancel(err)
 
-			// Do some errors cause the vat to error out?
+			// Do some errors cause the Vat to error out?
 		}
 
 	case <-rs.ctx.Done():
 		return rs.ctx.Err()
 	}
 
+	defer fmt.Println("XXXXXX  runStep done")
 	return nil
 }
 
-func (v *vat) Run(ctx context.Context) (err error) {
+func (v *Vat) Run(ctx context.Context) (err error) {
 	rs := &vatRunState{
 		g: pool.New().WithContext(ctx).WithCancelOnError().WithFirstError(),
 	}
@@ -260,7 +291,9 @@ func (v *vat) Run(ctx context.Context) (err error) {
 		var err error
 		rs.ctx = ctx
 		for err == nil {
+			fmt.Println("XXXX gonna runStep()")
 			err = v.runStep(rs)
+			fmt.Println("XXXXXX runStep() got err", err)
 		}
 		return err
 	})

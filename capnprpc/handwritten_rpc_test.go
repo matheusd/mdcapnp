@@ -51,7 +51,7 @@ func (up testUserProfile) GetAvatarData() futureString {
 }
 
 func example01() {
-	var v *vat
+	var v *Vat
 	var c conn
 	rc := v.RunConn(c)
 	boot := rc.Bootstrap()

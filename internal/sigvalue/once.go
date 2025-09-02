@@ -21,11 +21,16 @@ type Once[T any] struct {
 	v         T
 }
 
-// MaybeSet sets the value to v if it hasn't been set yet. Returns true if the
-// value was modified.
-//
-// It is usually an error to use this function. Prefer using [Set].
-func (o *Once[T]) MaybeSet(v T) bool {
+// MakeOnce creates a new Once.
+func MakeOnce[T any]() Once[T] {
+	return Once[T]{
+		isSetChan: make(chan struct{}),
+	}
+}
+
+// Set the value to v if it hasn't been set yet. Returns true if the value was
+// modified.
+func (o *Once[T]) Set(v T) bool {
 	if !o.isSet.CompareAndSwap(false, true) {
 		return false
 	}
@@ -33,13 +38,6 @@ func (o *Once[T]) MaybeSet(v T) bool {
 	o.v = v
 	close(o.isSetChan)
 	return true
-}
-
-// Set sets the value to v. It panics if the value has already been set.
-func (o *Once[T]) Set(v T) {
-	if !o.MaybeSet(v) {
-		panic(errOnceAlreadySet)
-	}
 }
 
 // IsSet returns whether the value has already been set.
@@ -66,17 +64,10 @@ type OnceSetter[T any] struct {
 	o *Once[T]
 }
 
-// MaybeSet sets the value to v if it hasn't been set yet. Returns true if the
-// value was modified.
-//
-// It is usually an error to use this function. Prefer using [Set].
-func (os OnceSetter[T]) MaybeSet(v T) bool {
-	return os.o.MaybeSet(v)
-}
-
-// Set sets the value to v. It panics if the value has already been set.
-func (os OnceSetter[T]) Set(v T) {
-	os.o.Set(v)
+// Set the value to v if it hasn't been set yet. Returns true if the value was
+// modified.
+func (os OnceSetter[T]) Set(v T) bool {
+	return os.o.Set(v)
 }
 
 // OnceGetter is the getter side of a [Once] value. It can only read the value,

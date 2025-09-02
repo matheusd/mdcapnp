@@ -40,6 +40,7 @@ type pipeline struct {
 	steps []*pipelineStep
 
 	// Only set on pipeline creation.
+	vat           *Vat
 	parent        *pipeline
 	parentStepIdx int
 }
@@ -54,21 +55,6 @@ var errPipelineStarted = errors.New("pipeline started successfully (not a real e
 func newPipeline(sizeHint int) *pipeline {
 	steps := make([]*pipelineStep, 0, sizeHint)
 	return &pipeline{steps: steps}
-}
-
-// firstVat returns the first vat for this pipeline.
-func (p *pipeline) firstVat() *vat {
-	if len(p.steps) == 0 {
-		if p.parent == nil {
-			panic(fatalEmptyPipeline)
-		}
-
-		// Pipeline derived from bootstrap without additional
-		// calls.
-		return p.parent.firstVat()
-	}
-
-	return p.steps[0].conn.vat
 }
 
 // LastStep returns the last pipeline step, handling special cases like a newly
@@ -98,9 +84,7 @@ func (pipe *pipeline) Step(i int) *pipelineStep {
 		} else if pipe.parent == nil {
 			panic(fatalEmptyPipeline)
 		}
-		return pipe.parent.LastStep()
-	} else {
-		pipe.mu.Unlock()
+		return pipe.parent.Step(pipe.parentStepIdx)
 	}
 	res := pipe.steps[len(pipe.steps)-1]
 	pipe.mu.Unlock()
@@ -112,12 +96,16 @@ func (pipe *pipeline) wouldFork(i int) bool {
 }
 
 func (pipe *pipeline) addStep() int {
-	pipe.steps = append(pipe.steps, &pipelineStep{})
+	pipe.steps = append(pipe.steps, &pipelineStep{
+		stepRunning: sigvalue.MakeOnce[QuestionId](),
+		stepDone:    sigvalue.MakeOnce[any](),
+	})
 	return len(pipe.steps) - 1
 }
 
 func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork := newPipeline(sizeHint)
+	fork.vat = pipe.vat
 	fork.parent = pipe
 	fork.parentStepIdx = i
 	return fork
@@ -138,6 +126,7 @@ func (pipe *pipeline) firstRCFromStep(i int) *runningConn {
 
 // PrepareRunning prepares a pipeline for running.
 func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
+
 	pipe.mu.Lock()
 	if pipe.state != pipelineStateBuilding {
 		err = errors.New("pipeline not building")
@@ -147,6 +136,7 @@ func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
 			rp.steps[i].step = step
 		}
 
+		rp.pipe = pipe
 		pipe.state = pipelineStateRunning
 	}
 	pipe.mu.Unlock()
@@ -221,11 +211,11 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 
 func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error) {
 	// Run cap.pipe
-	if err = cap.pipe.firstVat().execPipeline(ctx, cap.pipe); err != nil {
+	if err = cap.pipe.vat.execPipeline(ctx, cap.pipe); err != nil {
 		return
 	}
 
-	// Wait until the last step of the pipeline completes or fails.
+	// Wait until the required step of the pipeline completes or fails.
 	var pipeRes any
 	pipeRes, err = cap.pipe.Step(cap.stepIndex).stepDone.Wait(ctx)
 	if err != nil {
@@ -238,8 +228,38 @@ func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error)
 		return
 	}
 
-	// Convert to expected type.
-	res, ok = pipeRes.(T)
+	// Check if result is the expected return type.
+	if _, ok = pipeRes.(T); ok {
+		res = pipeRes.(T)
+		return
+	}
+
+	// FIXME: nothing else needed after this???
+
+	// Not an error, so must be an AnyPointer with the Content field of a
+	// Payload result.
+	var content anyPointer
+	if content, ok = pipeRes.(anyPointer); !ok {
+		err = fmt.Errorf("future expected AnyPointer but got %T", pipeRes)
+		return
+	}
+
+	// Content may be either a Struct or a CapPointer, and T will be an
+	// alias to one of these (depending on what's expected based on the
+	// schema).
+	//
+	// TODO: better way to convert to T?
+	var contentAny any
+	if content.IsStruct() {
+		contentAny = content.AsStruct()
+	} else if content.IsCapPointer() {
+		contentAny = content.AsCapPointer()
+	} else {
+		err = fmt.Errorf("content is not struct or capPointer")
+		return
+	}
+
+	res, ok = contentAny.(T)
 	if !ok {
 		err = fmt.Errorf("future expected %T but got back %T", res, pipeRes)
 	}

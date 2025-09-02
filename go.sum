@@ -1,3 +1,5 @@
+github.com/canastic/chantest v0.0.0-20210218075530-34c9aad5cd57 h1:xNsJgFYZ3cKT6qCy1JOVWNNm8DMNZV8hUB8IuDn/R/A=
+github.com/canastic/chantest v0.0.0-20210218075530-34c9aad5cd57/go.mod h1:63Et6wVOQ4i0PXdeaHoeR8Jw6RP2+5h1K2LnYFTwkUo=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -17,3 +19,5 @@ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 matheusd.com/depvendoredtestify v1.10.0-alpha h1:lqc2KJwJc/6OnZWv2CKSMoKZoY7wHpIZkCqql6OOXgI=
 matheusd.com/depvendoredtestify v1.10.0-alpha/go.mod h1:rAglwB5na7ys61J0tMVJ6XMy+LWCPy/R4nJwd6RbpL8=
+matheusd.com/testctx v0.2.0 h1:nqf6TGz6hbhVQHtBooegvyB5UHcWMioMRPUrYSa9ypI=
+matheusd.com/testctx v0.2.0/go.mod h1:u9la0YA1XIBcEpTU/aHJ9q4/L0VttkwhkG2m4lrj7Ls=

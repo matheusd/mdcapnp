@@ -7,18 +7,16 @@ package capnprpc
 import (
 	"context"
 	"errors"
-
-	"matheusd.com/mdcapnp/capnpser"
 )
 
 type msgBatch struct {
 	// TODO: add a `first Message` and use it when only a single message?
-	msgs []capnpser.Message
+	msgs []Message
 }
 
 type conn interface {
 	send(context.Context, msgBatch) error
-	receive(context.Context, capnpser.Message) error
+	receive(context.Context, *Message) error
 
 	// TODO: Allow conn-owned buffer (io_uring)?
 	// usesReceiverBuffer() bool
@@ -35,7 +33,7 @@ type runningConn struct {
 	// pointer?
 
 	c   conn
-	vat *vat
+	vat *Vat
 
 	boot bootstrapCap
 
@@ -47,7 +45,7 @@ type runningConn struct {
 	exports   table[ExportId, export]
 
 	ctx    context.Context
-	cancel func() // Closes runningConn.
+	cancel func(error) // Closes runningConn.
 }
 
 func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
@@ -63,15 +61,12 @@ func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
 	}
 }
 
-func newRunningConn(c conn, v *vat) *runningConn {
-	// TODO: prepare boot message.
-	boot := bootstrapCap(newRootFutureCap[_bootstrapCap](1))
-
+func newRunningConn(c conn, v *Vat) *runningConn {
 	rc := &runningConn{
 		c:   c,
 		vat: v,
 
-		boot: boot,
+		boot: bootstrapCap(newRootFutureCap[capability](1)),
 
 		outQueue:  make(chan msgBatch, 1000), // TODO: Parametrize buffer size.
 		questions: makeTable[QuestionId, question](),
@@ -80,11 +75,18 @@ func newRunningConn(c conn, v *vat) *runningConn {
 		exports:   makeTable[ExportId, export](),
 	}
 
+	// TODO: prepare boot message.
+	rc.boot.pipe.vat = v
+	rc.boot.pipe.steps[0].conn = rc
+
 	return rc
 }
 
-type _bootstrapCap struct{}
-type bootstrapCap futureCap[_bootstrapCap]
+type bootstrapCap futureCap[capability]
+
+func (bc bootstrapCap) Wait(ctx context.Context) (capability, error) {
+	return waitResult(ctx, futureCap[capability](bc))
+}
 
 func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 	return futureCap[T]{pipe: bc.pipe, stepIndex: bc.stepIndex}
@@ -92,5 +94,5 @@ func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 
 func (rc *runningConn) Bootstrap() bootstrapCap {
 	// Fork the root bootstrap future into a new pipeline.
-	return bootstrapCap(forkFuture[_bootstrapCap](futureCap[_bootstrapCap](rc.boot), defaultPipelineSizeHint))
+	return bootstrapCap(forkFuture(futureCap[capability](rc.boot), defaultPipelineSizeHint))
 }

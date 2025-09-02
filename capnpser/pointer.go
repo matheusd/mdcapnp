@@ -12,6 +12,7 @@ const (
 	pointerTypeStruct     pointerType = 0x00
 	pointerTypeList       pointerType = 0x01
 	pointerTypeFarPointer pointerType = 0x02
+	pointerTypeOther      pointerType = 0x03
 )
 
 type pointer Word
@@ -36,6 +37,10 @@ func (ptr pointer) listSize() listSize {
 	return listSize(ptr & 0xfffffff800000000 >> 35)
 }
 
+func (ptr pointer) capPointerIndex() uint32 {
+	return uint32(ptr >> 32)
+}
+
 func (ptr pointer) isStructPointer() bool {
 	return (ptr & 0x03) == 0
 }
@@ -46,6 +51,10 @@ func (ptr pointer) isListPointer() bool {
 
 func (ptr pointer) isFarPointer() bool {
 	return (ptr & 0x03) == 2
+}
+
+func (ptr pointer) isCapPointer() bool {
+	return (ptr & 0xffffffff) == 3
 }
 
 func (ptr pointer) pointerType() pointerType {
@@ -121,4 +130,42 @@ func buildRawListPointer(startOffset WordOffset, elSize listElementSize, lsSize 
 func derefFarPointer(arena *Arena, dl depthLimit, ptr pointer) (*Segment, pointer, depthLimit, error) {
 	// TODO: implement.
 	return nil, 0, 0, errors.New("not implemented")
+}
+
+type CapPointer struct {
+	index uint32
+}
+
+func (cp *CapPointer) Index() uint32 {
+	return cp.index
+}
+
+type AnyPointer struct {
+	seg   *Segment
+	arena *Arena
+	dl    depthLimit
+	ptr   pointer
+}
+
+func (ap *AnyPointer) IsStruct() bool {
+	return ap.ptr.isStructPointer()
+}
+
+func (ap *AnyPointer) IsCapPointer() bool {
+	return ap.ptr.isCapPointer()
+}
+
+func (ap *AnyPointer) AsStruct() Struct {
+	return Struct{
+		seg:   ap.seg,
+		arena: ap.arena,
+		dl:    ap.dl,
+		ptr:   ap.ptr.toStructPointer(),
+	}
+}
+
+func (ap *AnyPointer) AsCapPointer() CapPointer {
+	return CapPointer{
+		index: ap.ptr.capPointerIndex(),
+	}
 }
