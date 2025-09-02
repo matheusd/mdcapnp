@@ -21,14 +21,17 @@ type testVat struct {
 }
 
 type testHarness struct {
-	t      testing.TB
-	ctx    context.Context
-	g      *pool.ContextPool
-	logger zerolog.Logger
+	t        testing.TB
+	vatCount int
+	ctx      context.Context
+	g        *pool.ContextPool
+	logger   zerolog.Logger
 }
 
 func (th *testHarness) newVat(name string) *testVat {
 	v := NewVat(WithName(name), WithLogger(&th.logger))
+	v.testIDsOffset = (th.vatCount + 1) * 1000
+	th.vatCount++
 	th.g.Go(func(ctx context.Context) error {
 		err := v.Run(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -45,6 +48,23 @@ func (th *testHarness) newTestConn() *testConn {
 		sent:        make(chan testConnBatch),
 		fillReceive: make(chan testConnReceiver),
 	}
+}
+
+func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
+	c1 := testPipeConn{
+		remName: v2.name,
+		in:      make(chan Message, 10),
+		out:     make(chan Message, 10),
+	}
+	c2 := testPipeConn{
+		remName: v1.name,
+		in:      c1.out,
+		out:     c1.in,
+	}
+
+	rc1 = v1.RunConn(&c1)
+	rc2 = v2.RunConn(&c2)
+	return
 }
 
 func newTestHarness(t testing.TB) *testHarness {

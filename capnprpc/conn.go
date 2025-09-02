@@ -16,6 +16,10 @@ type msgBatch struct {
 	msgs []Message
 }
 
+func singleMsgBatch(msg Message) msgBatch {
+	return msgBatch{msgs: []Message{msg}}
+}
+
 type conn interface {
 	send(context.Context, msgBatch) error
 	receive(context.Context, *Message) error
@@ -41,6 +45,10 @@ type runningConn struct {
 
 	boot bootstrapCap
 
+	// bootExportId is the export id of the bootstrap cap offered by the vat
+	// on this conn.
+	bootExportId ExportId
+
 	outQueue chan msgBatch
 
 	questions table[QuestionId, question]
@@ -59,7 +67,6 @@ func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
 		return ctx.Err()
 
 	case rc.outQueue <- batch:
-		rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queued batch of outgoing messages")
 		return nil
 
 	default:

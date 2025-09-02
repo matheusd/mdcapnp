@@ -57,6 +57,14 @@ func newPipeline(sizeHint int) *pipeline {
 	return &pipeline{steps: steps}
 }
 
+// State returns the current pipeline state.
+func (pipe *pipeline) State() pipelineState {
+	pipe.mu.Lock()
+	res := pipe.state
+	pipe.mu.Unlock()
+	return res
+}
+
 // LastStep returns the last pipeline step, handling special cases like a newly
 // forked pipeline.
 func (pipe *pipeline) LastStep() *pipelineStep {
@@ -124,12 +132,13 @@ func (pipe *pipeline) firstRCFromStep(i int) *runningConn {
 	return pipe.steps[i].conn
 }
 
-// PrepareRunning prepares a pipeline for running.
-func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
+var errPipelineNotBuildingState = errors.New("pipeline not in building state")
 
-	pipe.mu.Lock()
+// prepareRunning prepares a pipeline for running. Pipe.mu MUST be held before
+// calling this.
+func (pipe *pipeline) prepareRunning() (rp runningPipeline, err error) {
 	if pipe.state != pipelineStateBuilding {
-		err = errors.New("pipeline not building")
+		err = errPipelineNotBuildingState
 	} else {
 		rp.steps = make([]runningPipelineStep, len(pipe.steps))
 		for i, step := range pipe.steps {
@@ -139,6 +148,13 @@ func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
 		rp.pipe = pipe
 		pipe.state = pipelineStateRunning
 	}
+	return
+}
+
+// PrepareRunning prepares a pipeline for running.
+func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
+	pipe.mu.Lock()
+	rp, err = pipe.prepareRunning()
 	pipe.mu.Unlock()
 	return
 }

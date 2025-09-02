@@ -16,7 +16,7 @@ import (
 // TestBootstrapSendSide tests the client side of a vat performing bootsrap.
 func TestBootstrapSendSide(t *testing.T) {
 	th := newTestHarness(t)
-	v := th.newVat("vat")
+	v := th.newVat("client")
 	tc := th.newTestConn()
 	rc := v.RunConn(tc)
 	boot := rc.Bootstrap()
@@ -59,4 +59,39 @@ func TestBootstrapSendSide(t *testing.T) {
 	// Bootstrap() fulfilled.
 	require.Nil(t, chantest.Before(time.Second).AssertRecv(t, errChan))
 	require.Equal(t, targetExportId, finalBootCap.eid)
+}
+
+// TestBootstrapReceiveSide tests the bootstrap process from the receiver side.
+func TestBootstrapReceiveSide(t *testing.T) {
+	th := newTestHarness(t)
+	v := th.newVat("server")
+	tc := th.newTestConn()
+	_ = v.RunConn(tc)
+
+	// Vat receives a Bootstrap message.
+	targetQid := QuestionId(666)
+	tc.fillNextReceiveWith(Message{isBootstrap: true, boot: Bootstrap{qid: targetQid}})
+
+	// Vat sends the Bootstrap cap.
+	var bootQid QuestionId
+	tc.checkNextSent(func(mb msgBatch) error {
+		ret := mb.msgs[0].ret
+		bootQid = QuestionId(ret.aid)
+		return nil
+	})
+
+	require.Equal(t, targetQid, bootQid)
+}
+
+// TestBootstrapBothSides tests the bootstrap process from both sides.
+func TestBootstrapBothSides(t *testing.T) {
+	th := newTestHarness(t)
+	c, s := th.newVat("client"), th.newVat("server")
+	cc, cs := th.connectVats(c, s)
+
+	// Request the bootstrap cap on client.
+	boot, err := cc.Bootstrap().Wait(testctx.New(t))
+	require.NoError(t, err)
+
+	require.Equal(t, boot.eid, cs.bootExportId)
 }

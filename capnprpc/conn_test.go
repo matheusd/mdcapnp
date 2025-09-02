@@ -80,3 +80,34 @@ func (tc *testConn) receive(ctx context.Context, m *Message) error {
 func (tc *testConn) remoteName() string {
 	return "testconn"
 }
+
+type testPipeConn struct {
+	remName string
+	in      chan Message
+	out     chan Message
+}
+
+func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
+	for i := range mb.msgs {
+		select {
+		case tpc.out <- mb.msgs[i]:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	return nil
+}
+
+func (tpc *testPipeConn) receive(ctx context.Context, target *Message) error {
+	select {
+	case m := <-tpc.in:
+		*target = m
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (tpc *testPipeConn) remoteName() string {
+	return tpc.remName
+}

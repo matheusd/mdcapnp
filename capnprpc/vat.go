@@ -17,6 +17,9 @@ import (
 type Vat struct {
 	log *zerolog.Logger
 
+	// testIDsOffset is only set during tests.
+	testIDsOffset int
+
 	newConn  chan *runningConn
 	connDone chan *runningConn
 
@@ -40,6 +43,22 @@ func NewVat(opts ...VatOption) *Vat {
 
 func (v *Vat) RunConn(c conn) *runningConn {
 	rc := newRunningConn(c, v)
+
+	// testIDsOffset is set during tests, to randomize the starting range of
+	// every table id per vat. This ensures code isn't relying on specific
+	// hardcoded low index IDs and can catch programming errors.
+	if v.testIDsOffset > 0 {
+		rc.questions.lastID = 10000 + QuestionId(v.testIDsOffset)
+		rc.answers.lastID = 20000 + AnswerId(v.testIDsOffset)
+		rc.exports.lastID = 30000 + ExportId(v.testIDsOffset)
+		rc.imports.lastID = 40000 + ImportId(v.testIDsOffset)
+	}
+
+	// Set the bootstrap capability.
+	// TODO: parametrize on vat creation.
+	rc.bootExportId, _ = rc.exports.nextID() // First export, no need to check ok.
+	rc.exports.set(rc.bootExportId, export{typ: exportTypeSenderHosted})
+
 	v.newConn <- rc
 	return rc
 }
@@ -53,6 +72,17 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	// If this pipeline is a fork, wait until the its parent step is
 	// running, which means it can proceed.
 	if p.parent != nil {
+		// Start parent if parent hasn't started yet.
+		if p.parent.State() == pipelineStateBuilding {
+			err := v.execPipeline(ctx, p.parent)
+
+			// Ignore errPipelineNotBuildingState because it may
+			// have changed since the State() call.
+			if err != nil && !errors.Is(err, errPipelineNotBuildingState) {
+				return err
+			}
+		}
+
 		parentStep := p.parent.Step(p.parentStepIdx)
 		_, err := parentStep.stepRunning.Wait(ctx)
 		if err != nil {
@@ -134,9 +164,11 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	})
 
 	// Start the bootstrap pipeline (sends the bootstrap message).
-	connG.Go(func(ctx context.Context) error {
-		return v.execPipeline(ctx, rc.boot.pipe)
-	})
+	/*
+		connG.Go(func(ctx context.Context) error {
+			return v.execPipeline(ctx, rc.boot.pipe)
+		})
+	*/
 
 	// Remove conn once it finishes processing.
 	go func() {

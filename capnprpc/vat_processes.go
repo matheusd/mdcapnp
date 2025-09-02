@@ -11,9 +11,27 @@ import (
 )
 
 func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg Message) error {
-	// TODO: get the bootstrap capability from Vat.
-	// TODO: send as reply to remote Vat.
-	panic("fixme")
+	bootMsg := msg.AsBootstrap()
+	reply := Message{
+		isReturn: true,
+		ret: Return{
+			aid:       AnswerId(bootMsg.qid),
+			isResults: true,
+			pay: Payload{
+				content: anyPointer{
+					isCapPointer: true,
+					cp:           capPointer{index: 0},
+				},
+				capTable: []CapDescriptor{
+					{senderHosted: rc.bootExportId},
+				},
+			},
+		},
+	}
+
+	rc.log.Debug().Int("qid", int(bootMsg.qid)).Int("eid", int(rc.bootExportId)).Msg("Queuing Bootstrap export")
+
+	return rc.queue(ctx, singleMsgBatch(reply))
 }
 
 func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) error {
@@ -101,7 +119,7 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 		}
 
 		step.rpcMsg.boot.qid = step.qid
-		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Prepared Bootstrap() message")
+		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Prepared Bootstrap message")
 	}
 
 	return nil
@@ -117,7 +135,7 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe runningPipeline, stepIdx 
 		qid := pipe.steps[stepIdx].qid
 		conn := pipe.steps[stepIdx].step.conn
 		conn.questions.set(qid, q)
-		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Comitted Bootstrap() message")
+		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Comitted Bootstrap message")
 	}
 
 	return nil
