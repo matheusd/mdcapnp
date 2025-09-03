@@ -30,6 +30,8 @@ type conn interface {
 	// receiveMsg(context.Context) (*message, error)
 }
 
+var errConnDone = errors.New("conn is done")
+
 // runningConn is a connection that is running to another vat.
 type runningConn struct {
 	// Design note: most of the fields are only meant to be accessed from
@@ -51,6 +53,10 @@ type runningConn struct {
 
 	outQueue chan msgBatch
 
+	// TODO: question and export IDs are set by local vat, answer and import
+	// ids are set by the remote vat. Split table type into two
+	// (incoming/outgoing table) to protect from remote misuse and restrict
+	// API.
 	questions table[QuestionId, question]
 	answers   table[AnswerId, answer]
 	imports   table[ImportId, imprt]
@@ -64,9 +70,10 @@ func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
 	rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queueing batch of outgoing messages")
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 
 	case rc.outQueue <- batch:
+		rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queued batch of outgoing messages")
 		return nil
 
 	default:
@@ -94,6 +101,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 	// TODO: prepare boot message.
 	rc.boot.pipe.vat = v
 	rc.boot.pipe.steps[0].conn = rc
+	rc.boot.pipe.state = pipelineStateBuilt
 
 	return rc
 }
@@ -109,6 +117,5 @@ func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 }
 
 func (rc *runningConn) Bootstrap() bootstrapCap {
-	// Fork the root bootstrap future into a new pipeline.
-	return bootstrapCap(forkFuture(futureCap[capability](rc.boot), defaultPipelineSizeHint))
+	return rc.boot // Any calls fork the pipeline.
 }

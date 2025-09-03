@@ -12,14 +12,21 @@ import (
 )
 
 type vatConfig struct {
-	logger *zerolog.Logger
-	name   string
+	logger           *zerolog.Logger
+	name             string
+	bootstrapHandler callHandler
 }
 
 // applyOptions applies the given options to the config.
 func (vc *vatConfig) applyOptions(opts ...VatOption) {
 	for _, opt := range opts {
 		opt(vc)
+	}
+
+	// If no forms of a bootstrap cap were specified, use a fixed one that
+	// returns everything as unimplemented.
+	if vc.bootstrapHandler == nil {
+		vc.bootstrapHandler = allUnimplementedCallHandler{}
 	}
 }
 
@@ -58,5 +65,11 @@ func WithName(name string) VatOption {
 func WithLogger(l *zerolog.Logger) VatOption {
 	return func(c *vatConfig) {
 		c.logger = l
+	}
+}
+
+func withBootstrapHandler(h callHandler) VatOption {
+	return func(c *vatConfig) {
+		c.bootstrapHandler = h
 	}
 }

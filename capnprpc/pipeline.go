@@ -30,7 +30,9 @@ type pipelineState uint
 
 const (
 	pipelineStateBuilding pipelineState = iota
+	pipelineStateBuilt
 	pipelineStateRunning
+	pipelineStateConnDone
 )
 
 type pipeline struct {
@@ -122,7 +124,7 @@ func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 // firstRCFromStep finds the first running conn starting at step i and going
 // backwards.
 func (pipe *pipeline) firstRCFromStep(i int) *runningConn {
-	if len(pipe.steps) < i {
+	if i < 0 || i >= len(pipe.steps) {
 		if pipe.parent == nil {
 			panic(fatalEmptyPipeline)
 		}
@@ -137,7 +139,7 @@ var errPipelineNotBuildingState = errors.New("pipeline not in building state")
 // prepareRunning prepares a pipeline for running. Pipe.mu MUST be held before
 // calling this.
 func (pipe *pipeline) prepareRunning() (rp runningPipeline, err error) {
-	if pipe.state != pipelineStateBuilding {
+	if pipe.state != pipelineStateBuilding && pipe.state != pipelineStateBuilt {
 		err = errPipelineNotBuildingState
 	} else {
 		rp.steps = make([]runningPipelineStep, len(pipe.steps))
@@ -207,6 +209,7 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 	} else if obj.stepIndex == -1 {
 		// First call of a new fork from bootstrap. Conn comes from the
 		// parent pipeline.
+		res.pipe = pipe
 		rc = pipe.firstRCFromStep(obj.stepIndex)
 	} else {
 		res.pipe = pipe

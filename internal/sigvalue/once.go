@@ -11,6 +11,7 @@ import (
 )
 
 var errOnceAlreadySet = errors.New("value can only be set once")
+var fatalOnceValueNotSet = errors.New("once falue was not set")
 
 // Once is a value that can only be set once and signals when it is set.
 //
@@ -45,6 +46,18 @@ func (o *Once[T]) Set(v T) bool {
 // This function is prone to misuse. Prefer using [Wait].
 func (o *Once[T]) IsSet() bool {
 	return o.isSet.Load()
+}
+
+// Value returns the value. It panics if the value was not set.
+//
+// This function is prone to misuse. Prefer using [Wait].
+func (o *Once[T]) Value() T {
+	select {
+	case <-o.isSetChan:
+		return o.v
+	default:
+		panic(fatalOnceValueNotSet)
+	}
 }
 
 // Wait waits until the value is set or the context expires.

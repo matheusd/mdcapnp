@@ -92,7 +92,7 @@ func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
 		select {
 		case tpc.out <- mb.msgs[i]:
 		case <-ctx.Done():
-			return nil
+			return context.Cause(ctx)
 		}
 	}
 	return nil
@@ -104,7 +104,7 @@ func (tpc *testPipeConn) receive(ctx context.Context, target *Message) error {
 		*target = m
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 

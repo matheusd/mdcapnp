@@ -18,6 +18,21 @@ func (fs futureString) wait(ctx context.Context) (string, error) {
 type testAPICap struct{}
 type testAPI futureCap[testAPICap]
 
+const testAPI_InterfaceID = 1000
+
+type futureVoid futureCap[struct{}]
+
+func (fv futureVoid) Wait(ctx context.Context) error {
+	_, err := waitResult(ctx, futureCap[struct{}](fv))
+	return err
+}
+
+const testAPI_VoidCallID = 101
+
+func (api testAPI) VoidCall() futureVoid {
+	return futureVoid(remoteCall[testAPICap, struct{}](futureCap[testAPICap](api), testAPI_InterfaceID, testAPI_VoidCallID, nil))
+}
+
 func (api testAPI) GetUser(id string) testUser {
 	pb := func(*msgBuilder) error {
 		_ = id

@@ -15,6 +15,7 @@ import (
 )
 
 type Vat struct {
+	cfg vatConfig
 	log *zerolog.Logger
 
 	// testIDsOffset is only set during tests.
@@ -32,6 +33,7 @@ func NewVat(opts ...VatOption) *Vat {
 	cfg.applyOptions(opts...)
 
 	v := &Vat{
+		cfg:       cfg,
 		log:       cfg.vatLogger(),
 		newConn:   make(chan *runningConn),
 		connDone:  make(chan *runningConn),
@@ -55,14 +57,20 @@ func (v *Vat) RunConn(c conn) *runningConn {
 	}
 
 	// Set the bootstrap capability.
-	// TODO: parametrize on vat creation.
 	rc.bootExportId, _ = rc.exports.nextID() // First export, no need to check ok.
-	rc.exports.set(rc.bootExportId, export{typ: exportTypeSenderHosted})
+	if v.cfg.bootstrapHandler != nil {
+		rc.exports.set(rc.bootExportId, export{typ: exportTypeLocallyHosted, handler: v.cfg.bootstrapHandler})
+	}
 
 	v.newConn <- rc
 	return rc
 }
 
+// execPipeline starts the execution of a pipeline. All parent pipelines are
+// started (if not yet started) and preconditional steps are waited for.
+//
+// This blocks until the pipeline has fully started: the local vat has changed
+// its state in response to the pipeline being in-flight.
 func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	rp, err := p.PrepareRunning()
 	if err != nil {
@@ -73,7 +81,8 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	// running, which means it can proceed.
 	if p.parent != nil {
 		// Start parent if parent hasn't started yet.
-		if p.parent.State() == pipelineStateBuilding {
+		parentState := p.parent.State()
+		if parentState == pipelineStateBuilding || parentState == pipelineStateBuilt {
 			err := v.execPipeline(ctx, p.parent)
 
 			// Ignore errPipelineNotBuildingState because it may
@@ -95,7 +104,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		return nil
 	}
 
-	// TODO: prepare messages for sending.
+	// Prepare (as much as possible) messages for sending.
 	for i := range rp.steps {
 		step := &rp.steps[i]
 		step.serMsg = capnpser.MakeMsg(nil) // Needed??
@@ -104,6 +113,14 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		if step.step.interfaceId == 0 && step.step.methodId == 0 {
 			// Bootstrap.
 			step.rpcMsg.isBootstrap = true
+		} else {
+			step.rpcMsg.isCall = true
+			step.rpcMsg.call = Call{
+				// target must be set in vat's run().
+				iid: step.step.interfaceId,
+				mid: step.step.methodId,
+				// TODO: params?
+			}
 		}
 	}
 
@@ -178,7 +195,10 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 		} else {
 			v.log.Trace().Msg("Conn goroutines finished successfully")
 		}
-		v.connDone <- rc
+		select {
+		case v.connDone <- rc:
+		case <-ctx.Done():
+		}
 	}()
 }
 
@@ -239,7 +259,9 @@ func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 			// this pipeline has processed, because this is running
 			// within the Vat's main goroutine.
 			step := &rp.steps[i]
-			step.step.stepRunning.Set(step.qid)
+			if !step.step.stepRunning.Set(step.qid) {
+				return errors.New("stepRunning already set for step")
+			}
 		}
 	}
 
@@ -268,6 +290,23 @@ func (s *vatRunState) delConn(target *runningConn) {
 		}
 		return false
 	})
+
+	// Every non-answered question is answered with an error.
+	for qid, q := range target.questions.entries {
+		if q.pipe != nil {
+			target.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
+			q.pipe.mu.Lock()
+			q.pipe.state = pipelineStateConnDone
+			step := q.pipe.steps[q.stepIdx]
+			if !step.stepRunning.IsSet() {
+				step.stepRunning.Set(0)
+			}
+			if !step.stepDone.IsSet() {
+				step.stepDone.Set(errConnDone) // TODO: pass original error?
+			}
+			q.pipe.mu.Unlock()
+		}
+	}
 }
 
 func (s *vatRunState) findConn(c conn) *runningConn {
@@ -322,8 +361,21 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 		for err == nil {
 			err = v.runStep(rs)
 		}
+
+		// Remove every remaining conn.
+		for _, rc := range rs.conns {
+			rs.delConn(rc)
+		}
+
 		return err
 	})
 
-	return rs.g.Wait()
+	err = rs.g.Wait()
+	if err != nil && !errors.Is(err, context.Canceled) {
+		v.log.Err(err).Msg("Vat finished running with unexpected error")
+	} else {
+		v.log.Info().Msg("Vat finished running successfully")
+	}
+
+	return
 }

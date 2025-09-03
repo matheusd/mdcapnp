@@ -5,6 +5,8 @@
 package capnprpc
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,4 +96,62 @@ func TestBootstrapBothSides(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, boot.eid, cs.bootExportId)
+}
+
+// TestVoidCallBothSides tests a void call between two vats.
+func TestVoidCallBothSides(t *testing.T) {
+	var called atomic.Bool
+	handler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+		called.Store(true)
+		return nil
+	})
+
+	th := newTestHarness(t)
+	c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(handler))
+	cc, _ := th.connectVats(c, s)
+
+	// First call.
+	api := testAPIAsBootstrap(cc.Bootstrap())
+	err := api.VoidCall().Wait(testctx.New(t))
+	require.NoError(t, err)
+	require.True(t, called.Load())
+
+	// Second call (bootstrap should be an export already).
+	err = api.VoidCall().Wait(testctx.New(t))
+	require.NoError(t, err)
+}
+
+// BenchmarkVoidCall benchmarks a basic void call under various circumstances.
+func BenchmarkVoidCall(b *testing.B) {
+	var callCount atomic.Uint64
+	handler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+		callCount.Add(1)
+		return nil
+	})
+
+	b.Run("both", func(b *testing.B) {
+		th := newTestHarness(b)
+		c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(handler))
+		cc, _ := th.connectVats(c, s)
+		callCount.Store(0)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := cc.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(cc.Bootstrap())
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			err := api.VoidCall().Wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		require.Equal(b, uint64(b.N), callCount.Load())
+	})
 }

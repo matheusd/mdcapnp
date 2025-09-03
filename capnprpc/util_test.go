@@ -28,8 +28,12 @@ type testHarness struct {
 	logger   zerolog.Logger
 }
 
-func (th *testHarness) newVat(name string) *testVat {
-	v := NewVat(WithName(name), WithLogger(&th.logger))
+func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
+	var testVatOpts []VatOption
+	testVatOpts = append(testVatOpts, WithName(name), WithLogger(&th.logger))
+	testVatOpts = append(testVatOpts, opts...)
+
+	v := NewVat(testVatOpts...)
 	v.testIDsOffset = (th.vatCount + 1) * 1000
 	th.vatCount++
 	th.g.Go(func(ctx context.Context) error {
@@ -68,10 +72,15 @@ func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
 }
 
 func newTestHarness(t testing.TB) *testHarness {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	g := pool.New().WithContext(ctx).WithCancelOnError().WithFirstError()
 
-	logger := zerolog.New(zerolog.NewConsoleWriter(zerolog.ConsoleTestWriter(t)))
+	var logger zerolog.Logger
+	if _, isBench := t.(*testing.B); isBench {
+		logger = zerolog.Nop()
+	} else {
+		logger = zerolog.New(zerolog.NewConsoleWriter(zerolog.ConsoleTestWriter(t)))
+	}
 
 	// Add g.Wait first to the cleanup because cancel() should be called
 	// first (FILO).
