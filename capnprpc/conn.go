@@ -12,12 +12,13 @@ import (
 )
 
 type msgBatch struct {
-	// TODO: add a `first Message` and use it when only a single message?
-	msgs []Message
+	isSingle bool
+	single   Message
+	msgs     []Message
 }
 
 func singleMsgBatch(msg Message) msgBatch {
-	return msgBatch{msgs: []Message{msg}}
+	return msgBatch{isSingle: true, single: msg}
 }
 
 type conn interface {

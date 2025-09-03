@@ -88,11 +88,20 @@ type testPipeConn struct {
 }
 
 func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
-	for i := range mb.msgs {
+	if mb.isSingle {
 		select {
-		case tpc.out <- mb.msgs[i]:
+		case tpc.out <- mb.single:
 		case <-ctx.Done():
 			return context.Cause(ctx)
+		}
+
+	} else {
+		for i := range mb.msgs {
+			select {
+			case tpc.out <- mb.msgs[i]:
+			case <-ctx.Done():
+				return context.Cause(ctx)
+			}
 		}
 	}
 	return nil
