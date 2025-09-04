@@ -15,6 +15,50 @@ import (
 
 var flagPort = flag.Int("port", 0, "Port number")
 
+type echoTcpServer struct {
+	l       net.Listener
+	skipLog bool
+}
+
+func (s echoTcpServer) runConn(c net.Conn) {
+	readBuf := make([]byte, 2048)
+	for {
+		n, err := c.Read(readBuf)
+		if err != nil {
+			if !s.skipLog {
+				log.Printf("TCP Read error: %v", err)
+			}
+			break
+		}
+
+		_, err = c.Write(readBuf[:n])
+		if err != nil {
+			if !s.skipLog {
+				log.Printf("TCP Write error: %v", err)
+			}
+			break
+		}
+
+		if !s.skipLog {
+			log.Printf("Echoed %d", n)
+		}
+	}
+}
+
+func (s echoTcpServer) run() error {
+	for {
+		c, err := s.l.Accept()
+		if err != nil {
+			return err
+		}
+
+		if !s.skipLog {
+			log.Printf("Accepted connection from %s", c.RemoteAddr())
+		}
+		go s.runConn(c)
+	}
+}
+
 func realMain() error {
 	flag.Parse()
 
@@ -30,32 +74,8 @@ func realMain() error {
 
 	errChan := make(chan error, 1)
 	go func() {
-		readBuf := make([]byte, 2048)
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				errChan <- err
-				return
-			}
-
-			log.Printf("Accepted connection from %s", c.RemoteAddr())
-			for {
-				n, err := c.Read(readBuf)
-				if err != nil {
-					log.Printf("TCP Read error: %v", err)
-					break
-				}
-
-				_, err = c.Write(readBuf[:n])
-				if err != nil {
-					log.Printf("TCP Write error: %v", err)
-					break
-				}
-
-				log.Printf("Echoed %d", n)
-			}
-
-		}
+		svr := echoTcpServer{l: l}
+		errChan <- svr.run()
 	}()
 
 	select {

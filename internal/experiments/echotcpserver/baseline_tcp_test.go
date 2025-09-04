@@ -68,6 +68,7 @@ func BenchmarkTCPRPCCall(b *testing.B) {
 		require.NoError(b, err)
 		defer conn.Close()
 
+		b.SetBytes(int64(len(sstAsBytes)))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -85,7 +86,6 @@ func BenchmarkTCPRPCCall(b *testing.B) {
 		if !bytes.Equal(reply, sstAsBytes) {
 			b.Fatal("wrong echo")
 		}
-
 	})
 
 	// Assuming the client needs to encode every message as json on every
@@ -98,6 +98,7 @@ func BenchmarkTCPRPCCall(b *testing.B) {
 		reqBuf := bytes.NewBuffer(make([]byte, 0, len(sstAsBytes)*2))
 		enc := json.NewEncoder(reqBuf)
 
+		b.SetBytes(int64(len(sstAsBytes)))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -120,6 +121,84 @@ func BenchmarkTCPRPCCall(b *testing.B) {
 		if !bytes.Equal(reply, sstAsBytes) {
 			b.Fatal("wrong echo")
 		}
+	})
+
+	b.Run("in-process server static data", func(b *testing.B) {
+		addr := "127.0.0.1:9191"
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { l.Close() })
+		svr := echoTcpServer{l: l, skipLog: true}
+		go svr.run()
+
+		reply := make([]byte, len(sstAsBytes))
+
+		conn, err := net.Dial("tcp", addr)
+		require.NoError(b, err)
+		defer conn.Close()
+
+		b.SetBytes(int64(len(sstAsBytes)))
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			_, err := conn.Write(sstAsBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			_, err = io.ReadFull(conn, reply)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		if !bytes.Equal(reply, sstAsBytes) {
+			b.Fatal("wrong echo")
+		}
+	})
+
+	b.Run("in-process server static data parallel bench", func(b *testing.B) {
+		addr := "127.0.0.1:9191"
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { l.Close() })
+		svr := echoTcpServer{l: l, skipLog: true}
+		go svr.run()
+
+		b.SetBytes(int64(len(sstAsBytes)))
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			reply := make([]byte, len(sstAsBytes))
+
+			conn, err := net.Dial("tcp", addr)
+			require.NoError(b, err)
+			defer conn.Close()
+			gotOne := false
+
+			for pb.Next() {
+				_, err := conn.Write(sstAsBytes)
+				if err != nil {
+					b.Fatal(err)
+				}
+
+				_, err = io.ReadFull(conn, reply)
+				if err != nil {
+					b.Fatal(err)
+				}
+				gotOne = true
+			}
+
+			if gotOne && !bytes.Equal(reply, sstAsBytes) {
+				b.Fatalf("wrong echo: %q vs %q", reply, sstAsBytes)
+			}
+		})
+
 	})
 
 }

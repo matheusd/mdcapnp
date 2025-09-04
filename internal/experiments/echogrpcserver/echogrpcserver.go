@@ -25,7 +25,7 @@ type echoHandler struct {
 }
 
 func (e echoHandler) Echo(_ context.Context, in *SmallStruct) (*SmallStruct, error) {
-	log.Printf("Echoing back")
+	// log.Printf("Echoing back")
 	return in, nil
 }
 

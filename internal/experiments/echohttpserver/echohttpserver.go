@@ -16,7 +16,9 @@ import (
 
 var flagPort = flag.Int("port", 0, "Port number")
 
-type echoHandler struct{}
+type echoHandler struct {
+	skipLog bool
+}
 
 func (e echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n, err := io.Copy(w, r.Body)
@@ -24,7 +26,9 @@ func (e echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errStr = " ERR:" + err.Error()
 	}
-	log.Printf("%s %s %s %d%s", r.RemoteAddr, r.Method, r.URL.Path, n, errStr)
+	if !e.skipLog {
+		log.Printf("%s %s %s %d%s", r.RemoteAddr, r.Method, r.URL.Path, n, errStr)
+	}
 }
 
 func realMain() error {
