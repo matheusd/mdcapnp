@@ -17,12 +17,17 @@ type msgBatch struct {
 	msgs     []message
 }
 
-func singleMsgBatch(msg message) msgBatch {
-	return msgBatch{isSingle: true, single: msg}
+type outMsg struct {
+	msg              message
+	remainingInBatch int
+}
+
+func singleMsgBatch(msg message) outMsg {
+	return outMsg{msg: msg, remainingInBatch: 0}
 }
 
 type conn interface {
-	send(context.Context, msgBatch) error
+	send(context.Context, message, int) error
 	receive(context.Context) (message, error) // Ok because message goes to stack.
 	remoteName() string
 
@@ -52,7 +57,7 @@ type runningConn struct {
 	// on this conn.
 	bootExportId ExportId
 
-	outQueue chan msgBatch
+	outQueue chan outMsg
 
 	// TODO: question and export IDs are set by local vat, answer and import
 	// ids are set by the remote vat. Split table type into two
@@ -67,17 +72,20 @@ type runningConn struct {
 	cancel func(error) // Closes runningConn.
 }
 
-func (rc *runningConn) queue(ctx context.Context, batch msgBatch) error {
-	rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queueing batch of outgoing messages")
+func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
+	rc.log.Trace().Int("remInBatch", m.remainingInBatch).Msg("Queueing outgoing message")
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
-	case rc.outQueue <- batch:
-		rc.log.Trace().Int("len", len(batch.msgs)).Msg("Queued batch of outgoing messages")
+	case rc.outQueue <- m:
+		rc.log.Trace().Int("remInBatch", m.remainingInBatch).Msg("Queued outgoing message")
 		return nil
 
 	default:
+		// Assume rc.outQueue is properly buffered. If the default case
+		// is triggered, it means the buffer is full and sending is too
+		// slow.
 		return errors.New("outbound queue is full")
 	}
 }
@@ -92,7 +100,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 		boot: bootstrapCap(newRootFutureCap[capability](1)),
 
-		outQueue:  make(chan msgBatch, 1000), // TODO: Parametrize buffer size.
+		outQueue:  make(chan outMsg, 1000), // TODO: Parametrize buffer size.
 		questions: makeTable[QuestionId, question](),
 		answers:   makeTable[AnswerId, answer](),
 		imports:   makeTable[ImportId, imprt](),
@@ -101,7 +109,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 	// TODO: prepare boot message.
 	rc.boot.pipe.vat = v
-	rc.boot.pipe.steps[0].conn = rc
+	rc.boot.pipe.conn = rc
 	rc.boot.pipe.state = pipelineStateBuilt
 
 	return rc

@@ -10,12 +10,10 @@ import (
 	"fmt"
 	"sync"
 
-	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
 type pipelineStep struct {
-	conn          *runningConn
 	interfaceId   uint64
 	methodId      uint16
 	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
@@ -24,6 +22,9 @@ type pipelineStep struct {
 	stepRunning sigvalue.Once[QuestionId]
 
 	stepDone sigvalue.Once[any]
+
+	// Only accessed inside vat.Run().
+	rpcMsg message
 }
 
 type pipelineState uint
@@ -43,8 +44,12 @@ type pipeline struct {
 
 	// Only set on pipeline creation.
 	vat           *Vat
+	conn          *runningConn
 	parent        *pipeline
 	parentStepIdx int
+
+	// Only set during pipeline running
+	cancel func(error)
 }
 
 var fatalEmptyPipeline = "empty pipeline"
@@ -116,64 +121,13 @@ func (pipe *pipeline) addStep() int {
 func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork := newPipeline(sizeHint)
 	fork.vat = pipe.vat
+	fork.conn = pipe.conn
 	fork.parent = pipe
 	fork.parentStepIdx = i
 	return fork
 }
 
-// firstRCFromStep finds the first running conn starting at step i and going
-// backwards.
-func (pipe *pipeline) firstRCFromStep(i int) *runningConn {
-	if i < 0 || i >= len(pipe.steps) {
-		if pipe.parent == nil {
-			panic(fatalEmptyPipeline)
-		}
-		return pipe.parent.firstRCFromStep(pipe.parentStepIdx)
-	}
-
-	return pipe.steps[i].conn
-}
-
 var errPipelineNotBuildingState = errors.New("pipeline not in building state")
-
-// prepareRunning prepares a pipeline for running. Pipe.mu MUST be held before
-// calling this.
-func (pipe *pipeline) prepareRunning() (rp runningPipeline, err error) {
-	if pipe.state != pipelineStateBuilding && pipe.state != pipelineStateBuilt {
-		err = errPipelineNotBuildingState
-	} else {
-		rp.steps = make([]runningPipelineStep, len(pipe.steps))
-		for i, step := range pipe.steps {
-			rp.steps[i].step = step
-		}
-
-		rp.pipe = pipe
-		pipe.state = pipelineStateRunning
-	}
-	return
-}
-
-// PrepareRunning prepares a pipeline for running.
-func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
-	pipe.mu.Lock()
-	rp, err = pipe.prepareRunning()
-	pipe.mu.Unlock()
-	return
-}
-
-type runningPipelineStep struct {
-	step   *pipelineStep
-	serMsg capnpser.Message
-	rpcMsg message
-	qid    QuestionId
-}
-
-type runningPipeline struct {
-	pipe  *pipeline
-	steps []runningPipelineStep
-
-	cancel func(error)
-}
 
 type futureCap[T any] struct {
 	_ [0]T // Tag.
@@ -200,25 +154,20 @@ func forkFuture[T any](old futureCap[T], pipeSizeHint int) (fork futureCap[T]) {
 }
 
 func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
-	var rc *runningConn
 	pipe := obj.pipe
 	pipe.mu.Lock()
 	if pipe.state != pipelineStateBuilding || pipe.wouldFork(obj.stepIndex) {
 		res.pipe = pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
-		rc = pipe.firstRCFromStep(obj.stepIndex)
 	} else if obj.stepIndex == -1 {
 		// First call of a new fork from bootstrap. Conn comes from the
 		// parent pipeline.
 		res.pipe = pipe
-		rc = pipe.firstRCFromStep(obj.stepIndex)
 	} else {
 		res.pipe = pipe
-		rc = pipe.steps[obj.stepIndex].conn // Same conn as parent.
 	}
 
 	res.stepIndex = res.pipe.addStep()
 	step := res.pipe.steps[res.stepIndex]
-	step.conn = rc
 	step.interfaceId = iid
 	step.methodId = mid
 	step.paramsBuilder = pb

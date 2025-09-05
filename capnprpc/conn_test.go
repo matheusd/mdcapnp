@@ -19,21 +19,21 @@ type testConnReceiver struct {
 
 type testConn struct {
 	th          *testHarness
-	sent        chan msgBatch
+	sent        chan message
 	sentResult  chan error
 	fillReceive chan testConnReceiver
 }
 
 // checkNextSent is called by test code to check the next message sent.
-func (tc *testConn) checkNextSent(f func(msgBatch) error) {
-	var mb msgBatch
+func (tc *testConn) checkNextSent(f func(message) error) {
+	var m message
 	select {
-	case mb = <-tc.sent:
+	case m = <-tc.sent:
 	case <-tc.th.ctx.Done():
 		tc.th.t.Fatalf("No message sent before context done")
 	}
 	select {
-	case tc.sentResult <- f(mb):
+	case tc.sentResult <- f(m):
 	case <-tc.th.ctx.Done():
 		tc.th.t.Fatalf("No message sent before context done")
 	}
@@ -55,11 +55,11 @@ func (tc *testConn) fillNextReceive(f func() (message, error)) {
 
 // send is called by the vat end of this test conn. It waits until test code had
 // a chance to decide what to do with the message.
-func (tc *testConn) send(ctx context.Context, b msgBatch) error {
+func (tc *testConn) send(ctx context.Context, m message, _ int) error {
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case tc.sent <- b:
+	case tc.sent <- m:
 	}
 
 	select {
@@ -91,23 +91,13 @@ type testPipeConn struct {
 	out     chan message
 }
 
-func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
-	if mb.isSingle {
-		select {
-		case tpc.out <- mb.single:
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		}
-
-	} else {
-		for i := range mb.msgs {
-			select {
-			case tpc.out <- mb.msgs[i]:
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			}
-		}
+func (tpc *testPipeConn) send(ctx context.Context, m message, _ int) error {
+	select {
+	case tpc.out <- m:
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
+
 	return nil
 }
 

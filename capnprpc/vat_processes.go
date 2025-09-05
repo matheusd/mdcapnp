@@ -235,43 +235,45 @@ var errTooManyOpenQuestions = errors.New("too many open questions")
 // pipeline to be sent to the remote Vat.
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
-func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx int) error {
+func (v *Vat) prepareOutMessage(_ context.Context, pipe *pipeline,
+	stepIdx int, prevQid QuestionId) (thisQid QuestionId, err error) {
+
 	var ok bool
 
-	step := &pipe.steps[stepIdx]
+	step := pipe.steps[stepIdx]
+	conn := pipe.conn
 	if step.rpcMsg.IsBootstrap() {
-		if step.qid, ok = step.step.conn.questions.nextID(); !ok {
-			return errTooManyOpenQuestions
+		if thisQid, ok = conn.questions.nextID(); !ok {
+			return 0, errTooManyOpenQuestions
 		}
 
-		step.rpcMsg.boot.qid = step.qid
-		step.step.conn.log.Debug().
-			Int("qid", int(step.qid)).
+		step.rpcMsg.boot.qid = thisQid
+		conn.log.Debug().
+			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
 	} else if step.rpcMsg.IsCall() {
-		if step.qid, ok = step.step.conn.questions.nextID(); !ok {
-			return errTooManyOpenQuestions
+		if thisQid, ok = conn.questions.nextID(); !ok {
+			return 0, errTooManyOpenQuestions
 		}
-		step.rpcMsg.call.qid = step.qid
+		step.rpcMsg.call.qid = thisQid
 
 		// Find the parent step. If it's in this pipeline, access it
 		// directly. Otherwise, check whether the parent completed
 		// already or not (to determine if this is call pipelined to a
 		// an incomplete local call or to a remote promise).
 		if stepIdx > 0 {
-			parentStep := &pipe.steps[stepIdx-1]
 			step.rpcMsg.call.target = messageTarget{
 				isPromisedAnswer: true,
-				pans:             promisedAnswer{qid: parentStep.qid},
+				pans:             promisedAnswer{qid: prevQid},
 			}
 
-			step.step.conn.log.Debug().
-				Int("qid", int(step.qid)).
-				Int("pans", int(parentStep.qid)).
+			conn.log.Debug().
+				Int("qid", int(thisQid)).
+				Int("pans", int(prevQid)).
 				Msg("Prepared call for in-pipeline promised answer")
-		} else if pipe.pipe.parent == nil {
+		} else if pipe.parent == nil {
 			// Should never happen, but avoid a panic below.
-			return errors.New("non-bootstrap call without a parent pipeline")
+			return 0, errors.New("non-bootstrap call without a parent pipeline")
 		} else {
 			// execPipeline() already ensured the required parent
 			// step was sent before allowing this pipeline to be
@@ -283,9 +285,9 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 			//
 			// TODO: check if step already completed (stepDone) and
 			// turned into an exported cap.
-			parentStep := pipe.pipe.parent.Step(pipe.pipe.parentStepIdx)
+			parentStep := pipe.parent.Step(pipe.parentStepIdx)
 			if !parentStep.stepRunning.IsSet() {
-				return errors.New("failed precondition: stepRunning should've been set")
+				return 0, errors.New("failed precondition: stepRunning should've been set")
 			}
 			parentQid := parentStep.stepRunning.Value()
 			step.rpcMsg.call.target = messageTarget{
@@ -293,36 +295,44 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 				pans:             promisedAnswer{qid: parentQid},
 			}
 
-			step.step.conn.log.Debug().
-				Int("qid", int(step.qid)).
+			conn.log.Debug().
+				Int("qid", int(thisQid)).
 				Int("pans", int(parentQid)).
 				Msg("Prepared call for parent pipeline promised answer")
 		}
 	}
 
-	return nil
+	return thisQid, nil
 }
 
 // commitOutMessage commits the changes of the pipeline step to the local Vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote Vat.
-func (v *Vat) commitOutMessage(_ context.Context, pipe runningPipeline, stepIdx int) error {
-	step := &pipe.steps[stepIdx]
+func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) error {
+	step := pipe.steps[stepIdx]
+	conn := pipe.conn
+	var qid QuestionId
+	var q question
 	if step.rpcMsg.isBootstrap {
-		q := question{pipe: pipe.pipe, stepIdx: stepIdx}
-		qid := pipe.steps[stepIdx].qid
-		conn := pipe.steps[stepIdx].step.conn
-		conn.questions.set(qid, q)
-		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Comitted Bootstrap message")
+		q = question{pipe: pipe, stepIdx: stepIdx}
+		qid = pipe.steps[stepIdx].rpcMsg.boot.qid
+		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Bootstrap message")
 	} else if step.rpcMsg.isCall {
-		q := question{pipe: pipe.pipe, stepIdx: stepIdx}
-		qid := pipe.steps[stepIdx].qid
-		conn := pipe.steps[stepIdx].step.conn
-		conn.questions.set(qid, q)
-		step.step.conn.log.Debug().Int("qid", int(step.qid)).Msg("Comitted Call message")
+		q = question{pipe: pipe, stepIdx: stepIdx}
+		qid = pipe.steps[stepIdx].rpcMsg.call.qid
+		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Call message")
 	} else {
 		// Guard against errors while developing.
 		return errors.New("unimplemented commitment of message")
+	}
+
+	conn.questions.set(qid, q)
+
+	// This step is now in flight. Allow forks from it to start. The forks
+	// won't go out after the entirety of this pipeline has processed,
+	// because this is running within the Vat's main goroutine.
+	if qid > 0 && !step.stepRunning.Set(qid) {
+		return errors.New("stepRunning already set for step")
 	}
 
 	return nil

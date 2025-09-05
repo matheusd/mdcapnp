@@ -49,7 +49,7 @@ func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
 func (th *testHarness) newTestConn() *testConn {
 	return &testConn{
 		th:          th,
-		sent:        make(chan msgBatch, 5),
+		sent:        make(chan message, 5),
 		sentResult:  make(chan error, 5),
 		fillReceive: make(chan testConnReceiver),
 	}

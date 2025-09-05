@@ -33,8 +33,8 @@ func TestBootstrapSendSide(t *testing.T) {
 
 	// Vat sends a Bootstrap message.
 	var bootQid uint32
-	tc.checkNextSent(func(mb msgBatch) error {
-		boot := mb.msgs[0].AsBootstrap()
+	tc.checkNextSent(func(m message) error {
+		boot := m.AsBootstrap()
 		bootQid = uint32(boot.QuestionId())
 		return nil
 	})
@@ -77,8 +77,8 @@ func TestBootstrapReceiveSide(t *testing.T) {
 
 	// Vat sends the Bootstrap cap.
 	var bootQid QuestionId
-	tc.checkNextSent(func(mb msgBatch) error {
-		ret := mb.single.ret
+	tc.checkNextSent(func(m message) error {
+		ret := m.ret
 		bootQid = QuestionId(ret.aid)
 		return nil
 	})
@@ -134,8 +134,8 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 		sendEcho := func() (message, error) {
 			return message{testEcho: i}, nil
 		}
-		recvEcho := func(mb msgBatch) error {
-			if mb.single.testEcho != i {
+		recvEcho := func(m message) error {
+			if m.testEcho != i {
 				return errors.New("wrong testEcho number")
 			}
 			return nil
@@ -164,8 +164,8 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 			sendEcho := func() (message, error) {
 				return message{testEcho: i}, nil
 			}
-			recvEcho := func(mb msgBatch) error {
-				if mb.single.testEcho != i {
+			recvEcho := func(m message) error {
+				if m.testEcho != i {
 					return errors.New("wrong testEcho number")
 				}
 				return nil
