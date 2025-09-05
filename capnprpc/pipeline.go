@@ -21,9 +21,9 @@ type pipelineStep struct {
 	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
 	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
 
-	stepRunning sigvalue.Once[QuestionId] // FIXME: what type?
+	stepRunning sigvalue.Once[QuestionId]
 
-	stepDone sigvalue.Once[any] // FIXME: what type?
+	stepDone sigvalue.Once[any]
 }
 
 type pipelineState uint

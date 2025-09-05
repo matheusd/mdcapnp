@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"matheusd.com/depvendoredtestify/require"
+	"matheusd.com/testctx"
 )
 
 type goserbenchSmallStruct struct {
@@ -192,6 +193,79 @@ func BenchmarkTCPRPCCall(b *testing.B) {
 					b.Fatal(err)
 				}
 				gotOne = true
+			}
+
+			if gotOne && !bytes.Equal(reply, sstAsBytes) {
+				b.Fatalf("wrong echo: %q vs %q", reply, sstAsBytes)
+			}
+		})
+	})
+
+	type msgEvent struct {
+		b []byte
+		c chan []byte
+	}
+
+	// This benchmark is meant to demo an architecture where every received
+	// and sent message has to go through a synchronizing thread (to
+	// simulate the vat's Run() goroutine).
+	b.Run("in-process server static data sync routine", func(b *testing.B) {
+		addr := "127.0.0.1:9191"
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { l.Close() })
+		svr := echoTcpServer{l: l, skipLog: true}
+		go svr.run()
+
+		syncingChan := make(chan msgEvent)
+		syncCtx := testctx.New(b)
+		b.Cleanup(func() { close(syncingChan) })
+		go func() {
+			for e := range syncingChan {
+				select {
+				case e.c <- e.b:
+				case <-syncCtx.Done():
+					return
+				}
+			}
+		}()
+
+		b.SetBytes(int64(len(sstAsBytes)))
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			reply := make([]byte, len(sstAsBytes))
+			replyChan := make(chan []byte, 1)
+
+			conn, err := net.Dial("tcp", addr)
+			require.NoError(b, err)
+			defer conn.Close()
+			gotOne := false
+
+			_, err = conn.Write(sstAsBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for pb.Next() {
+				_, err = io.ReadFull(conn, reply)
+				if err != nil {
+					b.Fatal(err)
+				}
+				gotOne = true
+
+				// Simulating having to synchronize processing
+				// this.
+				syncingChan <- msgEvent{b: reply, c: replyChan}
+				<-replyChan
+
+				_, err := conn.Write(sstAsBytes)
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
 
 			if gotOne && !bytes.Equal(reply, sstAsBytes) {
