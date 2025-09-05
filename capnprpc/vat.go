@@ -150,8 +150,7 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
-			var msg message // TODO: obtain from pool in Vat
-			err := rc.c.receive(ctx, &msg)
+			msg, err := rc.c.receive(ctx)
 			if err != nil {
 				return err
 			}

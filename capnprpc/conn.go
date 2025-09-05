@@ -23,7 +23,7 @@ func singleMsgBatch(msg message) msgBatch {
 
 type conn interface {
 	send(context.Context, msgBatch) error
-	receive(context.Context, *message) error
+	receive(context.Context) (message, error) // Ok because message goes to stack.
 	remoteName() string
 
 	// TODO: Allow conn-owned buffer (io_uring)?

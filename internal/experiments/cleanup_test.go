@@ -25,7 +25,8 @@ func BenchmarkCleanup(b *testing.B) {
 
 	const sliceSize = 1<<14 - 1
 
-	debug.SetMemoryLimit(1 << 31) // 2GB
+	prevLimit := debug.SetMemoryLimit(1 << 31) // 2GB
+	defer debug.SetMemoryLimit(prevLimit)
 
 	checkCleanupSize := func(b *testing.B, cleanupSize *atomic.Int64) {
 		wantSize := int64((b.N - 1) * sliceSize)
@@ -104,7 +105,8 @@ func BenchmarkReuseBufAfterGC(b *testing.B) {
 
 	const sliceSize = 1<<14 - 1
 
-	debug.SetMemoryLimit(1 << 31) // 2GB
+	prevLimit := debug.SetMemoryLimit(1 << 31) // 2GB
+	defer debug.SetMemoryLimit(prevLimit)
 
 	checkCleanupSize := func(b *testing.B, cleanupSize *atomic.Int64) {
 		wantSize := int64((b.N - 1) * sliceSize)
@@ -234,7 +236,9 @@ func TestFinalizerCorrectness(t *testing.T) {
 	const memLimit = 1 << 31 // 2GB
 	const sliceSize = 1 << 14
 	const trials = memLimit / sliceSize * 10
-	debug.SetMemoryLimit(memLimit)
+
+	prevLimit := debug.SetMemoryLimit(memLimit)
+	defer debug.SetMemoryLimit(prevLimit)
 
 	// Track every index that has been finalized as a bitmap.
 	var seenMtx sync.Mutex
