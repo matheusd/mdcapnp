@@ -129,17 +129,23 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 		tc := th.newTestConn()
 		_ = v.RunConn(tc)
 
+		var i uint64 = 1
+		sendEcho := func(m *Message) error {
+			m.testEcho = i
+			return nil
+		}
+		recvEcho := func(mb msgBatch) error {
+			if mb.single.testEcho != i {
+				return errors.New("wrong testEcho number")
+			}
+			return nil
+		}
+
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := range b.N {
-			tc.fillNextReceiveWith(Message{testEcho: uint64(i + 1)})
-
-			tc.checkNextSent(func(mb msgBatch) error {
-				if mb.single.testEcho != uint64(i+1) {
-					return errors.New("wrong testEcho number")
-				}
-				return nil
-			})
+		for range b.N {
+			tc.fillNextReceive(sendEcho)
+			tc.checkNextSent(recvEcho)
 		}
 	})
 
@@ -155,15 +161,20 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 			_ = v.RunConn(tc)
 
 			var i uint64 = 1
-			for pb.Next() {
-				tc.fillNextReceiveWith(Message{testEcho: i})
+			sendEcho := func(m *Message) error {
+				m.testEcho = i
+				return nil
+			}
+			recvEcho := func(mb msgBatch) error {
+				if mb.single.testEcho != i {
+					return errors.New("wrong testEcho number")
+				}
+				return nil
+			}
 
-				tc.checkNextSent(func(mb msgBatch) error {
-					if mb.single.testEcho != i {
-						return errors.New("wrong testEcho number")
-					}
-					return nil
-				})
+			for pb.Next() {
+				tc.fillNextReceive(sendEcho)
+				tc.checkNextSent(recvEcho)
 			}
 		})
 	})

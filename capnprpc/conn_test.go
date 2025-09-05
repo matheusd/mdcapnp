@@ -19,15 +19,21 @@ type testConnReceiver struct {
 
 type testConn struct {
 	th          *testHarness
-	sent        chan testConnBatch
+	sent        chan msgBatch
+	sentResult  chan error
 	fillReceive chan testConnReceiver
 }
 
 // checkNextSent is called by test code to check the next message sent.
 func (tc *testConn) checkNextSent(f func(msgBatch) error) {
+	var mb msgBatch
 	select {
-	case tcb := <-tc.sent:
-		tcb.res <- f(tcb.b)
+	case mb = <-tc.sent:
+	case <-tc.th.ctx.Done():
+		tc.th.t.Fatalf("No message sent before context done")
+	}
+	select {
+	case tc.sentResult <- f(mb):
 	case <-tc.th.ctx.Done():
 		tc.th.t.Fatalf("No message sent before context done")
 	}
@@ -51,17 +57,16 @@ func (tc *testConn) fillNextReceive(f func(m *Message) error) {
 // send is called by the vat end of this test conn. It waits until test code had
 // a chance to decide what to do with the message.
 func (tc *testConn) send(ctx context.Context, b msgBatch) error {
-	tcb := testConnBatch{b: b, res: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case tc.sent <- tcb:
+	case tc.sent <- b:
 	}
 
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case err := <-tcb.res:
+	case err := <-tc.sentResult:
 		return err
 	}
 }
