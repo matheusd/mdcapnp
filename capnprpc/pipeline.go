@@ -164,7 +164,7 @@ func (pipe *pipeline) PrepareRunning() (rp runningPipeline, err error) {
 type runningPipelineStep struct {
 	step   *pipelineStep
 	serMsg capnpser.Message
-	rpcMsg Message
+	rpcMsg message
 	qid    QuestionId
 }
 

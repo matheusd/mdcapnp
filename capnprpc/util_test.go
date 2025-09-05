@@ -58,8 +58,8 @@ func (th *testHarness) newTestConn() *testConn {
 func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
 	c1 := testPipeConn{
 		remName: v2.name,
-		in:      make(chan Message, 10),
-		out:     make(chan Message, 10),
+		in:      make(chan message, 10),
+		out:     make(chan message, 10),
 	}
 	c2 := testPipeConn{
 		remName: v1.name,

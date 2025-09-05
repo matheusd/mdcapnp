@@ -12,19 +12,19 @@ import (
 	"github.com/rs/zerolog"
 )
 
-func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg Message) error {
+func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message) error {
 	bootMsg := msg.AsBootstrap()
-	reply := Message{
+	reply := message{
 		isReturn: true,
-		ret: Return{
+		ret: rpcReturn{
 			aid:       AnswerId(bootMsg.qid),
 			isResults: true,
-			pay: Payload{
+			pay: payload{
 				content: anyPointer{
 					isCapPointer: true,
 					cp:           capPointer{index: 0},
 				},
-				capTable: []CapDescriptor{
+				capTable: []capDescriptor{
 					{senderHosted: rc.bootExportId},
 				},
 			},
@@ -43,7 +43,7 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg Message
 	return rc.queue(ctx, singleMsgBatch(reply))
 }
 
-func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) error {
+func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn) error {
 	qid := QuestionId(ret.AnswerId())
 	q, ok := rc.questions.get(qid)
 	if !ok {
@@ -109,7 +109,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret Return) er
 
 var errCallWithoutId = errors.New("call with zero interfaceId and methodId")
 
-func (v *Vat) processCall(ctx context.Context, rc *runningConn, c Call) error {
+func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 	if c.iid == 0 && c.mid == 0 {
 		// Only bootstrap is allowed to have iid+mid == 0.
 		return errCallWithoutId
@@ -153,12 +153,12 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c Call) error {
 	}
 
 	// Start preparing reply.
-	reply := Message{
+	reply := message{
 		isReturn: true,
-		ret:      Return{aid: AnswerId(c.qid)},
+		ret:      rpcReturn{aid: AnswerId(c.qid)},
 	}
 	crb := callReturnBuilder{ // Reuse on vat (this is running on the vat's main goroutine).
-		payload: Payload{content: anyPointer{
+		payload: payload{content: anyPointer{
 			isVoid: true, // Void result by default on non-error.
 		}},
 	}
@@ -203,7 +203,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c Call) error {
 }
 
 // processInMessage processes an incoming message from a remote Vat.
-func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg Message) error {
+func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
 	var err error
 	switch {
 	case msg.IsBootstrap():
@@ -260,9 +260,9 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 		// an incomplete local call or to a remote promise).
 		if stepIdx > 0 {
 			parentStep := &pipe.steps[stepIdx-1]
-			step.rpcMsg.call.target = MessageTarget{
+			step.rpcMsg.call.target = messageTarget{
 				isPromisedAnswer: true,
-				pans:             PromisedAnswer{qid: parentStep.qid},
+				pans:             promisedAnswer{qid: parentStep.qid},
 			}
 
 			step.step.conn.log.Debug().
@@ -288,9 +288,9 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe runningPipeline, stepIdx
 				return errors.New("failed precondition: stepRunning should've been set")
 			}
 			parentQid := parentStep.stepRunning.Value()
-			step.rpcMsg.call.target = MessageTarget{
+			step.rpcMsg.call.target = messageTarget{
 				isPromisedAnswer: true,
-				pans:             PromisedAnswer{qid: parentQid},
+				pans:             promisedAnswer{qid: parentQid},
 			}
 
 			step.step.conn.log.Debug().

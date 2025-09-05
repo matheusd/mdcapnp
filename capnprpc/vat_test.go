@@ -41,17 +41,17 @@ func TestBootstrapSendSide(t *testing.T) {
 
 	// Remote replies with a Return.
 	targetExportId := ExportId(666)
-	resMsg := Message{
+	resMsg := message{
 		isReturn: true,
-		ret: Return{
+		ret: rpcReturn{
 			aid:       AnswerId(bootQid),
 			isResults: true,
-			pay: Payload{
+			pay: payload{
 				content: anyPointer{
 					isCapPointer: true,
 					cp:           capPointer{index: 0},
 				},
-				capTable: []CapDescriptor{
+				capTable: []capDescriptor{
 					{senderHosted: targetExportId},
 				},
 			},
@@ -73,12 +73,12 @@ func TestBootstrapReceiveSide(t *testing.T) {
 
 	// Vat receives a Bootstrap message.
 	targetQid := QuestionId(666)
-	tc.fillNextReceiveWith(Message{isBootstrap: true, boot: Bootstrap{qid: targetQid}})
+	tc.fillNextReceiveWith(message{isBootstrap: true, boot: bootstrap{qid: targetQid}})
 
 	// Vat sends the Bootstrap cap.
 	var bootQid QuestionId
 	tc.checkNextSent(func(mb msgBatch) error {
-		ret := mb.msgs[0].ret
+		ret := mb.single.ret
 		bootQid = QuestionId(ret.aid)
 		return nil
 	})
@@ -130,7 +130,7 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 		_ = v.RunConn(tc)
 
 		var i uint64 = 1
-		sendEcho := func(m *Message) error {
+		sendEcho := func(m *message) error {
 			m.testEcho = i
 			return nil
 		}
@@ -161,7 +161,7 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 			_ = v.RunConn(tc)
 
 			var i uint64 = 1
-			sendEcho := func(m *Message) error {
+			sendEcho := func(m *message) error {
 				m.testEcho = i
 				return nil
 			}

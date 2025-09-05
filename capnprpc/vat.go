@@ -109,13 +109,13 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		step := &rp.steps[i]
 		step.serMsg = capnpser.MakeMsg(nil) // Needed??
 
-		step.rpcMsg = Message{}
+		step.rpcMsg = message{}
 		if step.step.interfaceId == 0 && step.step.methodId == 0 {
 			// Bootstrap.
 			step.rpcMsg.isBootstrap = true
 		} else {
 			step.rpcMsg.isCall = true
-			step.rpcMsg.call = Call{
+			step.rpcMsg.call = call{
 				// target must be set in vat's run().
 				iid: step.step.interfaceId,
 				mid: step.step.methodId,
@@ -150,7 +150,7 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(func(ctx context.Context) error {
 		for {
-			var msg Message // TODO: obtain from pool in Vat
+			var msg message // TODO: obtain from pool in Vat
 			err := rc.c.receive(ctx, &msg)
 			if err != nil {
 				return err
@@ -247,7 +247,7 @@ func (v *Vat) startPipeline(ctx context.Context, rp runningPipeline) error {
 		if conn != lastConn {
 			batches = append(batches, outBatch{
 				conn:     conn,
-				batch:    msgBatch{msgs: make([]Message, 0, len(rp.steps)-i)},
+				batch:    msgBatch{msgs: make([]message, 0, len(rp.steps)-i)},
 				startIdx: i,
 			})
 		}

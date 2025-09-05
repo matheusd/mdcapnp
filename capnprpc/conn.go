@@ -13,17 +13,17 @@ import (
 
 type msgBatch struct {
 	isSingle bool
-	single   Message
-	msgs     []Message
+	single   message
+	msgs     []message
 }
 
-func singleMsgBatch(msg Message) msgBatch {
+func singleMsgBatch(msg message) msgBatch {
 	return msgBatch{isSingle: true, single: msg}
 }
 
 type conn interface {
 	send(context.Context, msgBatch) error
-	receive(context.Context, *Message) error
+	receive(context.Context, *message) error
 	remoteName() string
 
 	// TODO: Allow conn-owned buffer (io_uring)?

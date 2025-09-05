@@ -40,89 +40,89 @@ func (ap *anyPointer) IsCapPointer() bool       { return ap.isCapPointer }
 func (ap *anyPointer) AsCapPointer() capPointer { return ap.cp }
 func (ap *anyPointer) IsVoid() bool             { return ap.isVoid }
 
-type CapDescriptor struct {
+type capDescriptor struct {
 	senderHosted ExportId
 	// senderPromise ExportId
 }
 
-func (cp *CapDescriptor) IsSenderHosted() bool     { return cp.senderHosted > 0 }
-func (cp *CapDescriptor) AsSenderHosted() ExportId { return cp.senderHosted }
+func (cp *capDescriptor) IsSenderHosted() bool     { return cp.senderHosted > 0 }
+func (cp *capDescriptor) AsSenderHosted() ExportId { return cp.senderHosted }
 
-type Payload struct {
+type payload struct {
 	content  anyPointer
-	capTable []CapDescriptor
+	capTable []capDescriptor
 }
 
-func (p *Payload) Content() anyPointer       { return p.content }
-func (p *Payload) CapTable() []CapDescriptor { return p.capTable }
+func (p *payload) Content() anyPointer       { return p.content }
+func (p *payload) CapTable() []capDescriptor { return p.capTable }
 
-type Exception struct {
+type exception struct {
 	reason string
 	typ    int
 }
 
-type Return struct {
+type rpcReturn struct {
 	aid         AnswerId
 	isResults   bool
-	pay         Payload
+	pay         payload
 	isException bool
-	exc         Exception
+	exc         exception
 }
 
-func (r *Return) AnswerId() AnswerId { return r.aid }
-func (r *Return) IsResults() bool    { return r.isResults }
-func (r *Return) AsResults() Payload { return r.pay }
+func (r *rpcReturn) AnswerId() AnswerId { return r.aid }
+func (r *rpcReturn) IsResults() bool    { return r.isResults }
+func (r *rpcReturn) AsResults() payload { return r.pay }
 
-type PromisedAnswer struct {
+type promisedAnswer struct {
 	qid QuestionId
 	// transform
 }
 
-type MessageTarget struct {
+type messageTarget struct {
 	isImportedCap    bool
 	impcap           ImportId
 	isPromisedAnswer bool
-	pans             PromisedAnswer
+	pans             promisedAnswer
 }
 
-type Call struct {
+type call struct {
 	qid    QuestionId
-	target MessageTarget
+	target messageTarget
 	iid    uint64
 	mid    uint16
-	params Payload
+	params payload
 }
 
-type Bootstrap struct {
+type bootstrap struct {
 	qid QuestionId
 }
 
-func (bt *Bootstrap) QuestionId() QuestionId { return bt.qid }
+func (bt *bootstrap) QuestionId() QuestionId { return bt.qid }
 
-type Message struct { // RPC message type
+type message struct { // RPC message type
 	isBootstrap bool
-	boot        Bootstrap
+	boot        bootstrap
 	isReturn    bool
-	ret         Return
+	ret         rpcReturn
 	isCall      bool
-	call        Call
+	call        call
 
 	testEcho uint64 // Special test message.
 }
 
-func (m *Message) ReadFromRoot(msg *capnpser.Message) error { return nil }
-func (m *Message) IsBootstrap() bool                        { return m.isBootstrap }
-func (m *Message) AsBootstrap() Bootstrap                   { return m.boot }
-func (m *Message) IsReturn() bool                           { return m.isReturn }
-func (m *Message) AsReturn() Return                         { return m.ret }
-func (m *Message) IsCall() bool                             { return m.isCall }
-func (m *Message) AsCall() Call                             { return m.call }
+func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
+func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
+func (m *message) AsBootstrap() bootstrap                   { return m.boot }
+func (m *message) IsReturn() bool                           { return m.isReturn }
+func (m *message) AsReturn() rpcReturn                      { return m.ret }
+func (m *message) IsCall() bool                             { return m.isCall }
+func (m *message) AsCall() call                             { return m.call }
 
 type interfaceId uint64
 type methodId uint16
 
 type callReturnBuilder struct {
-	payload Payload
+	payload payload
 }
 
 func (crb *callReturnBuilder) setContent(content anyPointer) {
@@ -130,7 +130,7 @@ func (crb *callReturnBuilder) setContent(content anyPointer) {
 }
 
 type callExceptionError interface {
-	ToException() Exception
+	ToException() exception
 }
 
 type errUnimplemented struct {
@@ -142,14 +142,14 @@ func (err errUnimplemented) Error() string {
 	return fmt.Sprintf("call %d.%d unimplemented", err.Iid, err.Mid)
 }
 
-func (err errUnimplemented) ToException() Exception {
-	return Exception{typ: 3, reason: err.Error()}
+func (err errUnimplemented) ToException() exception {
+	return exception{typ: 3, reason: err.Error()}
 }
 
 type callHandlerArgs struct {
 	iid    interfaceId
 	mid    methodId
-	params Payload
+	params payload
 	rc     *runningConn
 }
 
@@ -179,7 +179,7 @@ type callParamsBuilder func(*msgBuilder) error
 
 type inMsg struct {
 	rc  *runningConn
-	msg Message
+	msg message
 }
 
 // To be generated from rpc.capnp

@@ -14,7 +14,7 @@ type testConnBatch struct {
 }
 
 type testConnReceiver struct {
-	f func(*Message) error
+	f func(*message) error
 }
 
 type testConn struct {
@@ -39,14 +39,14 @@ func (tc *testConn) checkNextSent(f func(msgBatch) error) {
 	}
 }
 
-func (tc *testConn) fillNextReceiveWith(target Message) {
-	tc.fillNextReceive(func(m *Message) error {
+func (tc *testConn) fillNextReceiveWith(target message) {
+	tc.fillNextReceive(func(m *message) error {
 		*m = target
 		return nil
 	})
 }
 
-func (tc *testConn) fillNextReceive(f func(m *Message) error) {
+func (tc *testConn) fillNextReceive(f func(m *message) error) {
 	select {
 	case tc.fillReceive <- testConnReceiver{f: f}:
 	case <-tc.th.ctx.Done():
@@ -73,7 +73,7 @@ func (tc *testConn) send(ctx context.Context, b msgBatch) error {
 
 // receive is called by the vat end of this test conn. It allows test code to
 // set the next message to be received.
-func (tc *testConn) receive(ctx context.Context, m *Message) error {
+func (tc *testConn) receive(ctx context.Context, m *message) error {
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
@@ -88,8 +88,8 @@ func (tc *testConn) remoteName() string {
 
 type testPipeConn struct {
 	remName string
-	in      chan Message
-	out     chan Message
+	in      chan message
+	out     chan message
 }
 
 func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
@@ -112,7 +112,7 @@ func (tpc *testPipeConn) send(ctx context.Context, mb msgBatch) error {
 	return nil
 }
 
-func (tpc *testPipeConn) receive(ctx context.Context, target *Message) error {
+func (tpc *testPipeConn) receive(ctx context.Context, target *message) error {
 	select {
 	case m := <-tpc.in:
 		*target = m
