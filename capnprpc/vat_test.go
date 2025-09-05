@@ -6,6 +6,7 @@ package capnprpc
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,6 +120,54 @@ func TestVoidCallBothSides(t *testing.T) {
 	// Second call (bootstrap should be an export already).
 	err = api.VoidCall().Wait(testctx.New(t))
 	require.NoError(t, err)
+}
+
+func BenchmarkVatRunOverhead(b *testing.B) {
+	b.Run("single", func(b *testing.B) {
+		th := newTestHarness(b)
+		v := th.newVat("server")
+		tc := th.newTestConn()
+		_ = v.RunConn(tc)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := range b.N {
+			tc.fillNextReceiveWith(Message{testEcho: uint64(i + 1)})
+
+			tc.checkNextSent(func(mb msgBatch) error {
+				if mb.single.testEcho != uint64(i+1) {
+					return errors.New("wrong testEcho number")
+				}
+				return nil
+			})
+		}
+	})
+
+	b.Run("parallel", func(b *testing.B) {
+		th := newTestHarness(b)
+		v := th.newVat("server")
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			tc := th.newTestConn()
+			_ = v.RunConn(tc)
+
+			var i uint64 = 1
+			for pb.Next() {
+				tc.fillNextReceiveWith(Message{testEcho: i})
+
+				tc.checkNextSent(func(mb msgBatch) error {
+					if mb.single.testEcho != i {
+						return errors.New("wrong testEcho number")
+					}
+					return nil
+				})
+			}
+		})
+	})
+
 }
 
 // BenchmarkVoidCall benchmarks a basic void call under various circumstances.

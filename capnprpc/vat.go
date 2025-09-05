@@ -202,6 +202,25 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	}()
 }
 
+func (v *Vat) stopConn(rc *runningConn) {
+	// Every non-answered question is answered with an error.
+	for qid, q := range rc.questions.entries {
+		if q.pipe != nil {
+			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
+			q.pipe.mu.Lock()
+			q.pipe.state = pipelineStateConnDone
+			step := q.pipe.steps[q.stepIdx]
+			if !step.stepRunning.IsSet() {
+				step.stepRunning.Set(0)
+			}
+			if !step.stepDone.IsSet() {
+				step.stepDone.Set(errConnDone) // TODO: pass original error?
+			}
+			q.pipe.mu.Unlock()
+		}
+	}
+}
+
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
 // the respective remote Vats and modifies the local vat's state according to
 // each step.
@@ -290,23 +309,6 @@ func (s *vatRunState) delConn(target *runningConn) {
 		}
 		return false
 	})
-
-	// Every non-answered question is answered with an error.
-	for qid, q := range target.questions.entries {
-		if q.pipe != nil {
-			target.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
-			q.pipe.mu.Lock()
-			q.pipe.state = pipelineStateConnDone
-			step := q.pipe.steps[q.stepIdx]
-			if !step.stepRunning.IsSet() {
-				step.stepRunning.Set(0)
-			}
-			if !step.stepDone.IsSet() {
-				step.stepDone.Set(errConnDone) // TODO: pass original error?
-			}
-			q.pipe.mu.Unlock()
-		}
-	}
 }
 
 func (s *vatRunState) findConn(c conn) *runningConn {
@@ -324,6 +326,7 @@ func (v *Vat) runStep(rs *vatRunState) error {
 		rs.conns = append(rs.conns, rc)
 
 	case oc := <-v.connDone:
+		v.stopConn(oc)
 		rs.delConn(oc)
 
 	case m := <-v.inMsg:
@@ -364,7 +367,10 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 
 		// Remove every remaining conn.
 		for _, rc := range rs.conns {
-			rs.delConn(rc)
+			if rc == nil {
+				panic("XXXXX rc is nil here")
+			}
+			v.stopConn(rc)
 		}
 
 		return err

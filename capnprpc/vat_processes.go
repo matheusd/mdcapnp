@@ -210,8 +210,10 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg Message
 		err = v.processBootstrap(ctx, rc, msg)
 	case msg.IsReturn():
 		err = v.processReturn(ctx, rc, msg.AsReturn())
-	case msg.isCall:
+	case msg.IsCall():
 		err = v.processCall(ctx, rc, msg.AsCall())
+	case msg.testEcho != 0:
+		rc.queue(ctx, singleMsgBatch(msg))
 	default:
 		err = errors.New("unknown Message type")
 	}

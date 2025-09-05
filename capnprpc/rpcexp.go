@@ -106,6 +106,8 @@ type Message struct { // RPC message type
 	ret         Return
 	isCall      bool
 	call        Call
+
+	testEcho uint64 // Special test message.
 }
 
 func (m *Message) ReadFromRoot(msg *capnpser.Message) error { return nil }
