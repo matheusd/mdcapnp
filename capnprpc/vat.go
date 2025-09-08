@@ -97,7 +97,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		}
 
 		parentStep := p.parent.Step(p.parentStepIdx)
-		_, err := parentStep.stepRunning.Wait(ctx)
+		_, _, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
 		if err != nil {
 			return err
 		}
@@ -212,12 +212,7 @@ func (v *Vat) stopConn(rc *runningConn) {
 			q.pipe.mu.Lock()
 			q.pipe.state = pipelineStateConnDone
 			step := q.pipe.steps[q.stepIdx]
-			if !step.stepRunning.IsSet() {
-				step.stepRunning.Set(0)
-			}
-			if !step.stepDone.IsSet() {
-				step.stepDone.Set(errConnDone) // TODO: pass original error?
-			}
+			step.value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
 			q.pipe.mu.Unlock()
 		}
 	}

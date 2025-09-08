@@ -13,15 +13,28 @@ import (
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
+type pipelineStepState int
+
+const (
+	pipeStepStateBuilding pipelineStepState = iota
+	pipeStepStateRunning
+	pipeStepStateDone
+	pipelineStepFailed // Must be last to be > all other states.
+)
+
+type pipelineStepStateValue struct {
+	qid   QuestionId // Set if step state is >= running.
+	value any        // Set if step state is >= done.
+	err   error      // Set if step state is >= failed.
+}
+
 type pipelineStep struct {
 	interfaceId   uint64
 	methodId      uint16
 	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
 	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
 
-	stepRunning sigvalue.Once[QuestionId]
-
-	stepDone sigvalue.Once[any]
+	value sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
 
 	// Only accessed inside vat.Run().
 	rpcMsg message
@@ -111,10 +124,7 @@ func (pipe *pipeline) wouldFork(i int) bool {
 }
 
 func (pipe *pipeline) addStep() int {
-	pipe.steps = append(pipe.steps, &pipelineStep{
-		stepRunning: sigvalue.MakeOnce[QuestionId](),
-		stepDone:    sigvalue.MakeOnce[any](),
-	})
+	pipe.steps = append(pipe.steps, &pipelineStep{})
 	return len(pipe.steps) - 1
 }
 
@@ -184,13 +194,20 @@ func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error)
 	}
 
 	// Wait until the required step of the pipeline completes or fails.
-	var pipeRes any
-	pipeRes, err = cap.pipe.Step(cap.stepIndex).stepDone.Wait(ctx)
+	stepState, stepValue, err := cap.pipe.Step(cap.stepIndex).value.WaitStateAtLeast(ctx, pipeStepStateDone)
 	if err != nil {
+		return
+	}
+	if stepState != pipeStepStateDone { // Could be error.
+		err = stepValue.err
+		if err == nil {
+			err = fmt.Errorf("unknown final pipeline step state: %v", stepState)
+		}
 		return
 	}
 
 	// Determine if the result was an error.
+	pipeRes := stepValue.value
 	var ok bool
 	if err, ok = pipeRes.(error); ok && err != nil {
 		return

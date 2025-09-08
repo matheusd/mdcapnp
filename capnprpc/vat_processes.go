@@ -99,12 +99,13 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 
 	// Fulfill pieline waiting for this result.
 	step := q.pipe.Step(q.stepIdx)
-	if !step.stepDone.Set(stepResult) {
-		// Can it ever be set twice on a return? I don't think so.
-		return errors.New("question resolved twice")
-	}
-
-	return nil
+	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os != pipeStepStateRunning {
+			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
+		}
+		ov.value = stepResult
+		return pipeStepStateDone, ov, nil
+	})
 }
 
 var errCallWithoutId = errors.New("call with zero interfaceId and methodId")
@@ -235,7 +236,7 @@ var errTooManyOpenQuestions = errors.New("too many open questions")
 // pipeline to be sent to the remote Vat.
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
-func (v *Vat) prepareOutMessage(_ context.Context, pipe *pipeline,
+func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 	stepIdx int, prevQid QuestionId) (thisQid QuestionId, err error) {
 
 	var ok bool
@@ -286,10 +287,14 @@ func (v *Vat) prepareOutMessage(_ context.Context, pipe *pipeline,
 			// TODO: check if step already completed (stepDone) and
 			// turned into an exported cap.
 			parentStep := pipe.parent.Step(pipe.parentStepIdx)
-			if !parentStep.stepRunning.IsSet() {
-				return 0, errors.New("failed precondition: stepRunning should've been set")
+			parentStepState, parentStepVal, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
+			if err != nil {
+				return 0, err
 			}
-			parentQid := parentStep.stepRunning.Value()
+			if parentStepState == pipelineStepFailed {
+				return 0, parentStepVal.err
+			}
+			parentQid := parentStepVal.qid
 			step.rpcMsg.call.target = messageTarget{
 				isPromisedAnswer: true,
 				pans:             promisedAnswer{qid: parentQid},
@@ -331,8 +336,14 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 	// This step is now in flight. Allow forks from it to start. The forks
 	// won't go out after the entirety of this pipeline has processed,
 	// because this is running within the Vat's main goroutine.
-	if qid > 0 && !step.stepRunning.Set(qid) {
-		return errors.New("stepRunning already set for step")
+	if qid > 0 {
+		return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+			if os != pipeStepStateBuilding {
+				return os, ov, fmt.Errorf("invalid precondition state: %v", os)
+			}
+			ov.qid = qid
+			return pipeStepStateRunning, ov, nil
+		})
 	}
 
 	return nil
