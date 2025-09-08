@@ -60,9 +60,6 @@ type pipeline struct {
 	conn          *runningConn
 	parent        *pipeline
 	parentStepIdx int
-
-	// Only set during pipeline running
-	cancel func(error)
 }
 
 var fatalEmptyPipeline = "empty pipeline"
@@ -135,6 +132,19 @@ func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork.parent = pipe
 	fork.parentStepIdx = i
 	return fork
+}
+
+func (pipe *pipeline) failAllSteps(err error) {
+	pipe.mu.Lock()
+	for _, step := range pipe.steps {
+		step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+			if ov.err == nil {
+				ov.err = err
+			}
+			return pipelineStepFailed, ov, nil
+		})
+	}
+	pipe.mu.Unlock()
 }
 
 var errPipelineNotBuildingState = errors.New("pipeline not in building state")

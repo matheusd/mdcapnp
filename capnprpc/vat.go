@@ -97,9 +97,12 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		}
 
 		parentStep := p.parent.Step(p.parentStepIdx)
-		_, _, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
+		parentStepState, parentStepVal, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
 		if err != nil {
 			return err
+		}
+		if parentStepState == pipelineStepFailed {
+			return parentStepVal.err
 		}
 	}
 
@@ -127,7 +130,6 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 
 	// Send the pipeline for processing by the Vat's goroutine. This cashes
 	// out into Vat.startPipeline().
-	ctx, p.cancel = context.WithCancelCause(ctx)
 	select {
 	case v.pipelines <- p:
 	case <-ctx.Done():
@@ -135,14 +137,15 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	}
 
 	// Wait until pipeline has started processing completely. This is
-	// signalled by the pipeline's context getting done.
-	<-ctx.Done()
-	err := context.Cause(ctx)
-	if errors.Is(err, errPipelineStarted) {
-		err = nil
+	// signalled by the last step having been set as running.
+	stepState, stepVal, err := steps[len(steps)-1].value.WaitStateAtLeast(ctx, pipeStepStateRunning)
+	if err != nil {
+		return err
 	}
-
-	return err
+	if stepState == pipelineStepFailed {
+		return stepVal.err
+	}
+	return nil
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -250,8 +253,7 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 		}
 	}
 
-	// Entire pipeline is in flight.
-	return errPipelineStarted
+	return nil
 }
 
 // vatRunState is the running state of the vat.
@@ -306,7 +308,7 @@ func (v *Vat) runStep(rs *vatRunState) error {
 	case pipe := <-v.pipelines:
 		err := v.startPipeline(rs.ctx, pipe)
 		if err != nil {
-			pipe.cancel(err)
+			pipe.failAllSteps(err)
 
 			// Do some errors cause the Vat to error out?
 		}
