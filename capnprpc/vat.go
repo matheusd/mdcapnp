@@ -78,7 +78,6 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		return errPipelineNotBuildingState
 	}
 	p.state = pipelineStateRunning
-	steps := p.steps[:]
 	p.mu.Unlock()
 
 	// If this pipeline is a fork, wait until the its parent step is
@@ -107,12 +106,14 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	}
 
 	// Shortcicuit empty pipelines (caller is likely to wait on parent).
-	if len(steps) == 0 {
+	if p.isEmpty() {
 		return nil
 	}
 
 	// Prepare (as much as possible) messages for sending.
-	for _, step := range steps {
+	var lastStep *pipelineStep
+	for i := range p.numSteps() {
+		step := p.step(i)
 		step.rpcMsg = message{}
 		if step.interfaceId == 0 && step.methodId == 0 {
 			// Bootstrap.
@@ -126,6 +127,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 				// TODO: params?
 			}
 		}
+		lastStep = step
 	}
 
 	// Send the pipeline for processing by the Vat's goroutine. This cashes
@@ -138,7 +140,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 
 	// Wait until pipeline has started processing completely. This is
 	// signalled by the last step having been set as running.
-	stepState, stepVal, err := steps[len(steps)-1].value.WaitStateAtLeast(ctx, pipeStepStateRunning)
+	stepState, stepVal, err := lastStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
 	if err != nil {
 		return err
 	}
@@ -214,8 +216,9 @@ func (v *Vat) stopConn(rc *runningConn) {
 			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
 			q.pipe.mu.Lock()
 			q.pipe.state = pipelineStateConnDone
-			step := q.pipe.steps[q.stepIdx]
-			step.value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
+			for i := range q.pipe.numSteps() {
+				q.pipe.step(i).value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
+			}
 			q.pipe.mu.Unlock()
 		}
 	}
@@ -225,12 +228,12 @@ func (v *Vat) stopConn(rc *runningConn) {
 // the respective remote Vats and modifies the local vat's state according to
 // each step.
 func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
-	v.log.Trace().Int("len", len(p.steps)).Msg("Starting pipeline")
+	v.log.Trace().Int("len", p.numSteps()).Msg("Starting pipeline")
 
 	// Determine how the local Vat will change in response to this
 	// pipeline.
 	var prevQid QuestionId
-	for i := range p.steps {
+	for i := range p.numSteps() {
 		var err error
 		if prevQid, err = v.prepareOutMessage(ctx, p, i, prevQid); err != nil {
 			return err
@@ -239,15 +242,16 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 
 	// Generally, this fails only if ctx is done or if the outbound
 	// queue for this conn is full.
-	for i, step := range p.steps {
-		err := p.conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: len(p.steps) - i})
+	for i := range p.numSteps() {
+		step := p.step(i)
+		err := p.conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
 		if err != nil {
 			return err
 		}
 	}
 
 	// Commit the changes to the local Vat.
-	for i := range p.steps {
+	for i := range p.numSteps() {
 		if err := v.commitOutMessage(ctx, p, i); err != nil {
 			return err
 		}

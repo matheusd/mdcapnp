@@ -241,7 +241,7 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 
 	var ok bool
 
-	step := pipe.steps[stepIdx]
+	step := pipe.step(stepIdx)
 	conn := pipe.conn
 	if step.rpcMsg.IsBootstrap() {
 		if thisQid, ok = conn.questions.nextID(); !ok {
@@ -314,17 +314,17 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote Vat.
 func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) error {
-	step := pipe.steps[stepIdx]
+	step := pipe.step(stepIdx)
 	conn := pipe.conn
 	var qid QuestionId
 	var q question
 	if step.rpcMsg.isBootstrap {
 		q = question{pipe: pipe, stepIdx: stepIdx}
-		qid = pipe.steps[stepIdx].rpcMsg.boot.qid
+		qid = step.rpcMsg.boot.qid
 		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Bootstrap message")
 	} else if step.rpcMsg.isCall {
 		q = question{pipe: pipe, stepIdx: stepIdx}
-		qid = pipe.steps[stepIdx].rpcMsg.call.qid
+		qid = step.rpcMsg.call.qid
 		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Call message")
 	} else {
 		// Guard against errors while developing.

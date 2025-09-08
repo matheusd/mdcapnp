@@ -86,23 +86,20 @@ func (pipe *pipeline) State() pipelineState {
 // forked pipeline.
 func (pipe *pipeline) LastStep() *pipelineStep {
 	pipe.mu.Lock()
-	if len(pipe.steps) == 0 {
+	if pipe.isEmpty() {
 		pipe.mu.Unlock()
 		if pipe.parent == nil {
 			panic(fatalEmptyPipeline)
 		}
 		return pipe.parent.LastStep()
 	}
-	res := pipe.steps[len(pipe.steps)-1]
+	res := pipe.step(pipe.numSteps() - 1)
 	pipe.mu.Unlock()
 	return res
 }
 
-// Step returns the ith step of the pipeline, handling special cases like a
-// newly forked pipeline.
-func (pipe *pipeline) Step(i int) *pipelineStep {
-	pipe.mu.Lock()
-	if len(pipe.steps) == 0 {
+func (pipe *pipeline) step(i int) *pipelineStep {
+	if pipe.isEmpty() {
 		pipe.mu.Unlock()
 		if i != -1 {
 			panic(fatalInvalidStepIndex)
@@ -111,7 +108,15 @@ func (pipe *pipeline) Step(i int) *pipelineStep {
 		}
 		return pipe.parent.Step(pipe.parentStepIdx)
 	}
-	res := pipe.steps[len(pipe.steps)-1]
+	return pipe.steps[len(pipe.steps)-1]
+
+}
+
+// Step returns the ith step of the pipeline, handling special cases like a
+// newly forked pipeline.
+func (pipe *pipeline) Step(i int) *pipelineStep {
+	pipe.mu.Lock()
+	res := pipe.step(i)
 	pipe.mu.Unlock()
 	return res
 }
@@ -147,6 +152,14 @@ func (pipe *pipeline) failAllSteps(err error) {
 	pipe.mu.Unlock()
 }
 
+func (pipe *pipeline) numSteps() int {
+	return len(pipe.steps)
+}
+
+func (pipe *pipeline) isEmpty() bool {
+	return pipe.numSteps() == 0
+}
+
 var errPipelineNotBuildingState = errors.New("pipeline not in building state")
 
 type futureCap[T any] struct {
@@ -165,14 +178,6 @@ func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
 	return res
 }
 
-// forkFuture forks the last step of the future into a new pipeline but does not
-// add any other steps.
-func forkFuture[T any](old futureCap[T], pipeSizeHint int) (fork futureCap[T]) {
-	fork.pipe = old.pipe.fork(len(old.pipe.steps)-1, pipeSizeHint)
-	fork.stepIndex = -1
-	return
-}
-
 func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
 	pipe := obj.pipe
 	pipe.mu.Lock()
@@ -187,7 +192,7 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 	}
 
 	res.stepIndex = res.pipe.addStep()
-	step := res.pipe.steps[res.stepIndex]
+	step := res.pipe.step(res.stepIndex)
 	step.interfaceId = iid
 	step.methodId = mid
 	step.paramsBuilder = pb
