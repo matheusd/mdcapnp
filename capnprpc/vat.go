@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"runtime/trace"
 	"slices"
 	"time"
 
@@ -26,6 +27,8 @@ type Vat struct {
 
 	inMsg     chan inMsg
 	pipelines chan *pipeline
+
+	crb callReturnBuilder
 }
 
 func NewVat(opts ...VatOption) *Vat {
@@ -291,6 +294,9 @@ func (s *vatRunState) findConn(c conn) *runningConn {
 }
 
 func (v *Vat) runStep(rs *vatRunState) error {
+	traceReg := trace.StartRegion(rs.ctx, "runStep")
+	defer traceReg.End()
+
 	select {
 	case rc := <-v.newConn:
 		v.runConn(rs.ctx, rc)

@@ -178,44 +178,42 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 		})
 	})
 
-	/*
-		// Not a great test at the moment.
-		b.Run("pre-filled", func(b *testing.B) {
-			th := newTestHarness(b)
-			v := th.newVat("server")
-			tc := th.newTestConn()
+	// Not a great test at the moment.
+	b.Run("pre-filled", func(b *testing.B) {
+		th := newTestHarness(b)
+		v := th.newVat("server")
+		tc := th.newTestConn()
 
-			// Re-create and fill buffers to avoid having to run a second
-			// goroutine.
-			tc.fillReceive = make(chan testConnReceiver, b.N)
-			tc.sent = make(chan msgBatch, b.N)
-			close(tc.sentResult) // Always returns nil
+		// Re-create and fill buffers to avoid having to run a second
+		// goroutine.
+		tc.fillReceive = make(chan testConnReceiver, b.N)
+		tc.sent = make(chan message, b.N)
+		close(tc.sentResult) // Always returns nil
 
-			var i uint64 = 0
-			sendEcho := func() (message, error) {
-				i += 1
-				return message{testEcho: i}, nil
+		var i uint64 = 0
+		sendEcho := func() (message, error) {
+			i += 1
+			return message{testEcho: i}, nil
+		}
+
+		for range b.N {
+			tc.fillReceive <- testConnReceiver{f: sendEcho}
+		}
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		// Run conn, which processes all messages.
+		_ = v.RunConn(tc)
+
+		for i := 0; i < 10000; i++ {
+			if len(tc.sent) == b.N {
+				return
 			}
-
-			for range b.N {
-				tc.fillReceive <- testConnReceiver{f: sendEcho}
-			}
-
-			b.ReportAllocs()
-			b.ResetTimer()
-
-			// Run conn, which processes all messages.
-			_ = v.RunConn(tc)
-
-			for i := 0; i < 10000; i++ {
-				if len(tc.sent) == b.N {
-					return
-				}
-				time.Sleep(time.Millisecond)
-			}
-			b.Fatalf("Final sent len: %d", len(tc.sent))
-		})
-	*/
+			time.Sleep(time.Millisecond)
+		}
+		b.Fatalf("Final sent len: %d", len(tc.sent))
+	})
 }
 
 // BenchmarkVoidCall benchmarks a basic void call under various circumstances.

@@ -53,6 +53,7 @@ type pipeline struct {
 	// mu protects the following fields.
 	mu    sync.Mutex
 	state pipelineState
+	first pipelineStep
 	steps []*pipelineStep
 
 	// Only set on pipeline creation.
@@ -70,8 +71,7 @@ const defaultPipelineSizeHint = 5
 var errPipelineStarted = errors.New("pipeline started successfully (not a real error)")
 
 func newPipeline(sizeHint int) *pipeline {
-	steps := make([]*pipelineStep, 0, sizeHint)
-	return &pipeline{steps: steps}
+	return &pipeline{}
 }
 
 // State returns the current pipeline state.
@@ -108,7 +108,11 @@ func (pipe *pipeline) step(i int) *pipelineStep {
 		}
 		return pipe.parent.Step(pipe.parentStepIdx)
 	}
-	return pipe.steps[len(pipe.steps)-1]
+	if i == 0 {
+		return &pipe.first
+	} else {
+		return pipe.steps[i-1]
+	}
 
 }
 
@@ -122,12 +126,12 @@ func (pipe *pipeline) Step(i int) *pipelineStep {
 }
 
 func (pipe *pipeline) wouldFork(i int) bool {
-	return i != len(pipe.steps)-1
+	return i != pipe.numSteps()-1
 }
 
 func (pipe *pipeline) addStep() int {
 	pipe.steps = append(pipe.steps, &pipelineStep{})
-	return len(pipe.steps) - 1
+	return pipe.numSteps() - 1
 }
 
 func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
@@ -141,6 +145,13 @@ func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 
 func (pipe *pipeline) failAllSteps(err error) {
 	pipe.mu.Lock()
+	pipe.first.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if ov.err == nil {
+			ov.err = err
+		}
+		return pipelineStepFailed, ov, nil
+	})
+
 	for _, step := range pipe.steps {
 		step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 			if ov.err == nil {
@@ -153,11 +164,11 @@ func (pipe *pipeline) failAllSteps(err error) {
 }
 
 func (pipe *pipeline) numSteps() int {
-	return len(pipe.steps)
+	return len(pipe.steps) + 1
 }
 
 func (pipe *pipeline) isEmpty() bool {
-	return pipe.numSteps() == 0
+	return false
 }
 
 var errPipelineNotBuildingState = errors.New("pipeline not in building state")
@@ -174,7 +185,6 @@ func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
 		pipe:      newPipeline(pipeSizeHint),
 		stepIndex: 0,
 	}
-	res.pipe.addStep()
 	return res
 }
 
@@ -183,15 +193,12 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 	pipe.mu.Lock()
 	if pipe.state != pipelineStateBuilding || pipe.wouldFork(obj.stepIndex) {
 		res.pipe = pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
-	} else if obj.stepIndex == -1 {
-		// First call of a new fork from bootstrap. Conn comes from the
-		// parent pipeline.
-		res.pipe = pipe
+		res.stepIndex = 0
 	} else {
 		res.pipe = pipe
+		res.stepIndex = res.pipe.addStep()
 	}
 
-	res.stepIndex = res.pipe.addStep()
 	step := res.pipe.step(res.stepIndex)
 	step.interfaceId = iid
 	step.methodId = mid

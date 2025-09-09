@@ -158,18 +158,17 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		isReturn: true,
 		ret:      rpcReturn{aid: AnswerId(c.qid)},
 	}
-	crb := callReturnBuilder{ // Reuse on vat (this is running on the vat's main goroutine).
-		payload: payload{content: anyPointer{
-			isVoid: true, // Void result by default on non-error.
-		}},
-	}
+	crb := &v.crb // Reuse on vat (this is running on the vat's main goroutine).
+	crb.payload = payload{content: anyPointer{
+		isVoid: true, // Void result by default on non-error.
+	}}
 
 	rc.log.Trace().
 		Int("qid", int(c.qid)).
 		Int("eid", int(eid)).
 		Msg("Locally handling call")
 
-	err := exp.handler.Call(rc.ctx, callArgs, &crb)
+	err := exp.handler.Call(rc.ctx, callArgs, crb)
 	if ex, ok := err.(callExceptionError); ok {
 		// Turn the error into a returned exception.
 		reply.ret.isException = true
