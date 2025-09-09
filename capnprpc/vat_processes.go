@@ -204,6 +204,9 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 
 // processInMessage processes an incoming message from a remote Vat.
 func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
 	var err error
 	switch {
 	case msg.IsBootstrap():

@@ -36,7 +36,7 @@ type pipelineStep struct {
 
 	value sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
 
-	// Only accessed inside vat.Run().
+	// Only accessed by the pipeline's execution goroutine.
 	rpcMsg message
 }
 

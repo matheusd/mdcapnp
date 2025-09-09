@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/rs/zerolog"
 )
@@ -63,6 +64,7 @@ type runningConn struct {
 	// ids are set by the remote vat. Split table type into two
 	// (incoming/outgoing table) to protect from remote misuse and restrict
 	// API.
+	mu        sync.Mutex
 	questions table[QuestionId, question]
 	answers   table[AnswerId, answer]
 	imports   table[ImportId, imprt]

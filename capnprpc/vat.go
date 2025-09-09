@@ -25,9 +25,6 @@ type Vat struct {
 	newConn  chan *runningConn
 	connDone chan *runningConn
 
-	inMsg     chan inMsg
-	pipelines chan *pipeline
-
 	crb callReturnBuilder
 }
 
@@ -36,12 +33,10 @@ func NewVat(opts ...VatOption) *Vat {
 	cfg.applyOptions(opts...)
 
 	v := &Vat{
-		cfg:       cfg,
-		log:       cfg.vatLogger(),
-		newConn:   make(chan *runningConn),
-		connDone:  make(chan *runningConn),
-		inMsg:     make(chan inMsg),
-		pipelines: make(chan *pipeline, 5),
+		cfg:      cfg,
+		log:      cfg.vatLogger(),
+		newConn:  make(chan *runningConn),
+		connDone: make(chan *runningConn),
 	}
 	return v
 }
@@ -98,6 +93,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 			}
 		}
 
+		// Pipeline is running. Wait until the specific step is running.
 		parentStep := p.parent.Step(p.parentStepIdx)
 		parentStepState, parentStepVal, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
 		if err != nil {
@@ -108,13 +104,12 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		}
 	}
 
-	// Shortcicuit empty pipelines (caller is likely to wait on parent).
+	// Shortcircuit empty pipelines (caller is likely to wait on parent).
 	if p.isEmpty() {
 		return nil
 	}
 
 	// Prepare (as much as possible) messages for sending.
-	var lastStep *pipelineStep
 	for i := range p.numSteps() {
 		step := p.step(i)
 		step.rpcMsg = message{}
@@ -130,27 +125,9 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 				// TODO: params?
 			}
 		}
-		lastStep = step
 	}
 
-	// Send the pipeline for processing by the Vat's goroutine. This cashes
-	// out into Vat.startPipeline().
-	select {
-	case v.pipelines <- p:
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
-
-	// Wait until pipeline has started processing completely. This is
-	// signalled by the last step having been set as running.
-	stepState, stepVal, err := lastStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
-	if err != nil {
-		return err
-	}
-	if stepState == pipelineStepFailed {
-		return stepVal.err
-	}
-	return nil
+	return v.startPipeline(ctx, p) // TODO: bring this code here.
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -164,10 +141,10 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 				return err
 			}
 
-			select {
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			case v.inMsg <- inMsg{rc: rc, msg: msg}:
+			// Process input msg.
+			err = v.processInMessage(ctx, rc, msg)
+			if err != nil {
+				return err
 			}
 		}
 	})
@@ -177,7 +154,6 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 			select {
 			case mb := <-rc.outQueue:
 				err := rc.c.send(ctx, mb.msg, mb.remainingInBatch)
-				// TODO: return msg to Vat pool
 				if err != nil {
 					return err
 				}
@@ -232,6 +208,9 @@ func (v *Vat) stopConn(rc *runningConn) {
 // each step.
 func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 	v.log.Trace().Int("len", p.numSteps()).Msg("Starting pipeline")
+
+	p.conn.mu.Lock()
+	defer p.conn.mu.Unlock()
 
 	// Determine how the local Vat will change in response to this
 	// pipeline.
@@ -305,23 +284,6 @@ func (v *Vat) runStep(rs *vatRunState) error {
 	case oc := <-v.connDone:
 		v.stopConn(oc)
 		rs.delConn(oc)
-
-	case m := <-v.inMsg:
-		// Process input msg.
-		err := v.processInMessage(rs.ctx, m.rc, m.msg)
-		if err != nil {
-			m.rc.cancel(err)
-		}
-
-		// TODO: return m.msg to Vat's msg pool.
-
-	case pipe := <-v.pipelines:
-		err := v.startPipeline(rs.ctx, pipe)
-		if err != nil {
-			pipe.failAllSteps(err)
-
-			// Do some errors cause the Vat to error out?
-		}
 
 	case <-rs.ctx.Done():
 		return rs.ctx.Err()
