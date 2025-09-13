@@ -15,8 +15,7 @@ func (fs futureString) wait(ctx context.Context) (string, error) {
 	return waitResult(ctx, futureCap[string](fs))
 }
 
-type testAPICap struct{}
-type testAPI futureCap[testAPICap]
+type testAPI futureCap[capability]
 
 const testAPI_InterfaceID = 1000
 
@@ -27,10 +26,15 @@ func (fv futureVoid) Wait(ctx context.Context) error {
 	return err
 }
 
-const testAPI_VoidCallID = 101
+const testAPI_Void_CallID = 101
+const testAPI_GetAnotherAPI_CallID = 102
 
 func (api testAPI) VoidCall() futureVoid {
-	return futureVoid(remoteCall[testAPICap, struct{}](futureCap[testAPICap](api), testAPI_InterfaceID, testAPI_VoidCallID, nil))
+	return futureVoid(remoteCall[capability, struct{}](futureCap[capability](api), testAPI_InterfaceID, testAPI_Void_CallID, nil))
+}
+
+func (api testAPI) GetAnotherAPI() testAPI {
+	return testAPI(remoteCall[capability, capability](futureCap[capability](api), testAPI_InterfaceID, testAPI_GetAnotherAPI_CallID, nil))
 }
 
 func (api testAPI) GetUser(id string) testUser {
@@ -38,11 +42,17 @@ func (api testAPI) GetUser(id string) testUser {
 		_ = id
 		return nil
 	}
-	return testUser(remoteCall[testAPICap, testUserCap](futureCap[testAPICap](api), 1000, 10, pb))
+	return testUser(remoteCall[capability, testUserCap](futureCap[capability](api), 1000, 10, pb))
+}
+
+// Wait until this is resolved as a concrete, exported capability.
+func (api testAPI) Wait(ctx context.Context) error {
+	_, err := waitResult(ctx, futureCap[capability](api))
+	return err
 }
 
 func testAPIAsBootstrap(bt bootstrapCap) testAPI {
-	return testAPI(castBootstrap[testAPICap](bt))
+	return testAPI(castBootstrap[capability](bt))
 }
 
 type testUserCap struct{}

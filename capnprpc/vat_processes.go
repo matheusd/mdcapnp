@@ -72,19 +72,31 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	payload := ret.AsResults()
 	capTable := payload.CapTable()
 	for _, entry := range capTable {
-		if !entry.IsSenderHosted() {
-			return fmt.Errorf("only senderHosted capabilities supported")
+		var iid ImportId
+		var imp imprt
+		if entry.IsSenderHosted() {
+			iid = ImportId(entry.AsSenderHosted())
+			imp = imprt{typ: importTypeSenderHosted}
+		} else if entry.IsSenderPromise() {
+			iid = ImportId(entry.AsSenderPromise())
+			imp = imprt{typ: importTypeRemotePromise, pipe: q.pipe, stepIdx: q.stepIdx}
+		} else {
+			return fmt.Errorf("unsupported capability type")
 		}
-		iid := ImportId(entry.AsSenderHosted())
-		rc.imports.set(iid, imprt{typ: importTypeSenderHosted})
+
+		rc.imports.set(iid, imp)
 		rc.log.Debug().
 			Int("qid", int(qid)).
 			Int("iid", int(iid)).
-			Msg("Imported cap in Return as senderHosted")
+			Str("ityp", imp.typ.String()).
+			Msg("Imported cap contained in Return")
 	}
 
 	// Get contents of result.
 	var stepResult any
+	var stepResultPromise ExportId
+	var stepResultType string
+	var stepImportId ImportId
 	content := payload.Content()
 	if content.IsCapPointer() {
 		// NOT GOOD. Must have a new type to pass along instead of
@@ -94,18 +106,30 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		if int(capIndex) >= len(capTable) {
 			return fmt.Errorf("capability referenced index outside cap table")
 		}
-		stepResult = capability{eid: ExportId(capTable[capIndex].AsSenderHosted())}
+		capEntry := capTable[capIndex]
+		if capEntry.IsSenderHosted() {
+			stepImportId = ImportId(capEntry.AsSenderHosted())
+			stepResult = capability{eid: ExportId(stepImportId)}
+			stepResultType = "senderHostedCap"
+		} else if capEntry.IsSenderPromise() {
+			stepImportId = ImportId(capEntry.AsSenderPromise())
+			stepResultPromise = ExportId(stepImportId)
+			stepResultType = "senderPromise"
+		} else {
+			return errors.New("unknown cap entry type")
+		}
+
 	} else if content.IsStruct() {
 		// TODO: copy if its a struct? Or release serialized message if
 		// content is just a cap (because it's not needed anymore)?
 		stepResult = content.AsStruct()
+		stepResultType = "struct"
 	} else if content.IsVoid() {
 		stepResult = struct{}{}
+		stepResultType = "void"
 	} else {
 		return errors.New("unknown/unimplemented content type")
 	}
-
-	rc.log.Debug().Int("qid", int(qid)).Msg("Processed Return message")
 
 	// Fulfill pieline waiting for this result.
 	step := pipe.Step(q.stepIdx)
@@ -113,6 +137,19 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
 		}
+
+		rc.log.Debug().
+			Int("qid", int(qid)).
+			Str("rtyp", stepResultType).
+			Msg("Processed Return message")
+
+		ov.iid = stepImportId
+		if stepResultPromise > 0 {
+			// This step isn't resolved into a concrete exported
+			// cap or struct yet. Keep it running.
+			return os, ov, nil
+		}
+
 		ov.value = stepResult
 		return pipeStepStateDone, ov, nil
 	})
@@ -200,9 +237,30 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		reply.ret.pay = crb.payload
 
 		// Save this in the answers table.
-		//
-		// TODO: track all exported caps.
 		rc.answers.set(AnswerId(c.qid), answer{})
+
+		// Track all exported caps.
+		for _, cp := range crb.payload.capTable {
+			if !cp.hasExportId() {
+				continue
+			}
+			capEid := cp.exportId()
+			if capExp, ok := rc.exports.get(capEid); ok {
+				// TODO: take a pointer instead?
+				capExp.refCount++
+				rc.exports.set(capEid, capExp)
+			} else if cp.IsSenderPromise() { // here sender == local vat.
+				capExp = export{typ: exportTypePromise, refCount: 1}
+				rc.exports.set(capEid, capExp)
+
+				rc.log.Trace().
+					Int("eid", int(capEid)).
+					Str("typ", "senderPromise").
+					Msg("Exporting capability")
+			} else {
+				return errors.New("other types of exports not implemented")
+			}
+		}
 
 		rc.log.Debug().
 			Int("qid", int(c.qid)).
@@ -234,6 +292,67 @@ func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) er
 	return err
 }
 
+func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) error {
+	iid := ImportId(res.pid)
+	imp, ok := rc.imports.get(iid)
+	if !ok {
+		return fmt.Errorf("import id %d not found", iid)
+	}
+
+	if imp.typ != importTypeRemotePromise {
+		return fmt.Errorf("import %d is not a remote promise to be resolved", iid)
+	}
+
+	pipe := imp.pipe.Value()
+	if pipe == nil {
+		// Pipeline already canceled?
+		return fmt.Errorf("pipeline of import %d already released", iid)
+	}
+
+	// Similar to code in processReturn. Unify?
+	capEntry := res.cap
+	var resolveCap capability
+	var resolvePromise ExportId
+	var resolveId ImportId
+	var resImport imprt
+	if capEntry.IsSenderHosted() {
+		// Resolved into a remote capability.
+		resolveCap = capability{eid: ExportId(capEntry.AsSenderHosted())}
+		resolveId = ImportId(capEntry.AsSenderHosted())
+		resImport = imprt{typ: importTypeSenderHosted}
+	} else if capEntry.IsSenderPromise() {
+		// Resolved into another remote promise.
+		resolvePromise = capEntry.AsSenderPromise()
+		resolveId = ImportId(resolvePromise)
+		resImport = imprt{typ: importTypeRemotePromise, pipe: imp.pipe, stepIdx: imp.stepIdx}
+	} else {
+		return errors.New("unknown cap entry type")
+	}
+
+	step := pipe.Step(imp.stepIdx)
+	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os != pipeStepStateRunning {
+			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
+		}
+
+		rc.log.Debug().
+			Int("iid", int(iid)).
+			Int("resIid", int(resolveId)).
+			Str("resTyp", resImport.typ.String()).
+			Msg("Resolved remote promise")
+
+		ov.iid = resolveId
+		if resolvePromise > 0 {
+			// This step isn't resolved into a concrete exported
+			// cap or struct yet. Keep it running.
+			return os, ov, nil
+		}
+
+		ov.value = resolveCap
+		return pipeStepStateDone, ov, nil
+	})
+}
+
 // processInMessage processes an incoming message from a remote Vat.
 func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
 	rc.mu.Lock()
@@ -249,6 +368,8 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 		err = v.processCall(ctx, rc, msg.AsCall())
 	case msg.IsFinish():
 		err = v.processFinish(ctx, rc, msg.AsFinish())
+	case msg.IsResolve():
+		err = v.processResolve(ctx, rc, msg.AsResolve())
 	case msg.testEcho != 0:
 		rc.queue(ctx, singleMsgBatch(msg))
 	default:
@@ -330,16 +451,29 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			if parentStepState == pipelineStepFailed {
 				return 0, parentStepVal.err
 			}
-			parentQid := parentStepVal.qid
-			step.rpcMsg.call.target = messageTarget{
-				isPromisedAnswer: true,
-				pans:             promisedAnswer{qid: parentQid},
-			}
 
-			conn.log.Debug().
-				Int("qid", int(thisQid)).
-				Int("pans", int(parentQid)).
-				Msg("Prepared call for parent pipeline promised answer")
+			if parentStepVal.iid > 0 {
+				step.rpcMsg.call.target = messageTarget{
+					isImportedCap: true,
+					impcap:        parentStepVal.iid,
+				}
+
+				conn.log.Debug().
+					Int("qid", int(thisQid)).
+					Int("iid", int(parentStepVal.iid)).
+					Msg("Prepared call for exported cap")
+			} else {
+				parentQid := parentStepVal.qid
+				step.rpcMsg.call.target = messageTarget{
+					isPromisedAnswer: true,
+					pans:             promisedAnswer{qid: parentQid},
+				}
+
+				conn.log.Debug().
+					Int("qid", int(thisQid)).
+					Int("pans", int(parentQid)).
+					Msg("Prepared call for parent pipeline promised answer")
+			}
 		}
 	}
 
@@ -395,6 +529,21 @@ func (v *Vat) sendFinish(ctx context.Context, rc *runningConn, qid QuestionId) e
 	msg := message{
 		isFinish: true,
 		finish:   finish{qid: qid},
+	}
+
+	return rc.queue(ctx, singleMsgBatch(msg))
+}
+
+func (v *Vat) sendResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
+	msg := message{
+		isResolve: true,
+		resolve:   resolve{pid: eid},
+	}
+
+	if resolution.typ == exportTypePromise {
+		msg.resolve.cap.senderPromise = exp.resolvedToExport
+	} else if resolution.typ == exportTypeLocallyHosted {
+		msg.resolve.cap.senderHosted = exp.resolvedToExport
 	}
 
 	return rc.queue(ctx, singleMsgBatch(msg))

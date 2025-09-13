@@ -129,6 +129,8 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 		exports:   makeTable[ExportId, export](),
 	}
 
+	rc.crb.rc = rc
+
 	// TODO: prepare boot message.
 	rc.boot.pipe.vat = v
 	rc.boot.pipe.conn = rc

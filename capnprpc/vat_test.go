@@ -138,6 +138,66 @@ func TestVoidCallBothSides(t *testing.T) {
 	// TODO: verify answers were deleted.
 }
 
+// TestRemotePromiseWithCap performs a basic level 1 test (resolving a remote
+// promise with a capability).
+func TestRemotePromiseWithCap(t *testing.T) {
+	var callHandled atomic.Bool
+	callHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+		if !callHandled.CompareAndSwap(false, true) {
+			return errors.New("already called")
+		}
+		return nil
+	})
+
+	resolvePromiseChan := make(chan struct{}, 1)
+	resolveErrChan := make(chan error, 1)
+	bootHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+		ap, err := rb.respondAsPromise()
+		if err != nil {
+			return err
+		}
+
+		go func() {
+			<-resolvePromiseChan
+			resolveErrChan <- ap.resolveToHandler(callHandler)
+		}()
+		return nil
+	})
+
+	// Setup harness.
+	th := newTestHarness(t)
+	c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(bootHandler))
+	cc, _ := th.connectVats(c, s)
+
+	// Wait for bootstrap to complete to ease log reviewing.
+	api := testAPIAsBootstrap(cc.Bootstrap())
+	require.NoError(t, api.Wait(testctx.New(t)))
+
+	// Make a call that returns a capability.
+	getCapErrChan := make(chan error, 1)
+	getCapCall := api.GetAnotherAPI()
+	go func() {
+		getCapErrChan <- getCapCall.Wait(testctx.New(t))
+	}()
+
+	// Call isn't done yet (waiting on remote promise).
+	chantest.AssertNoRecv(t, getCapErrChan)
+
+	// Resolve.
+	chantest.AssertSend(t, resolvePromiseChan, struct{}{})
+	gotResolveErr := chantest.AssertRecv(t, resolveErrChan)
+	require.Nil(t, gotResolveErr)
+
+	// Call should complete.
+	gotVoidErr := chantest.AssertRecv(t, getCapErrChan)
+	require.Nil(t, gotVoidErr)
+
+	// Call a method on the returned capability. Could've been pipelined,
+	// but we're assessing resolution in this test, not pipelining.
+	require.NoError(t, getCapCall.VoidCall().Wait(testctx.New(t)))
+	require.True(t, callHandled.Load())
+}
+
 // BenchmarkVatRunOverhead benchmarks the overhead of a step in Run().
 func BenchmarkVatRunOverhead(b *testing.B) {
 	b.Run("single", func(b *testing.B) {

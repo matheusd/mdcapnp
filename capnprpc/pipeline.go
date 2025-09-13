@@ -24,6 +24,7 @@ const (
 
 type pipelineStepStateValue struct {
 	qid   QuestionId   // Set if step state is >= running.
+	iid   ImportId     // Set if this has been resolved into an import (either hosted or promise)
 	value any          // Set if step state is >= done.
 	err   error        // Set if step state is >= failed.
 	conn  *runningConn // May be changed as step is resolved (3PH).
