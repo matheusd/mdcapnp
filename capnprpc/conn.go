@@ -60,6 +60,8 @@ type runningConn struct {
 
 	outQueue chan outMsg
 
+	crb callReturnBuilder
+
 	// TODO: question and export IDs are set by local vat, answer and import
 	// ids are set by the remote vat. Split table type into two
 	// (incoming/outgoing table) to protect from remote misuse and restrict
@@ -102,10 +104,12 @@ func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
 		return
 	}
 
-	rc.mu.Lock()
-	// TODO: send Finish
-	rc.questions.del(qid)
-	rc.mu.Unlock()
+	err := rc.vat.sendFinish(rc.ctx, rc, qid)
+	if err != nil {
+		rc.log.Err(err).Int("qid", int(qid)).Msg("Error sending Finish")
+	} else {
+		rc.log.Debug().Int("qid", int(qid)).Msg("Sent Finish")
+	}
 }
 
 func newRunningConn(c conn, v *Vat) *runningConn {
@@ -118,7 +122,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 		boot: bootstrapCap(newRootFutureCap[capability](1)),
 
-		outQueue:  make(chan outMsg, 1000), // TODO: Parametrize buffer size.
+		outQueue:  make(chan outMsg, 40000), // TODO: Parametrize buffer size.
 		questions: makeTable[QuestionId, question](),
 		answers:   makeTable[AnswerId, answer](),
 		imports:   makeTable[ImportId, imprt](),

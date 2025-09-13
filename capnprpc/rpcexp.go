@@ -100,6 +100,12 @@ type bootstrap struct {
 
 func (bt *bootstrap) QuestionId() QuestionId { return bt.qid }
 
+type finish struct {
+	qid QuestionId
+}
+
+func (f *finish) QuestionId() QuestionId { return f.qid }
+
 type message struct { // RPC message type
 	isBootstrap bool
 	boot        bootstrap
@@ -107,6 +113,8 @@ type message struct { // RPC message type
 	ret         rpcReturn
 	isCall      bool
 	call        call
+	isFinish    bool
+	finish      finish
 
 	testEcho uint64 // Special test message.
 }
@@ -118,6 +126,8 @@ func (m *message) IsReturn() bool                           { return m.isReturn 
 func (m *message) AsReturn() rpcReturn                      { return m.ret }
 func (m *message) IsCall() bool                             { return m.isCall }
 func (m *message) AsCall() call                             { return m.call }
+func (m *message) IsFinish() bool                           { return m.isFinish }
+func (m *message) AsFinish() finish                         { return m.finish }
 
 type interfaceId uint64
 type methodId uint16

@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -113,13 +114,28 @@ func TestVoidCallBothSides(t *testing.T) {
 
 	// First call.
 	api := testAPIAsBootstrap(cc.Bootstrap())
-	err := api.VoidCall().Wait(testctx.New(t))
+	voidCall1 := api.VoidCall()
+	err := voidCall1.Wait(testctx.New(t))
 	require.NoError(t, err)
 	require.True(t, called.Load())
 
 	// Second call (bootstrap should be an export already).
-	err = api.VoidCall().Wait(testctx.New(t))
+	voidCall2 := api.VoidCall()
+	err = voidCall2.Wait(testctx.New(t))
 	require.NoError(t, err)
+
+	// TODO: verify questions and answers still exist.
+
+	// After this point, voidCall1 and voidCall2 are not used anymore,
+	// so they are free to be released.
+	runtime.KeepAlive(voidCall2)
+	runtime.KeepAlive(voidCall1)
+	t.Logf("voidcall1 and voidcall2 no longer referenced")
+
+	runtime.GC()
+	time.Sleep(500 * time.Millisecond)
+
+	// TODO: verify answers were deleted.
 }
 
 // BenchmarkVatRunOverhead benchmarks the overhead of a step in Run().

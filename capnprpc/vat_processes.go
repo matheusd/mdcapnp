@@ -155,7 +155,6 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		return fmt.Errorf("unsupported export type %d", exp.typ)
 	}
 
-	// Make the call!
 	callArgs := callHandlerArgs{
 		iid:    interfaceId(c.iid),
 		mid:    methodId(c.mid),
@@ -168,7 +167,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		isReturn: true,
 		ret:      rpcReturn{aid: AnswerId(c.qid)},
 	}
-	crb := &v.crb // Reuse on vat (this is running on the vat's main goroutine).
+	crb := &rc.crb // Ok to reuse (rc is locked).
 	crb.payload = payload{content: anyPointer{
 		isVoid: true, // Void result by default on non-error.
 	}}
@@ -178,6 +177,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		Int("eid", int(eid)).
 		Msg("Locally handling call")
 
+	// Make the call!
 	err := exp.handler.Call(rc.ctx, callArgs, crb)
 	if ex, ok := err.(callExceptionError); ok {
 		// Turn the error into a returned exception.
@@ -199,7 +199,10 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		reply.ret.isResults = true
 		reply.ret.pay = crb.payload
 
-		// TODO: Save this in the answers table.
+		// Save this in the answers table.
+		//
+		// TODO: track all exported caps.
+		rc.answers.set(AnswerId(c.qid), answer{})
 
 		rc.log.Debug().
 			Int("qid", int(c.qid)).
@@ -207,9 +210,28 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 			Msg("Processed call into payload result")
 	}
 
-	// TODO: Go through capDescriptors and setup exports.
-
 	return rc.queue(ctx, singleMsgBatch(reply))
+}
+
+func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) error {
+	var err error
+	aid := AnswerId(fin.qid)
+
+	if !rc.answers.has(aid) {
+		err = fmt.Errorf("answer %d not in answers table", aid)
+	} else {
+		rc.answers.del(AnswerId(fin.qid))
+	}
+
+	// TODO: release exported caps?
+
+	if err == nil {
+		rc.log.Debug().
+			Int("aid", int(aid)).
+			Msg("Removed answer due to Finish message")
+	}
+
+	return err
 }
 
 // processInMessage processes an incoming message from a remote Vat.
@@ -225,6 +247,8 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 		err = v.processReturn(ctx, rc, msg.AsReturn())
 	case msg.IsCall():
 		err = v.processCall(ctx, rc, msg.AsCall())
+	case msg.IsFinish():
+		err = v.processFinish(ctx, rc, msg.AsFinish())
 	case msg.testEcho != 0:
 		rc.queue(ctx, singleMsgBatch(msg))
 	default:
@@ -361,4 +385,17 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 	}
 
 	return nil
+}
+
+func (v *Vat) sendFinish(ctx context.Context, rc *runningConn, qid QuestionId) error {
+	rc.mu.Lock()
+	rc.questions.del(qid)
+	rc.mu.Unlock()
+
+	msg := message{
+		isFinish: true,
+		finish:   finish{qid: qid},
+	}
+
+	return rc.queue(ctx, singleMsgBatch(msg))
 }

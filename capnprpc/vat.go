@@ -24,8 +24,6 @@ type Vat struct {
 
 	newConn  chan *runningConn
 	connDone chan *runningConn
-
-	crb callReturnBuilder
 }
 
 func NewVat(opts ...VatOption) *Vat {
