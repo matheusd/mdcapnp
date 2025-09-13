@@ -92,6 +92,22 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 	}
 }
 
+func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
+	if rc == nil {
+		return
+	}
+
+	// Early check to see if conn is still running.
+	if rc.ctx.Err() != nil {
+		return
+	}
+
+	rc.mu.Lock()
+	// TODO: send Finish
+	rc.questions.del(qid)
+	rc.mu.Unlock()
+}
+
 func newRunningConn(c conn, v *Vat) *runningConn {
 	log := v.log.With().Str("remote", c.remoteName()).Logger()
 

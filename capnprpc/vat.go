@@ -191,14 +191,15 @@ func (v *Vat) stopConn(rc *runningConn) {
 
 	// Every non-answered question is answered with an error.
 	for qid, q := range rc.questions.entries {
-		if q.pipe != nil {
+		pipe := q.pipe.Value()
+		if pipe != nil {
 			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
-			q.pipe.mu.Lock()
-			q.pipe.state = pipelineStateConnDone
-			for i := range q.pipe.numSteps() {
-				q.pipe.step(i).value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
+			pipe.mu.Lock()
+			pipe.state = pipelineStateConnDone
+			for i := range pipe.numSteps() {
+				pipe.step(i).value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
 			}
-			q.pipe.mu.Unlock()
+			pipe.mu.Unlock()
 		}
 	}
 }
@@ -306,9 +307,6 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 
 		// Remove every remaining conn.
 		for _, rc := range rs.conns {
-			if rc == nil {
-				panic("XXXXX rc is nil here")
-			}
 			v.stopConn(rc)
 		}
 

@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"weak"
 
 	"github.com/rs/zerolog"
 )
@@ -55,6 +57,14 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		return fmt.Errorf("only results supported")
 	}
 
+	pipe := q.pipe.Value()
+	if pipe == nil {
+		// This pipeline isn't used anymore (was released and a Finish
+		// should've been sent, or will be shortly), so nothing to do.
+		rc.log.Debug().Int("qid", int(qid)).Msg("Received Return message for released pipeline")
+		return nil
+	}
+
 	// Go through cap table, modify imports table based on what was
 	// exported by this call.
 	//
@@ -98,7 +108,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	rc.log.Debug().Int("qid", int(qid)).Msg("Processed Return message")
 
 	// Fulfill pieline waiting for this result.
-	step := q.pipe.Step(q.stepIdx)
+	step := pipe.Step(q.stepIdx)
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
@@ -321,11 +331,9 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 	var qid QuestionId
 	var q question
 	if step.rpcMsg.isBootstrap {
-		q = question{pipe: pipe, stepIdx: stepIdx}
 		qid = step.rpcMsg.boot.qid
 		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Bootstrap message")
 	} else if step.rpcMsg.isCall {
-		q = question{pipe: pipe, stepIdx: stepIdx}
 		qid = step.rpcMsg.call.qid
 		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Call message")
 	} else {
@@ -333,6 +341,9 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 		return errors.New("unimplemented commitment of message")
 	}
 
+	// runtime.AddCleanup(step, conn.cleanupQuestionIdDueToUnref, qid) // TODO: Save cleanup in question in case of early finish?
+	runtime.SetFinalizer(step, finalizePipelineStep)
+	q = question{pipe: weak.Make(pipe), stepIdx: stepIdx}
 	conn.questions.set(qid, q)
 
 	// This step is now in flight. Allow forks from it to start. The forks
@@ -344,6 +355,7 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 				return os, ov, fmt.Errorf("invalid precondition state: %v", os)
 			}
 			ov.qid = qid
+			ov.conn = pipe.conn // TODO: set this earlier in the call stack.
 			return pipeStepStateRunning, ov, nil
 		})
 	}

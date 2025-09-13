@@ -42,6 +42,10 @@ func (t *table[T, U]) get(id T) (res U, ok bool) {
 	return
 }
 
+func (t *table[T, U]) del(id T) {
+	delete(t.entries, id)
+}
+
 func (t *table[T, U]) has(id T) bool {
 	_, ok := t.entries[id]
 	return ok

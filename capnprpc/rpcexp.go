@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"context"
 	"fmt"
+	"weak"
 
 	"matheusd.com/mdcapnp/capnpser"
 )
@@ -190,7 +191,7 @@ type ExportId uint32
 type ImportId uint32
 
 type question struct {
-	pipe    *pipeline
+	pipe    weak.Pointer[pipeline]
 	stepIdx int
 }
 

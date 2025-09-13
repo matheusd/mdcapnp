@@ -138,6 +138,14 @@ func (s *Stateful[S, V]) Modify(f func(oldState S, oldValue V) (newState S, newV
 	return
 }
 
+// Get returns the current state and value.
+func (s *Stateful[S, V]) Get() (state S, value V) {
+	s.mu.Lock()
+	state, value = s.state, s.value
+	s.mu.Unlock()
+	return
+}
+
 func (s *Stateful[S, V]) addWaiter() *stateChangeWaiter[S, V] {
 	c := make(chan stateChangeEvent[S, V], 1) // Channel MUST be buffered.
 	s.waiters = append(s.waiters, stateChangeWaiter[S, V]{c: c})

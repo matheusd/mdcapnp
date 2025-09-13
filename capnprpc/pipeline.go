@@ -23,9 +23,10 @@ const (
 )
 
 type pipelineStepStateValue struct {
-	qid   QuestionId // Set if step state is >= running.
-	value any        // Set if step state is >= done.
-	err   error      // Set if step state is >= failed.
+	qid   QuestionId   // Set if step state is >= running.
+	value any          // Set if step state is >= done.
+	err   error        // Set if step state is >= failed.
+	conn  *runningConn // May be changed as step is resolved (3PH).
 }
 
 type pipelineStep struct {
@@ -40,6 +41,11 @@ type pipelineStep struct {
 	rpcMsg message
 }
 
+func finalizePipelineStep(step *pipelineStep) {
+	_, value := step.value.Get()
+	value.conn.cleanupQuestionIdDueToUnref(value.qid)
+}
+
 type pipelineState uint
 
 const (
@@ -50,10 +56,10 @@ const (
 )
 
 type pipeline struct {
+	first pipelineStep
 	// mu protects the following fields.
 	mu    sync.Mutex
 	state pipelineState
-	first pipelineStep
 	steps []*pipelineStep
 
 	// Only set on pipeline creation.
