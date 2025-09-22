@@ -225,7 +225,7 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 	// queue for this conn is full.
 	for i := range p.numSteps() {
 		step := p.step(i)
-		err := p.conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
+		err := step.conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
 		if err != nil {
 			return err
 		}

@@ -37,6 +37,23 @@ type conn interface {
 	// receiveMsg(context.Context) (*message, error)
 }
 
+type ConnectionAndProvisionId struct {
+	connection *runningConn
+	provision  provisionId
+}
+
+type connAndProvisionPromise struct {
+	capId thirdPartyCapDescriptor
+}
+
+func (cpp *connAndProvisionPromise) isWaiting() bool {
+	return cpp.capId.vineId > 0 // FIXME: not a great way to track this.
+}
+
+func (cpp *connAndProvisionPromise) Wait(ctx context.Context) (ConnectionAndProvisionId, error) {
+	panic("todo")
+}
+
 var errConnDone = errors.New("conn is done")
 
 // runningConn is a connection that is running to another vat.
@@ -74,6 +91,10 @@ type runningConn struct {
 
 	ctx    context.Context
 	cancel func(error) // Closes runningConn.
+}
+
+func (rc *runningConn) String() string {
+	return rc.c.remoteName()
 }
 
 func (rc *runningConn) queue(ctx context.Context, m outMsg) error {

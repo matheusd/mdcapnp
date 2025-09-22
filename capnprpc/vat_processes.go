@@ -35,7 +35,7 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message
 
 	// Modify answer table to track the bootrap export. bootExportId is set
 	// during conn setup automatically.
-	rc.answers.set(AnswerId(bootMsg.qid), answer{eid: rc.bootExportId})
+	rc.answers.set(AnswerId(bootMsg.qid), answer{typ: answerTypeBootstrap, eid: rc.bootExportId})
 
 	rc.log.Debug().
 		Int("qid", int(bootMsg.qid)).
@@ -163,6 +163,10 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		return errCallWithoutId
 	}
 
+	if rc.answers.has(AnswerId(c.qid)) {
+		return fmt.Errorf("remote already asked question %d", c.qid)
+	}
+
 	// Determine the target of this call (either an exported cap or a
 	// promised answer).
 	var eid ExportId
@@ -191,6 +195,8 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 	if exp.typ != exportTypeLocallyHosted {
 		return fmt.Errorf("unsupported export type %d", exp.typ)
 	}
+
+	// TODO: proxy calls when exp.typ == exportTypeThirdPartyExport.
 
 	callArgs := callHandlerArgs{
 		iid:    interfaceId(c.iid),
@@ -237,7 +243,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		reply.ret.pay = crb.payload
 
 		// Save this in the answers table.
-		rc.answers.set(AnswerId(c.qid), answer{})
+		rc.answers.set(AnswerId(c.qid), answer{typ: answerTypeCall})
 
 		// Track all exported caps.
 		for _, cp := range crb.payload.capTable {
@@ -292,6 +298,133 @@ func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) er
 	return err
 }
 
+func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipeline, stepIdx int,
+	srcConn *runningConn, newConnPromise connAndProvisionPromise) error {
+
+	// TODO: actually ask the vat to connect. Wait for connection to
+	// complete or error out. In case of error, fail this step.
+	// NOTE: multiple steps may be waiting for a connection to the same
+	// remote.
+	connAndProvision, err := newConnPromise.Wait(ctx)
+	if err != nil {
+		// TODO: mark pipeline step as failed.
+		return err
+	}
+
+	rc := connAndProvision.connection
+
+	v.log.Trace().
+		Str("src", srcConn.String()).
+		Str("dst", rc.String()).
+		Msg("Shortening path after 3PH introduction")
+
+	// Send Accept() with embargo set to the new remote.
+	rc.mu.Lock()
+	acceptQid, ok := rc.questions.nextID()
+	if !ok {
+		// TODO: Mark pipeline step as failed.
+		rc.mu.Unlock()
+		return errTooManyOpenQuestions
+	}
+	rc.mu.Unlock()
+	accept := message{isAccept: true, accept: accept{
+		qid:       acceptQid,
+		provision: connAndProvision.provision,
+
+		// In the future, this could be dynamically determined, because
+		// the local vat can know whether there are pending pipelined
+		// calls or not.
+		embargo: true,
+	}}
+	if err := rc.queue(ctx, singleMsgBatch(accept)); err != nil {
+		// TODO: mark pipeline step failed.
+		return err
+	}
+
+	// TODO: wait until Accept is actually outbound (as opposed to simply
+	// queued). This is necessary to ensure correctness of operations.
+	// Accept MUST reach the remote end of the new conn BEFORE a Disembargo
+	// is proxied through srcConn, otherwise ordering is not guaranteed. In
+	// the mean time, any pipelined calls continue to be proxied through
+	// srcConn.
+
+	// From now on, any calls pipelined on this step will go directly to the
+	// third party (path has shortened!).
+	step := pipe.Step(stepIdx)
+	var disembargoTarget messageTarget
+	err = step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os == pipelineStepFailed {
+			return os, ov, ov.err
+		}
+
+		// Sanity check.
+		if ov.conn != srcConn {
+			return os, ov, fmt.Errorf("unexpected conn: wanted conn to %s but got %s",
+				srcConn, ov.conn)
+		}
+
+		if ov.iid > 0 {
+			// Already received the Return for the original call,
+			// the Return was for a remote promise and that remote
+			// promise has now resolved to a third party.
+			disembargoTarget.isImportedCap = true
+			disembargoTarget.impcap = ov.iid
+			v.log.Info().
+				Int("iid", int(ov.iid)).
+				Str("src", srcConn.String()).
+				Str("dst", rc.String()).
+				Int("acceptId", int(acceptQid)).
+				Msg("Path-shortened imported cap pipeline step to third party")
+		} else {
+			// The Return (for a promised answer) already signalled
+			// that the returned cap is in a third party.
+			disembargoTarget.isPromisedAnswer = true
+			disembargoTarget.pans.qid = ov.qid
+			v.log.Info().
+				Int("srcQid", int(ov.qid)).
+				Str("src", srcConn.String()).
+				Str("dst", rc.String()).
+				Int("acceptId", int(acceptQid)).
+				Msg("Path-shortened promised answer pipeline step to third party")
+		}
+
+		ov.conn = rc
+		ov.qid = acceptQid
+		return os, ov, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Pipelined calls made from this moment on will be sent to the third
+	// party as a promised answer to the Accept. However, those calls will
+	// be cached there, until the Disembargo travels through the proxy
+	// (signalling that all previously pipelined calls were sent).
+
+	// If accept did not signal existence of embargoed pipelined calls,
+	// Disembargo isn't needed.
+	if !accept.accept.embargo {
+		return nil
+	}
+
+	// Queue the Disembargo in the old conn, which will travese the network
+	// all the way to the third party. This will make the third party
+	// process the calls sent directly from the local vat (as opposed to
+	// those proxied by the original conn).
+	dis := message{isDisembargo: true, disembargo: disembargo{
+		isAccept: true,
+		target:   disembargoTarget,
+	}}
+	if err := srcConn.queue(ctx, singleMsgBatch(dis)); err != nil {
+		return err
+	}
+
+	// Only thing left to complete 3PH now is wait for the Return message
+	// that completes the Accept call above.
+
+	return nil
+}
+
 func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) error {
 	iid := ImportId(res.pid)
 	imp, ok := rc.imports.get(iid)
@@ -325,6 +458,21 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		resolvePromise = capEntry.AsSenderPromise()
 		resolveId = ImportId(resolvePromise)
 		resImport = imprt{typ: importTypeRemotePromise, pipe: imp.pipe, stepIdx: imp.stepIdx}
+	} else if capEntry.IsThirdPartyHosted() {
+		// TODO ask vat to call ConnectToIntroduced(). Get back
+		// a promise to the connection (connAndProvisionPromise).
+		// TODO: If this is only level 1, use vineId instead and proxy
+		// requests.
+		cpp := connAndProvisionPromise{capId: capEntry.AsThirdPartyHosted()}
+		go v.resolveThirdPartyCapForPipeStep(ctx, pipe, imp.stepIdx, rc, cpp)
+
+		// This doesn't change the pipeline step (promise). Any
+		// pipelined calls will be proxied through the existing conn
+		// until 3PH completes.
+		//
+		// Maybe in the future this could be changed to optinally
+		// cache calls locally until 3PH completes.
+		return nil
 	} else {
 		return errors.New("unknown cap entry type")
 	}
@@ -353,6 +501,176 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 	})
 }
 
+func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide) error {
+	aid := AnswerId(prov.qid)
+	if rc.answers.has(aid) {
+		return fmt.Errorf("remote already asked question %d", aid)
+	}
+
+	// Check if the target exists exported to the caller.
+	if prov.target.isImportedCap {
+		if !rc.exports.has(ExportId(prov.target.impcap)) {
+			return fmt.Errorf("export not found %d", prov.target.impcap)
+		}
+	} else if prov.target.isPromisedAnswer {
+		if !rc.answers.has(AnswerId(prov.target.pans.qid)) {
+			return fmt.Errorf("answer not found %d", prov.target.pans.qid)
+		}
+	} else {
+		return errors.New("unknown message target")
+	}
+
+	// TODO
+	// Prepare vat to receive a new conn from the recipient and for them to
+	// send an Accept message with the given recipient id.
+	rc.answers.set(aid, answer{typ: answerTypeProvide})
+
+	return nil
+}
+
+func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) error {
+	aid := AnswerId(ac.qid)
+	if rc.answers.has(aid) {
+		return fmt.Errorf("remote already asked question %d", aid)
+	}
+
+	// TODO: find the matching recipientId. Check if it exists, which
+	// srcConn it refers to and which capability.
+	var srcConn *runningConn
+	var target messageTarget
+	var provideAid AnswerId
+
+	// Check if the target still exists exported to srcConn. Determine if
+	// this is a capability or a promise to a capability.
+	//
+	// TODO: not safe to lock srcConn here. Can lead to deadlocks. Maybe
+	// this should be moved upwards, so that this information is stored and
+	// then returned by whatever returns srcConn.
+	var err error
+	var handler callHandler
+	srcConn.mu.Lock()
+	if target.isImportedCap {
+		exp, hasExp := srcConn.exports.get(ExportId(target.impcap))
+		if !hasExp {
+			err = fmt.Errorf("export not found %d", target.impcap)
+		}
+
+		handler = exp.handler
+	} else if target.isPromisedAnswer {
+		if !srcConn.answers.has(AnswerId(target.pans.qid)) {
+			err = fmt.Errorf("answer not found %d", target.pans.qid)
+		}
+	} else {
+		err = errors.New("unknown message target")
+	}
+	srcConn.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// TODO: support 3PH into promises and not just capabilities.
+	if handler == nil {
+		return errors.New("3PH only supported for exports")
+	}
+
+	// Add the export to the new conn.
+	eid, ok := rc.exports.nextID()
+	if !ok {
+		return errTooManyExports
+	}
+	rc.exports.set(eid, export{typ: exportTypeLocallyHosted, handler: handler, refCount: 1})
+	rc.answers.set(aid, answer{typ: answerTypeAccept, eid: eid})
+
+	// Send the Return that corresponds to the Accept to the newly
+	// introduced conn. This is the picked up capability (previously
+	// exported in srcConn).
+	retAccept := message{isReturn: true, ret: rpcReturn{
+		aid:       aid,
+		isResults: true,
+		pay: payload{
+			content:  anyPointer{isCapPointer: true, cp: capPointer{index: 0}},
+			capTable: []capDescriptor{{senderHosted: eid}},
+		},
+	}}
+	if err := rc.queue(ctx, singleMsgBatch(retAccept)); err != nil {
+		return err
+	}
+
+	// Finally, send the Return to srcConn that corresponds to the Provide.
+	// This lets the srcConn remote know that the new conn picked up the
+	// capability.
+	//
+	// TODO: Maybe send in new goroutine?
+	retProvide := message{isReturn: true, ret: rpcReturn{
+		aid:       provideAid,
+		isResults: true,
+		pay: payload{
+			content: anyPointer{isVoid: true},
+		},
+	}}
+	return srcConn.queue(ctx, singleMsgBatch(retProvide))
+}
+
+func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis disembargo) error {
+	if !dis.target.isImportedCap {
+		return fmt.Errorf("only disembargos of exports supported for now") // FIXME
+	}
+
+	exp, hasExp := rc.exports.get(ExportId(dis.target.impcap))
+	if !hasExp {
+		return errors.New("received disembargo for unknwon export")
+	}
+	if exp.typ != exportTypeThirdPartyExport {
+		return errors.New("received for disembargo on export that is not a third party export")
+	}
+
+	// Forward disembargo to third party.
+	disProvide := message{isDisembargo: true, disembargo: disembargo{
+		isProvide: true,
+		provide:   exp.thirdPartyProvideQid,
+	}}
+	if err := exp.thirdPartyRC.queue(ctx, singleMsgBatch(disProvide)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (v *Vat) processDisembargoProvide(ctx context.Context, rc *runningConn, dis disembargo) error {
+	ans, ok := rc.answers.get(AnswerId(dis.provide))
+	if !ok {
+		return fmt.Errorf("received disembargo.provide for unknown question id %d", dis.provide)
+	}
+
+	if ans.typ != answerTypeProvide {
+		return fmt.Errorf("received disembargo.provide for answer %d that is not provide", dis.provide)
+	}
+
+	// TODO: answer has to track the resulting conn and export id of the
+	// Accepted cap.
+	var resConn *runningConn
+	var resEid ExportId
+	_, _ = resConn, resEid
+
+	// TODO: Return the results of proxied pipelined calls from rc to
+	// resConn.
+
+	// TODO: start processing cached (embargoed) pipelined calls that came
+	// directly from resConn and return their response.
+
+	return nil
+}
+
+func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis disembargo) error {
+	if dis.isAccept {
+		return v.processDisembargoAccept(ctx, rc, dis)
+	} else if dis.isProvide {
+		return v.processDisembargoProvide(ctx, rc, dis)
+	} else {
+		return errors.New("unknown disembargo action")
+	}
+}
+
 // processInMessage processes an incoming message from a remote Vat.
 func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
 	rc.mu.Lock()
@@ -370,6 +688,12 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 		err = v.processFinish(ctx, rc, msg.AsFinish())
 	case msg.IsResolve():
 		err = v.processResolve(ctx, rc, msg.AsResolve())
+	case msg.IsProvide():
+		err = v.processProvide(ctx, rc, msg.AsProvide())
+	case msg.IsAccept():
+		err = v.processAccept(ctx, rc, msg.AsAccept())
+	case msg.IsDisembargo():
+		err = v.processDisembargo(ctx, rc, msg.AsDisembargo())
 	case msg.testEcho != 0:
 		rc.queue(ctx, singleMsgBatch(msg))
 	default:
@@ -388,19 +712,20 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 }
 
 var errTooManyOpenQuestions = errors.New("too many open questions")
+var errTooManyExports = errors.New("too many exports")
 
 // prepareOutMessage prepares an outgoing Message message that is part of a
 // pipeline to be sent to the remote Vat.
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
 func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
-	stepIdx int, prevQid QuestionId) (thisQid QuestionId, err error) {
+	stepIdx int, parentQid QuestionId) (thisQid QuestionId, err error) {
 
 	var ok bool
 
 	step := pipe.step(stepIdx)
-	conn := pipe.conn
 	if step.rpcMsg.IsBootstrap() {
+		conn := pipe.conn
 		if thisQid, ok = conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
@@ -409,72 +734,73 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
-	} else if step.rpcMsg.IsCall() {
-		if thisQid, ok = conn.questions.nextID(); !ok {
-			return 0, errTooManyOpenQuestions
+		return thisQid, nil
+	}
+
+	if !step.rpcMsg.IsCall() {
+		// Only happens during development.
+		return 0, errors.New("unimplemented message type in prepareOutMessage")
+	}
+
+	// Find the target of this call (conn and either parentIid or
+	// parentQid).
+	var parentIid ImportId
+	if stepIdx == 0 && pipe.parent == nil {
+		// Should never happen, but avoid a panic below.
+		return 0, errors.New("non-bootstrap call without a parent pipeline")
+	} else if stepIdx == 0 {
+		// Fork from a parent pipeline. Determine if the parent step has
+		// been resolved into an imported cap or we're still waiting for
+		// a remote Return.
+		parentStep := pipe.parent.Step(pipe.parentStepIdx)
+		parentStepStepState, parentStepValue := parentStep.value.Get()
+		if parentStepStepState == pipelineStepFailed {
+			return 0, parentStepValue.err
 		}
-		step.rpcMsg.call.qid = thisQid
+		parentIid = parentStepValue.iid
+		parentQid = parentStepValue.qid
+		step.conn = parentStepValue.conn
+	} else {
+		// Still same pipeline, use the same conn as parent (parentQid
+		// already refers to the parent's question id).
+		parentStep := pipe.Step(pipe.parentStepIdx)
+		step.conn = parentStep.conn
+	}
 
-		// Find the parent step. If it's in this pipeline, access it
-		// directly. Otherwise, check whether the parent completed
-		// already or not (to determine if this is call pipelined to a
-		// an incomplete local call or to a remote promise).
-		if stepIdx > 0 {
-			step.rpcMsg.call.target = messageTarget{
-				isPromisedAnswer: true,
-				pans:             promisedAnswer{qid: prevQid},
-			}
+	// Can now determine question id.
+	if thisQid, ok = step.conn.questions.nextID(); !ok {
+		return 0, errTooManyOpenQuestions
+	}
+	step.rpcMsg.call.qid = thisQid
 
-			conn.log.Debug().
-				Int("qid", int(thisQid)).
-				Int("pans", int(prevQid)).
-				Msg("Prepared call for in-pipeline promised answer")
-		} else if pipe.parent == nil {
-			// Should never happen, but avoid a panic below.
-			return 0, errors.New("non-bootstrap call without a parent pipeline")
-		} else {
-			// execPipeline() already ensured the required parent
-			// step was sent before allowing this pipeline to be
-			// started, so it is safe to read from stepRunning
-			// without risk of blocking.
-			//
-			// Nevertheless, we err on side of caution and check
-			// that isSet is true.
-			//
-			// TODO: check if step already completed (stepDone) and
-			// turned into an exported cap.
-			parentStep := pipe.parent.Step(pipe.parentStepIdx)
-			parentStepState, parentStepVal, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
-			if err != nil {
-				return 0, err
-			}
-			if parentStepState == pipelineStepFailed {
-				return 0, parentStepVal.err
-			}
-
-			if parentStepVal.iid > 0 {
-				step.rpcMsg.call.target = messageTarget{
-					isImportedCap: true,
-					impcap:        parentStepVal.iid,
-				}
-
-				conn.log.Debug().
-					Int("qid", int(thisQid)).
-					Int("iid", int(parentStepVal.iid)).
-					Msg("Prepared call for exported cap")
-			} else {
-				parentQid := parentStepVal.qid
-				step.rpcMsg.call.target = messageTarget{
-					isPromisedAnswer: true,
-					pans:             promisedAnswer{qid: parentQid},
-				}
-
-				conn.log.Debug().
-					Int("qid", int(thisQid)).
-					Int("pans", int(parentQid)).
-					Msg("Prepared call for parent pipeline promised answer")
-			}
+	if parentQid > 0 {
+		// parentQid > 0 means this is a pielined call to a promised
+		// answer.
+		step.rpcMsg.call.target = messageTarget{
+			isPromisedAnswer: true,
+			pans:             promisedAnswer{qid: parentQid},
 		}
+
+		step.conn.log.Debug().
+			Int("qid", int(thisQid)).
+			Int("pans", int(parentQid)).
+			Msg("Prepared call for in-pipeline promised answer")
+	} else if parentIid > 0 {
+		// parentIid > 0 means this is already resolved into a returned
+		// import (either a remote promise or a concrete remote cap).
+		step.rpcMsg.call.target = messageTarget{
+			isImportedCap: true,
+			impcap:        parentIid,
+		}
+
+		step.conn.log.Debug().
+			Int("qid", int(thisQid)).
+			Int("iid", int(parentIid)).
+			Msg("Prepared call for exported cap")
+
+	} else {
+		// What happened mate?!?!?!
+		return 0, errors.New("unimplemented case")
 	}
 
 	return thisQid, nil
@@ -485,7 +811,8 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 // sent to the remote Vat.
 func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) error {
 	step := pipe.step(stepIdx)
-	conn := pipe.conn
+	conn := step.conn
+
 	var qid QuestionId
 	var q question
 	if step.rpcMsg.isBootstrap {
@@ -513,7 +840,7 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) e
 				return os, ov, fmt.Errorf("invalid precondition state: %v", os)
 			}
 			ov.qid = qid
-			ov.conn = pipe.conn // TODO: set this earlier in the call stack.
+			ov.conn = conn
 			return pipeStepStateRunning, ov, nil
 		})
 	}
@@ -540,11 +867,37 @@ func (v *Vat) sendResolve(ctx context.Context, rc *runningConn, eid ExportId, ex
 		resolve:   resolve{pid: eid},
 	}
 
-	if resolution.typ == exportTypePromise {
+	switch resolution.typ {
+	case exportTypePromise:
 		msg.resolve.cap.senderPromise = exp.resolvedToExport
-	} else if resolution.typ == exportTypeLocallyHosted {
+	case exportTypeLocallyHosted:
 		msg.resolve.cap.senderHosted = exp.resolvedToExport
+	case exportTypeThirdPartyExport:
+		msg.resolve.cap.thirdPartyHosted = thirdPartyCapDescriptor{
+			id:     resolution.thirdPartyCapDescId,
+			vineId: resolution.thirdPartyVineId,
+		}
+	default:
+		return fmt.Errorf("unknown resolution type %s", resolution.typ)
 	}
 
 	return rc.queue(ctx, singleMsgBatch(msg))
+}
+
+func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error {
+	msg := message{
+		isProvide: true,
+		provide:   p,
+	}
+
+	if err := rc.queue(ctx, singleMsgBatch(msg)); err != nil {
+		return err
+	}
+
+	// TODO: Wait until the provide is actually on the target remote before
+	// returning (to send the Resolve/Return to the caller). This is
+	// necessary to ensure that the Accept the source will send to target
+	// will reach target AFTER the Provide.
+
+	return nil
 }

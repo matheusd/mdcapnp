@@ -42,17 +42,34 @@ func (ap *anyPointer) IsCapPointer() bool       { return ap.isCapPointer }
 func (ap *anyPointer) AsCapPointer() capPointer { return ap.cp }
 func (ap *anyPointer) IsVoid() bool             { return ap.isVoid }
 
-type capDescriptor struct {
-	senderHosted  ExportId
-	senderPromise ExportId
+type thirdPartyCapId anyPointer
+type provisionId anyPointer
+type recipientId anyPointer
+
+type introductionInfo struct {
+	sendToRecipient thirdPartyCapId
+	sendToTarget    recipientId
 }
 
-func (cp *capDescriptor) IsSenderHosted() bool      { return cp.senderHosted > 0 }
-func (cp *capDescriptor) AsSenderHosted() ExportId  { return cp.senderHosted }
-func (cp *capDescriptor) IsSenderPromise() bool     { return cp.senderPromise > 0 }
-func (cp *capDescriptor) AsSenderPromise() ExportId { return cp.senderPromise }
-func (cp *capDescriptor) hasExportId() bool         { return cp.IsSenderHosted() || cp.IsSenderPromise() }
-func (cp *capDescriptor) exportId() ExportId        { return cp.senderHosted + cp.senderPromise } // Only one will be set.
+type thirdPartyCapDescriptor struct {
+	id     thirdPartyCapId
+	vineId ExportId
+}
+
+type capDescriptor struct {
+	senderHosted     ExportId
+	senderPromise    ExportId
+	thirdPartyHosted thirdPartyCapDescriptor
+}
+
+func (cp *capDescriptor) IsSenderHosted() bool                        { return cp.senderHosted > 0 }
+func (cp *capDescriptor) AsSenderHosted() ExportId                    { return cp.senderHosted }
+func (cp *capDescriptor) IsSenderPromise() bool                       { return cp.senderPromise > 0 }
+func (cp *capDescriptor) AsSenderPromise() ExportId                   { return cp.senderPromise }
+func (cp *capDescriptor) hasExportId() bool                           { return cp.IsSenderHosted() || cp.IsSenderPromise() }
+func (cp *capDescriptor) exportId() ExportId                          { return cp.senderHosted + cp.senderPromise } // Only one will be set.
+func (cp *capDescriptor) IsThirdPartyHosted() bool                    { return cp.thirdPartyHosted.vineId > 0 }     // Asumes it is always set in this case.
+func (cp *capDescriptor) AsThirdPartyHosted() thirdPartyCapDescriptor { return cp.thirdPartyHosted }
 
 type payload struct {
 	content  anyPointer
@@ -116,18 +133,43 @@ type resolve struct {
 	cap capDescriptor
 }
 
-type message struct { // RPC message type
-	isBootstrap bool
-	isReturn    bool
-	isCall      bool
-	isFinish    bool
-	isResolve   bool
+type disembargo struct {
+	target    messageTarget
+	isAccept  bool
+	isProvide bool
+	provide   QuestionId
+}
 
-	boot    bootstrap
-	ret     rpcReturn
-	call    call
-	finish  finish
-	resolve resolve
+type accept struct {
+	qid       QuestionId
+	provision provisionId
+	embargo   bool
+}
+
+type provide struct {
+	qid       QuestionId
+	target    messageTarget
+	recipient recipientId
+}
+
+type message struct { // RPC message type
+	isBootstrap  bool
+	isReturn     bool
+	isCall       bool
+	isFinish     bool
+	isResolve    bool
+	isDisembargo bool
+	isAccept     bool
+	isProvide    bool
+
+	boot       bootstrap
+	ret        rpcReturn
+	call       call
+	finish     finish
+	resolve    resolve
+	disembargo disembargo
+	accept     accept
+	provide    provide
 
 	testEcho uint64 // Special test message.
 }
@@ -143,6 +185,12 @@ func (m *message) IsFinish() bool                           { return m.isFinish 
 func (m *message) AsFinish() finish                         { return m.finish }
 func (m *message) IsResolve() bool                          { return m.isResolve }
 func (m *message) AsResolve() resolve                       { return m.resolve }
+func (m *message) IsDisembargo() bool                       { return m.isDisembargo }
+func (m *message) AsDisembargo() disembargo                 { return m.disembargo }
+func (m *message) IsAccept() bool                           { return m.isAccept }
+func (m *message) AsAccept() accept                         { return m.accept }
+func (m *message) IsProvide() bool                          { return m.isProvide }
+func (m *message) AsProvide() provide                       { return m.provide }
 
 type interfaceId uint64
 type methodId uint16
@@ -155,6 +203,7 @@ type answerPromise struct {
 func (ap answerPromise) resolveToHandler(handler callHandler) error {
 	var err error
 
+	// resolution is the new export ap is resolving to.
 	resolution := export{
 		typ:      exportTypeLocallyHosted,
 		handler:  handler,
@@ -165,9 +214,9 @@ func (ap answerPromise) resolveToHandler(handler callHandler) error {
 	exp, ok := ap.rc.exports.get(ap.eid)
 	if !ok {
 		err = fmt.Errorf("export %d not found", ap.eid)
-	} else if exp.resolvedToExport > 0 {
-		err = fmt.Errorf("promised export %d already resolved to export %d",
-			ap.eid, exp.resolvedToExport)
+	} else if exp.resolved() {
+		err = fmt.Errorf("promised export %d already resolved to %s",
+			ap.eid, exp.resolveString())
 	} else if resolveEid, ok := ap.rc.exports.nextID(); !ok {
 		err = fmt.Errorf("could not obtain new export id for resolution of %d", ap.eid)
 	} else {
@@ -183,6 +232,80 @@ func (ap answerPromise) resolveToHandler(handler callHandler) error {
 
 		err = ap.rc.vat.sendResolve(ap.rc.ctx, ap.rc, ap.eid, exp, resolution)
 	}
+	ap.rc.mu.Unlock()
+
+	return err
+}
+
+func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId) error {
+	var err error
+
+	// TODO: Determine this by calling rc.c.introduceTo(ap.rc.c) to get an
+	// IntroductionInfo.
+	var iinfo introductionInfo
+
+	// Send Provide to remote.
+	provide := provide{
+		target:    messageTarget{isImportedCap: true, impcap: tpIid},
+		recipient: iinfo.sendToTarget,
+	}
+	tpRc.mu.Lock()
+	if !tpRc.imports.has(tpIid) {
+		err = fmt.Errorf("third party %s does not have import %d", tpRc, tpIid)
+	} else if qid, ok := tpRc.questions.nextID(); !ok {
+		err = fmt.Errorf("could not generate new question id for %s", tpRc)
+	} else {
+		provide.qid = qid
+
+		err = tpRc.vat.sendProvide(tpRc.ctx, tpRc, provide)
+	}
+	tpRc.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// vine is the export that proxies calls to rc[iid].
+	//
+	// TODO: skip if both rc and ap.rc are level 3?
+	vine := export{
+		typ:           exportTypeThirdPartyExport,
+		thirdPartyRC:  tpRc,
+		thirdPartyIid: tpIid,
+		refCount:      1,
+	}
+
+	// Send resolve back to caller, pointing to the third party.
+	ap.rc.mu.Lock()
+	exp, ok := ap.rc.exports.get(ap.eid)
+	if !ok {
+		err = fmt.Errorf("export %d not found", ap.eid)
+	} else if exp.resolved() {
+		err = fmt.Errorf("promised export %d already resolved to %s",
+			ap.eid, exp.resolveString())
+	} else if vineEid, ok := ap.rc.exports.nextID(); !ok {
+		err = fmt.Errorf("could not obtain new export id for vine of %d", ap.eid)
+	} else {
+		exp.thirdPartyRC = tpRc
+		exp.thirdPartyIid = tpIid
+		exp.thirdPartyVineId = vineEid
+		exp.thirdPartyCapDescId = iinfo.sendToRecipient
+		exp.thirdPartyProvideQid = provide.qid
+		exp.typ = exportTypeThirdPartyExport
+		ap.rc.exports.set(ap.eid, exp)
+		ap.rc.exports.set(vineEid, vine)
+
+		ap.rc.log.Trace().
+			Int("eid", int(ap.eid)).
+			Str("thirdParty", tpRc.c.remoteName()).
+			Int("thirdPartyIid", int(tpIid)).
+			Msg("Resolving previously exported promise")
+
+		err = ap.rc.vat.sendResolve(ap.rc.ctx, ap.rc, ap.eid, exp, exp)
+	}
+
+	// After unlocking, any calls received from the remote to this answer
+	// will be forwarded to the remote party. Disembargo will be the last
+	// message, which should be followed by a finish.
 	ap.rc.mu.Unlock()
 
 	return err
@@ -280,8 +403,18 @@ type question struct {
 	stepIdx int
 }
 
+type answerType int
+
+const (
+	answerTypeCall answerType = iota
+	answerTypeBootstrap
+	answerTypeProvide
+	answerTypeAccept
+)
+
 type answer struct {
-	eid ExportId // answered with an export.
+	typ answerType // What this is an anwer to (Call, Provide or Accept).
+	eid ExportId   // The export that was the answer to the question.
 }
 
 type importType int
@@ -316,6 +449,7 @@ type exportType uint
 const (
 	exportTypeLocallyHosted exportType = iota
 	exportTypePromise
+	exportTypeThirdPartyExport
 )
 
 func (typ exportType) String() string {
@@ -324,6 +458,8 @@ func (typ exportType) String() string {
 		return "locallyHosted"
 	case exportTypePromise:
 		return "promise"
+	case exportTypeThirdPartyExport:
+		return "thirdPartyExp"
 	default:
 		return fmt.Sprintf("[unknown %d]", typ)
 	}
@@ -337,8 +473,31 @@ type export struct {
 
 	// Set when this was a promise that got resolved.
 	resolvedToExport ExportId
+	rc               *runningConn
+
+	// Set when this is resolved to a third party imported cap.
+	thirdPartyRC         *runningConn
+	thirdPartyIid        ImportId
+	thirdPartyCapDescId  thirdPartyCapId
+	thirdPartyVineId     ExportId
+	thirdPartyProvideQid QuestionId
 
 	// Track calls that must be fulfilled once this is fulfilled.
 
 	// TODO: refcount to send Finish()?
+}
+
+func (e *export) resolved() bool {
+	return e.resolvedToExport > 0 || e.thirdPartyRC != nil
+}
+
+func (e *export) resolveString() string {
+	if e.resolvedToExport > 0 {
+		return fmt.Sprintf("export %d", e.resolvedToExport)
+	} else if e.thirdPartyRC != nil && e.thirdPartyIid > 0 {
+		return fmt.Sprintf("third party %s import %d", e.thirdPartyRC.c.remoteName(),
+			e.thirdPartyIid)
+	} else {
+		return "unresolved"
+	}
 }

@@ -40,6 +40,7 @@ type pipelineStep struct {
 
 	// Only accessed by the pipeline's execution goroutine.
 	rpcMsg message
+	conn   *runningConn
 }
 
 func finalizePipelineStep(step *pipelineStep) {
