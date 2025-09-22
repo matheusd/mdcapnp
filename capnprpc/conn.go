@@ -21,6 +21,21 @@ type msgBatch struct {
 type outMsg struct {
 	msg              message
 	remainingInBatch int
+	sentChan         chan struct{}
+}
+
+func (om *outMsg) wantSentAck() *outMsg {
+	om.sentChan = make(chan struct{})
+	return om
+}
+
+func (om *outMsg) waitSentAck(ctx context.Context) error {
+	select {
+	case <-om.sentChan:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func singleMsgBatch(msg message) outMsg {

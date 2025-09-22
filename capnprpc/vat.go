@@ -155,6 +155,9 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 				if err != nil {
 					return err
 				}
+				if mb.sentChan != nil {
+					close(mb.sentChan)
+				}
 
 			case <-ctx.Done():
 				return context.Cause(ctx)

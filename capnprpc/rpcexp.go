@@ -230,7 +230,7 @@ func (ap answerPromise) resolveToHandler(handler callHandler) error {
 			Str("rtyp", resolution.typ.String()).
 			Msg("Resolving previously exported promise")
 
-		err = ap.rc.vat.sendResolve(ap.rc.ctx, ap.rc, ap.eid, exp, resolution)
+		err = ap.rc.vat.queueResolve(ap.rc.ctx, ap.rc, ap.eid, exp, resolution)
 	}
 	ap.rc.mu.Unlock()
 
@@ -300,7 +300,7 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId
 			Int("thirdPartyIid", int(tpIid)).
 			Msg("Resolving previously exported promise")
 
-		err = ap.rc.vat.sendResolve(ap.rc.ctx, ap.rc, ap.eid, exp, exp)
+		err = ap.rc.vat.queueResolve(ap.rc.ctx, ap.rc, ap.eid, exp, exp)
 	}
 
 	// After unlocking, any calls received from the remote to this answer

@@ -327,7 +327,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		return errTooManyOpenQuestions
 	}
 	rc.mu.Unlock()
-	accept := message{isAccept: true, accept: accept{
+	accept := accept{
 		qid:       acceptQid,
 		provision: connAndProvision.provision,
 
@@ -335,18 +335,11 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		// the local vat can know whether there are pending pipelined
 		// calls or not.
 		embargo: true,
-	}}
-	if err := rc.queue(ctx, singleMsgBatch(accept)); err != nil {
-		// TODO: mark pipeline step failed.
+	}
+	if err := v.sendAccept(ctx, rc, accept); err != nil {
+		// TODO: Mark pipeline step as failed.
 		return err
 	}
-
-	// TODO: wait until Accept is actually outbound (as opposed to simply
-	// queued). This is necessary to ensure correctness of operations.
-	// Accept MUST reach the remote end of the new conn BEFORE a Disembargo
-	// is proxied through srcConn, otherwise ordering is not guaranteed. In
-	// the mean time, any pipelined calls continue to be proxied through
-	// srcConn.
 
 	// From now on, any calls pipelined on this step will go directly to the
 	// third party (path has shortened!).
@@ -403,7 +396,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 
 	// If accept did not signal existence of embargoed pipelined calls,
 	// Disembargo isn't needed.
-	if !accept.accept.embargo {
+	if !accept.embargo {
 		return nil
 	}
 
@@ -861,7 +854,7 @@ func (v *Vat) sendFinish(ctx context.Context, rc *runningConn, qid QuestionId) e
 	return rc.queue(ctx, singleMsgBatch(msg))
 }
 
-func (v *Vat) sendResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
+func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
 	msg := message{
 		isResolve: true,
 		resolve:   resolve{pid: eid},
@@ -889,15 +882,48 @@ func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error
 		isProvide: true,
 		provide:   p,
 	}
+	outMsg := singleMsgBatch(msg)
+	outMsg.wantSentAck()
 
-	if err := rc.queue(ctx, singleMsgBatch(msg)); err != nil {
+	if err := rc.queue(ctx, outMsg); err != nil {
 		return err
 	}
 
-	// TODO: Wait until the provide is actually on the target remote before
+	// Wait until the provide is actually on the target remote before
 	// returning (to send the Resolve/Return to the caller). This is
 	// necessary to ensure that the Accept the source will send to target
 	// will reach target AFTER the Provide.
+	if err := outMsg.waitSentAck(ctx); err != nil {
+		return err
+	}
+
+	if p.target.isImportedCap {
+		rc.log.Debug().
+			Int("qid", int(p.qid)).
+			Int("iid", int(p.target.impcap)).
+			Msg("Sent provide for imported cap")
+	} else {
+		rc.log.Debug().
+			Int("qid", int(p.qid)).
+			Int("pans", int(p.target.pans.qid)).
+			Msg("Sent provide for promised answer")
+	}
 
 	return nil
+}
+
+func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept accept) error {
+	outMsg := singleMsgBatch(message{isAccept: true, accept: accept})
+	outMsg.wantSentAck()
+
+	if err := rc.queue(ctx, outMsg); err != nil {
+		return err
+	}
+
+	// Wait until Accept is actually outbound (as opposed to simply queued).
+	// This is necessary to ensure correctness of operations. Accept MUST
+	// reach the remote end of the new conn BEFORE a Disembargo is proxied
+	// through srcConn, otherwise ordering is not guaranteed. In the mean
+	// time, any pipelined calls continue to be proxied through srcConn.
+	return outMsg.waitSentAck(ctx)
 }
