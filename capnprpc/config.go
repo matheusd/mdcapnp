@@ -15,6 +15,7 @@ type vatConfig struct {
 	logger           *zerolog.Logger
 	name             string
 	bootstrapHandler callHandler
+	net              VatNetwork
 }
 
 // applyOptions applies the given options to the config.

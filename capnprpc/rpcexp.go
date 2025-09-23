@@ -242,7 +242,10 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId
 
 	// TODO: Determine this by calling rc.c.introduceTo(ap.rc.c) to get an
 	// IntroductionInfo.
-	var iinfo introductionInfo
+	iinfo, err := ap.rc.vat.getNetworkIntroduction(ap.rc, tpRc)
+	if err != nil {
+		return err
+	}
 
 	// Send Provide to remote.
 	provide := provide{
@@ -256,11 +259,15 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId
 		err = fmt.Errorf("could not generate new question id for %s", tpRc)
 	} else {
 		provide.qid = qid
-
-		err = tpRc.vat.sendProvide(tpRc.ctx, tpRc, provide)
+		tpRc.questions.set(qid, question{}) // TODO: need to save anything?
 	}
 	tpRc.mu.Unlock()
 	if err != nil {
+		return err
+	}
+
+	// CHECK: ok to do here, outside tpRc.mu.Lock()?
+	if err := tpRc.vat.sendProvide(tpRc.ctx, tpRc, provide); err != nil {
 		return err
 	}
 

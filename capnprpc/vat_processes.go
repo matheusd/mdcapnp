@@ -452,11 +452,14 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		resolveId = ImportId(resolvePromise)
 		resImport = imprt{typ: importTypeRemotePromise, pipe: imp.pipe, stepIdx: imp.stepIdx}
 	} else if capEntry.IsThirdPartyHosted() {
-		// TODO ask vat to call ConnectToIntroduced(). Get back
-		// a promise to the connection (connAndProvisionPromise).
+		// Ask vat to call ConnectToIntroduced(). Get back a promise to
+		// the connection (connAndProvisionPromise).
 		// TODO: If this is only level 1, use vineId instead and proxy
 		// requests.
-		cpp := connAndProvisionPromise{capId: capEntry.AsThirdPartyHosted()}
+		cpp, err := v.startConnectToIntroduced3rdParty(rc, capEntry.AsThirdPartyHosted())
+		if err != nil {
+			return err
+		}
 		go v.resolveThirdPartyCapForPipeStep(ctx, pipe, imp.stepIdx, rc, cpp)
 
 		// This doesn't change the pipeline step (promise). Any
@@ -513,9 +516,12 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 		return errors.New("unknown message target")
 	}
 
-	// TODO
 	// Prepare vat to receive a new conn from the recipient and for them to
 	// send an Accept message with the given recipient id.
+	if err := v.expectConnAndAccept(rc, prov.recipient); err != nil {
+		return err
+	}
+
 	rc.answers.set(aid, answer{typ: answerTypeProvide})
 
 	return nil
@@ -527,39 +533,14 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 		return fmt.Errorf("remote already asked question %d", aid)
 	}
 
-	// TODO: find the matching recipientId. Check if it exists, which
-	// srcConn it refers to and which capability.
-	var srcConn *runningConn
-	var target messageTarget
-	var provideAid AnswerId
-
-	// Check if the target still exists exported to srcConn. Determine if
-	// this is a capability or a promise to a capability.
-	//
-	// TODO: not safe to lock srcConn here. Can lead to deadlocks. Maybe
-	// this should be moved upwards, so that this information is stored and
-	// then returned by whatever returns srcConn.
-	var err error
-	var handler callHandler
-	srcConn.mu.Lock()
-	if target.isImportedCap {
-		exp, hasExp := srcConn.exports.get(ExportId(target.impcap))
-		if !hasExp {
-			err = fmt.Errorf("export not found %d", target.impcap)
-		}
-
-		handler = exp.handler
-	} else if target.isPromisedAnswer {
-		if !srcConn.answers.has(AnswerId(target.pans.qid)) {
-			err = fmt.Errorf("answer not found %d", target.pans.qid)
-		}
-	} else {
-		err = errors.New("unknown message target")
-	}
-	srcConn.mu.Unlock()
+	acResult, err := v.wasExpectingAccept(rc, ac.provision)
 	if err != nil {
-		return err
+		return fmt.Errorf("received unexpected accept: %v", err)
 	}
+
+	handler := acResult.handler
+	provideAid := acResult.provideAid
+	srcConn := acResult.srcConn
 
 	// TODO: support 3PH into promises and not just capabilities.
 	if handler == nil {
@@ -592,8 +573,6 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	//
-	// TODO: Maybe send in new goroutine?
 	retProvide := message{isReturn: true, ret: rpcReturn{
 		aid:       provideAid,
 		isResults: true,
