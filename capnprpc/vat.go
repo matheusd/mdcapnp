@@ -113,7 +113,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 
 	// Prepare (as much as possible) messages for sending.
 	for i := range p.numSteps() {
-		step := p.step(i)
+		step := p.Step(i)
 		step.rpcMsg = message{}
 		if step.interfaceId == 0 && step.methodId == 0 {
 			// Bootstrap.

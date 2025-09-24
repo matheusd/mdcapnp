@@ -242,11 +242,16 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		reply.ret.isResults = true
 		reply.ret.pay = crb.payload
 
-		// Save this in the answers table.
-		rc.answers.set(AnswerId(c.qid), answer{typ: answerTypeCall})
+		// If the result is a capability, the answer is pipelinable, so
+		// track where the corresponding export will be.
+		var rootCapIndex int = -1
+		if crb.payload.content.IsCapPointer() {
+			rootCapIndex = int(crb.payload.content.AsCapPointer().index)
+		}
+		ans := answer{typ: answerTypeCall}
 
 		// Track all exported caps.
-		for _, cp := range crb.payload.capTable {
+		for i, cp := range crb.payload.capTable {
 			if !cp.hasExportId() {
 				continue
 			}
@@ -266,7 +271,16 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 			} else {
 				return errors.New("other types of exports not implemented")
 			}
+
+			// If this is the root cap index, then track this export
+			// directly in the answer (for future pipelined calls).
+			if i == rootCapIndex {
+				ans.eid = capEid
+			}
 		}
+
+		// Save the answer in the answers table.
+		rc.answers.set(AnswerId(c.qid), ans)
 
 		rc.log.Debug().
 			Int("qid", int(c.qid)).
@@ -480,6 +494,7 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		}
 
 		rc.log.Debug().
+			Int("qid", int(ov.qid)).
 			Int("iid", int(iid)).
 			Int("resIid", int(resolveId)).
 			Str("resTyp", resImport.typ.String()).
@@ -720,13 +735,13 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 
 	step := pipe.step(stepIdx)
 	if step.rpcMsg.IsBootstrap() {
-		conn := pipe.conn
-		if thisQid, ok = conn.questions.nextID(); !ok {
+		step.conn = pipe.conn
+		if thisQid, ok = step.conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
 
 		step.rpcMsg.boot.qid = thisQid
-		conn.log.Debug().
+		step.conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
 		return thisQid, nil
@@ -768,19 +783,7 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 	}
 	step.rpcMsg.call.qid = thisQid
 
-	if parentQid > 0 {
-		// parentQid > 0 means this is a pielined call to a promised
-		// answer.
-		step.rpcMsg.call.target = messageTarget{
-			isPromisedAnswer: true,
-			pans:             promisedAnswer{qid: parentQid},
-		}
-
-		step.conn.log.Debug().
-			Int("qid", int(thisQid)).
-			Int("pans", int(parentQid)).
-			Msg("Prepared call for in-pipeline promised answer")
-	} else if parentIid > 0 {
+	if parentIid > 0 {
 		// parentIid > 0 means this is already resolved into a returned
 		// import (either a remote promise or a concrete remote cap).
 		step.rpcMsg.call.target = messageTarget{
@@ -792,7 +795,18 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			Int("qid", int(thisQid)).
 			Int("iid", int(parentIid)).
 			Msg("Prepared call for exported cap")
+	} else if parentQid > 0 {
+		// parentQid > 0 means this is a pielined call to a promised
+		// answer.
+		step.rpcMsg.call.target = messageTarget{
+			isPromisedAnswer: true,
+			pans:             promisedAnswer{qid: parentQid},
+		}
 
+		step.conn.log.Debug().
+			Int("qid", int(thisQid)).
+			Int("pans", int(parentQid)).
+			Msg("Prepared call for in-pipeline promised answer")
 	} else {
 		// What happened mate?!?!?!
 		return 0, errors.New("unimplemented case")

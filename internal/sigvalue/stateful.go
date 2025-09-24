@@ -146,6 +146,14 @@ func (s *Stateful[S, V]) Get() (state S, value V) {
 	return
 }
 
+// GetValue returns the current value.
+func (s *Stateful[S, V]) GetValue() (value V) {
+	s.mu.Lock()
+	value = s.value
+	s.mu.Unlock()
+	return
+}
+
 func (s *Stateful[S, V]) addWaiter() *stateChangeWaiter[S, V] {
 	c := make(chan stateChangeEvent[S, V], 1) // Channel MUST be buffered.
 	s.waiters = append(s.waiters, stateChangeWaiter[S, V]{c: c})

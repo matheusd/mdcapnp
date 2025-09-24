@@ -198,10 +198,12 @@ func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
 
 func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
 	pipe := obj.pipe
+	var conn *runningConn
 	pipe.mu.Lock()
 	if pipe.state != pipelineStateBuilding || pipe.wouldFork(obj.stepIndex) {
 		res.pipe = pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
 		res.stepIndex = 0
+		conn = pipe.step(obj.stepIndex).value.GetValue().conn
 	} else {
 		res.pipe = pipe
 		res.stepIndex = res.pipe.addStep()
@@ -211,7 +213,7 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 	step.interfaceId = iid
 	step.methodId = mid
 	step.paramsBuilder = pb
-
+	step.value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: conn})
 	pipe.mu.Unlock()
 
 	return

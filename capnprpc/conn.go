@@ -179,6 +179,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 	rc.boot.pipe.vat = v
 	rc.boot.pipe.conn = rc
 	rc.boot.pipe.state = pipelineStateBuilt
+	rc.boot.pipe.Step(0).value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: rc})
 
 	return rc
 }
