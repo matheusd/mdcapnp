@@ -69,6 +69,14 @@ func (cpp *connAndProvisionPromise) Wait(ctx context.Context) (ConnectionAndProv
 	panic("todo")
 }
 
+func (cpp *connAndProvisionPromise) Fail(err error) {
+	panic("todo")
+}
+
+func (cpp *connAndProvisionPromise) Fulfill(rc *runningConn, provId provisionId) {
+	panic("todo")
+}
+
 var errConnDone = errors.New("conn is done")
 
 // runningConn is a connection that is running to another vat.

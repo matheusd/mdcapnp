@@ -22,8 +22,10 @@ type Vat struct {
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
-	newConn  chan *runningConn
-	connDone chan *runningConn
+	newConn    chan *runningConn
+	connDone   chan *runningConn
+	expAccepts chan expectedAccept
+	getAccepts chan getExpectedAccept
 }
 
 func NewVat(opts ...VatOption) *Vat {
@@ -31,10 +33,12 @@ func NewVat(opts ...VatOption) *Vat {
 	cfg.applyOptions(opts...)
 
 	v := &Vat{
-		cfg:      cfg,
-		log:      cfg.vatLogger(),
-		newConn:  make(chan *runningConn),
-		connDone: make(chan *runningConn),
+		cfg:        cfg,
+		log:        cfg.vatLogger(),
+		newConn:    make(chan *runningConn),
+		connDone:   make(chan *runningConn),
+		expAccepts: make(chan expectedAccept, 5),    // Buffered to reduce locking contention on caller
+		getAccepts: make(chan getExpectedAccept, 5), // Buffered to reduce locking contention on caller
 	}
 	return v
 }
@@ -58,7 +62,7 @@ func (v *Vat) RunConn(c conn) *runningConn {
 		rc.exports.set(rc.bootExportId, export{typ: exportTypeLocallyHosted, handler: v.cfg.bootstrapHandler})
 	}
 
-	v.newConn <- rc
+	v.newConn <- rc // TODO: need context here too.
 	return rc
 }
 
@@ -203,6 +207,8 @@ func (v *Vat) stopConn(rc *runningConn) {
 			pipe.mu.Unlock()
 		}
 	}
+
+	// TODO: what about expected 3PH accepts?
 }
 
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
@@ -252,9 +258,10 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 // Individual fields _may_ be accessed on other goroutines, as long as they have
 // been properly captured by a closure.
 type vatRunState struct {
-	ctx   context.Context
-	g     *pool.ContextPool
-	conns []*runningConn
+	ctx        context.Context
+	g          *pool.ContextPool
+	conns      []*runningConn
+	expAccepts map[VatNetworkUniqueID]expectedAccept
 }
 
 func (s *vatRunState) delConn(target *runningConn) {
@@ -286,6 +293,17 @@ func (v *Vat) runStep(rs *vatRunState) error {
 	case oc := <-v.connDone:
 		v.stopConn(oc)
 		rs.delConn(oc)
+
+	case expAc := <-v.expAccepts:
+		rs.expAccepts[expAc.id] = expAc // TODO: How to timeout?
+
+	case getAc := <-v.getAccepts:
+		if expAc, ok := rs.expAccepts[getAc.id]; !ok {
+			getAc.replyChan <- err3PHExpectedAcceptNotFound
+		} else {
+			getAc.replyChan <- expAc        // replyChan is buffered.
+			delete(rs.expAccepts, getAc.id) // Picked up cap.
+		}
 
 	case <-rs.ctx.Done():
 		return rs.ctx.Err()

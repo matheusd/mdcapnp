@@ -5,20 +5,29 @@
 package capnprpc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
 
+type VatNetworkUniqueID [32]byte
+
 type VatNetwork interface {
 	introduce(src, target conn) (introductionInfo, error)
+	connectToIntroduced(ctx context.Context, introducer conn, tcpd thirdPartyCapDescriptor) (conn, provisionId, error)
+	recipientIdUniqueKey(recipientId) VatNetworkUniqueID
+	provisionIdUniqueKey(provisionId) VatNetworkUniqueID
 }
+
+var err3PHWithoutVatNetwork = errors.New("3PH introductions not supported without VatNetwork")
+var err3PHExpectedAcceptNotFound = errors.New("3PH prior Provide not found for Accept")
 
 // getNetworkIntroduction generates a 3PH introduction. This runs on Bob, when
 // generating an introduction that will be sent to Carol (as a Provide msg) and
 // to Alice (inside a Return/Resolve that she will forward to Carol herself).
 func (v *Vat) getNetworkIntroduction(src, target *runningConn) (introductionInfo, error) {
 	if v.cfg.net == nil {
-		return introductionInfo{}, errors.New("3PH introductions not supported without VatNetwork")
+		return introductionInfo{}, err3PHWithoutVatNetwork
 	}
 
 	return v.cfg.net.introduce(src.c, target.c)
@@ -27,18 +36,48 @@ func (v *Vat) getNetworkIntroduction(src, target *runningConn) (introductionInfo
 // startConnectToIntroduced3rdParty starts connection procedures to a third
 // party, in order to (eventually) send an Accept. This runs on Alice, after
 // receiving an introduction from Bob and is meant to connect to Carol.
-func (v *Vat) startConnectToIntroduced3rdParty(introducer *runningConn, tpcd thirdPartyCapDescriptor) (connAndProvisionPromise, error) {
-	// TODO: fulfill the conn request.
+func (v *Vat) startConnectToIntroduced3rdParty(ctx context.Context, introducer *runningConn,
+	tpcd thirdPartyCapDescriptor) (connAndProvisionPromise, error) {
+
+	if v.cfg.net == nil {
+		return connAndProvisionPromise{}, err3PHWithoutVatNetwork
+	}
+
 	cpp := connAndProvisionPromise{capId: tpcd}
+
+	go func() {
+		c, provId, err := v.cfg.net.connectToIntroduced(ctx, introducer.c, tpcd)
+		if err != nil {
+			cpp.Fail(err)
+			return
+		}
+
+		rc := v.RunConn(c)
+		cpp.Fulfill(rc, provId)
+	}()
+
 	return cpp, nil
 }
 
-// expectConnAndAccept sets up the vat to wait for a connection in relation to a
-// 3PH introduction. This runs on Carol while processing a Provide from Bob
-// (setting things up to expect a future Accept from Alice).
-func (v *Vat) expectConnAndAccept(introducer *runningConn, recipient recipientId) error {
-	// TODO: wat?
-	return nil
+type expectedAccept struct {
+	id VatNetworkUniqueID
+
+	// srcConn is the original (aka provider, aka Bob) conn that sent a
+	// Provide.
+	srcConn *runningConn
+
+	// provideAid is the question/answer associated with the original
+	// Provide request.
+	provideAid AnswerId
+
+	// handler is the concrete capability that the provider (Bob) shared
+	// with the initiating caller (Alice).
+	handler callHandler
+}
+
+type getExpectedAccept struct {
+	id        VatNetworkUniqueID
+	replyChan chan any
 }
 
 type acceptedConnAndCap struct {
@@ -59,44 +98,34 @@ type acceptedConnAndCap struct {
 // valid, and if so, what capability it refers to. This runs on Carol while
 // processing an Accept received from Alice (rc), and so verifies if Bob
 // previously sent a corresponding Provide.
-func (v *Vat) wasExpectingAccept(rc *runningConn, provId provisionId) (acceptedConnAndCap, error) {
-	// TODO: find the matching recipientId. Check if it exists, which
-	// srcConn it refers to and which capability.
-	var srcConn *runningConn
-	var target messageTarget
-	var provideAid AnswerId
-
-	// Check if the target still exists exported to srcConn. Determine if
-	// this is a capability or a promise to a capability.
-	//
-	// TODO: not safe to lock srcConn here. Can lead to deadlocks. Maybe
-	// this should be moved upwards, so that this information is stored and
-	// then returned by whatever returns srcConn.
-	var err error
-	var handler callHandler
-	srcConn.mu.Lock()
-	if target.isImportedCap {
-		exp, hasExp := srcConn.exports.get(ExportId(target.impcap))
-		if !hasExp {
-			err = fmt.Errorf("export not found %d", target.impcap)
-		}
-
-		handler = exp.handler
-	} else if target.isPromisedAnswer {
-		if !srcConn.answers.has(AnswerId(target.pans.qid)) {
-			err = fmt.Errorf("answer not found %d", target.pans.qid)
-		}
-	} else {
-		err = errors.New("unknown message target")
-	}
-	srcConn.mu.Unlock()
-	if err != nil {
-		return acceptedConnAndCap{}, err
+func (v *Vat) wasExpectingAccept(ctx context.Context, provId provisionId) (expectedAccept, error) {
+	if v.cfg.net == nil {
+		return expectedAccept{}, err3PHWithoutVatNetwork
 	}
 
-	return acceptedConnAndCap{
-		srcConn:    srcConn,
-		provideAid: provideAid,
-		handler:    handler,
-	}, nil
+	// Ask the vat run goroutine for the expected accept.
+	id := v.cfg.net.provisionIdUniqueKey(provId)
+	getAc := getExpectedAccept{id: id, replyChan: make(chan any, 1)}
+	select {
+	case v.getAccepts <- getAc:
+	case <-ctx.Done():
+		return expectedAccept{}, ctx.Err()
+	}
+
+	// Get the reply.
+	var reply any
+	select {
+	case reply = <-getAc.replyChan:
+	case <-ctx.Done():
+		return expectedAccept{}, ctx.Err()
+	}
+
+	switch reply := reply.(type) {
+	case error:
+		return expectedAccept{}, reply
+	case expectedAccept:
+		return reply, nil
+	default:
+		panic(fmt.Sprintf("unsupported type in reply %T", reply))
+	}
 }

@@ -456,7 +456,7 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		// the connection (connAndProvisionPromise).
 		// TODO: If this is only level 1, use vineId instead and proxy
 		// requests.
-		cpp, err := v.startConnectToIntroduced3rdParty(rc, capEntry.AsThirdPartyHosted())
+		cpp, err := v.startConnectToIntroduced3rdParty(ctx, rc, capEntry.AsThirdPartyHosted())
 		if err != nil {
 			return err
 		}
@@ -503,26 +503,49 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 		return fmt.Errorf("remote already asked question %d", aid)
 	}
 
+	if v.cfg.net == nil {
+		return err3PHWithoutVatNetwork
+	}
+
+	// Build value that will hold the shared cap data.
+	expAc := expectedAccept{
+		srcConn:    rc,
+		provideAid: aid,
+	}
+
 	// Check if the target exists exported to the caller.
 	if prov.target.isImportedCap {
-		if !rc.exports.has(ExportId(prov.target.impcap)) {
+		capExp, ok := rc.exports.get(ExportId(prov.target.impcap))
+		if !ok {
 			return fmt.Errorf("export not found %d", prov.target.impcap)
 		}
+
+		expAc.handler = capExp.handler
 	} else if prov.target.isPromisedAnswer {
 		if !rc.answers.has(AnswerId(prov.target.pans.qid)) {
 			return fmt.Errorf("answer not found %d", prov.target.pans.qid)
 		}
+
+		// TODO: support
+		return fmt.Errorf("unsupported Provide for promised answer")
 	} else {
 		return errors.New("unknown message target")
 	}
 
-	// Prepare vat to receive a new conn from the recipient and for them to
-	// send an Accept message with the given recipient id.
-	if err := v.expectConnAndAccept(rc, prov.recipient); err != nil {
-		return err
-	}
+	// TODO: Ask client code if it wants to modify the capability somehow
+	// for this accept (e.g. impose limits, change handler, etc)?
+
+	expAc.id = v.cfg.net.recipientIdUniqueKey(prov.recipient)
 
 	rc.answers.set(aid, answer{typ: answerTypeProvide})
+
+	// Prepare vat to receive a new conn from the recipient and for them to
+	// send an Accept message with the given recipient id.
+	select {
+	case v.expAccepts <- expAc:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	return nil
 }
@@ -533,7 +556,7 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 		return fmt.Errorf("remote already asked question %d", aid)
 	}
 
-	acResult, err := v.wasExpectingAccept(rc, ac.provision)
+	acResult, err := v.wasExpectingAccept(ctx, ac.provision)
 	if err != nil {
 		return fmt.Errorf("received unexpected accept: %v", err)
 	}
