@@ -217,15 +217,19 @@ func (v *Vat) stopConn(rc *runningConn) {
 func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 	v.log.Trace().Int("len", p.numSteps()).Msg("Starting pipeline")
 
-	p.conn.mu.Lock()
-	defer p.conn.mu.Unlock()
+	conn := p.Step(0).value.GetValue().conn
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	// p.conn.mu.Lock()
+	// defer p.conn.mu.Unlock()
 
 	// Determine how the local Vat will change in response to this
 	// pipeline.
 	var prevQid QuestionId
 	for i := range p.numSteps() {
 		var err error
-		if prevQid, err = v.prepareOutMessage(ctx, p, i, prevQid); err != nil {
+		if prevQid, err = v.prepareOutMessage(ctx, p, i, prevQid, conn); err != nil {
 			return err
 		}
 	}
@@ -314,12 +318,13 @@ func (v *Vat) runStep(rs *vatRunState) error {
 
 func (v *Vat) Run(ctx context.Context) (err error) {
 	rs := &vatRunState{
-		g: pool.New().WithContext(ctx).WithCancelOnError().WithFirstError(),
+		g:          pool.New().WithContext(ctx).WithCancelOnError().WithFirstError(),
+		expAccepts: make(map[VatNetworkUniqueID]expectedAccept),
 	}
 	rs.g.Go(func(ctx context.Context) error {
 		var err error
 		rs.ctx = ctx
-		v.log.Info().Msg("Vat is running")
+		v.log.Info().Timestamp().Msg("Vat is running")
 		for err == nil {
 			err = v.runStep(rs)
 		}

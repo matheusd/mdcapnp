@@ -121,13 +121,22 @@ func (rc *runningConn) String() string {
 }
 
 func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
-	rc.log.Trace().Int("remInBatch", m.remainingInBatch).Msg("Queueing outgoing message")
+	/*
+		rc.log.Trace().
+			Int("remInBatch", m.remainingInBatch).
+			Str("which", m.msg.Which().String()).
+			Msg("Queueing outgoing message")
+	*/
+
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 
 	case rc.outQueue <- m:
-		rc.log.Trace().Int("remInBatch", m.remainingInBatch).Msg("Queued outgoing message")
+		rc.log.Trace().
+			Int("remInBatch", m.remainingInBatch).
+			Str("which", m.msg.Which().String()).
+			Msg("Queued outgoing message")
 		return nil
 
 	default:
@@ -177,7 +186,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 	// TODO: prepare boot message.
 	rc.boot.pipe.vat = v
-	rc.boot.pipe.conn = rc
+	// rc.boot.pipe.conn = rc
 	rc.boot.pipe.state = pipelineStateBuilt
 	rc.boot.pipe.Step(0).value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: rc})
 

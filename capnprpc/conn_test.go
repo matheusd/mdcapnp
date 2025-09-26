@@ -86,9 +86,10 @@ func (tc *testConn) remoteName() string {
 }
 
 type testPipeConn struct {
-	remName string
-	in      chan message
-	out     chan message
+	remName  string
+	remIndex int
+	in       chan message
+	out      chan message
 }
 
 func (tpc *testPipeConn) send(ctx context.Context, m message, _ int) error {

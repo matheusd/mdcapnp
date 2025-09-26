@@ -171,13 +171,13 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	// Wait for bootstrap to complete to ease log reviewing.
 	api := testAPIAsBootstrap(cc.Bootstrap())
-	require.NoError(t, api.Wait(testctx.New(t)))
+	require.NoError(t, api.WaitDiscardResult(testctx.New(t)))
 
 	// Make a call that returns a capability.
 	getCapErrChan := make(chan error, 1)
-	getCapCall := api.GetAnotherAPI()
+	getCapCall := api.GetAnotherAPICap()
 	go func() {
-		getCapErrChan <- getCapCall.Wait(testctx.New(t))
+		getCapErrChan <- getCapCall.WaitDiscardResult(testctx.New(t))
 	}()
 
 	// Call isn't done yet (waiting on remote promise).

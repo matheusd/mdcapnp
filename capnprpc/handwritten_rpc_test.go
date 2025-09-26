@@ -33,7 +33,7 @@ func (api testAPI) VoidCall() futureVoid {
 	return futureVoid(remoteCall[capability, struct{}](futureCap[capability](api), testAPI_InterfaceID, testAPI_Void_CallID, nil))
 }
 
-func (api testAPI) GetAnotherAPI() testAPI {
+func (api testAPI) GetAnotherAPICap() testAPI {
 	return testAPI(remoteCall[capability, capability](futureCap[capability](api), testAPI_InterfaceID, testAPI_GetAnotherAPI_CallID, nil))
 }
 
@@ -46,7 +46,11 @@ func (api testAPI) GetUser(id string) testUser {
 }
 
 // Wait until this is resolved as a concrete, exported capability.
-func (api testAPI) Wait(ctx context.Context) error {
+func (api testAPI) Wait(ctx context.Context) (capability, error) {
+	return waitResult(ctx, futureCap[capability](api))
+}
+
+func (api testAPI) WaitDiscardResult(ctx context.Context) error {
 	_, err := waitResult(ctx, futureCap[capability](api))
 	return err
 }

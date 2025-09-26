@@ -65,8 +65,8 @@ type pipeline struct {
 	steps []*pipelineStep
 
 	// Only set on pipeline creation.
-	vat           *Vat
-	conn          *runningConn
+	vat *Vat
+	// conn          *runningConn
 	parent        *pipeline
 	parentStepIdx int
 }
@@ -145,7 +145,7 @@ func (pipe *pipeline) addStep() int {
 func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork := newPipeline(sizeHint)
 	fork.vat = pipe.vat
-	fork.conn = pipe.conn
+	// fork.conn = pipe.conn
 	fork.parent = pipe
 	fork.parentStepIdx = i
 	return fork

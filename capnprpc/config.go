@@ -69,6 +69,12 @@ func WithLogger(l *zerolog.Logger) VatOption {
 	}
 }
 
+func WithVatNetwork(net VatNetwork) VatOption {
+	return func(c *vatConfig) {
+		c.net = net
+	}
+}
+
 func withBootstrapHandler(h callHandler) VatOption {
 	return func(c *vatConfig) {
 		c.bootstrapHandler = h

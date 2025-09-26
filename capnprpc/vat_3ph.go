@@ -6,15 +6,20 @@ package capnprpc
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
 
 type VatNetworkUniqueID [32]byte
 
+func (id VatNetworkUniqueID) toString() string {
+	return hex.EncodeToString(id[:])
+}
+
 type VatNetwork interface {
 	introduce(src, target conn) (introductionInfo, error)
-	connectToIntroduced(ctx context.Context, introducer conn, tcpd thirdPartyCapDescriptor) (conn, provisionId, error)
+	connectToIntroduced(ctx context.Context, localVat *Vat, introducer conn, tcpd thirdPartyCapDescriptor) (conn, provisionId, error)
 	recipientIdUniqueKey(recipientId) VatNetworkUniqueID
 	provisionIdUniqueKey(provisionId) VatNetworkUniqueID
 }
@@ -33,30 +38,26 @@ func (v *Vat) getNetworkIntroduction(src, target *runningConn) (introductionInfo
 	return v.cfg.net.introduce(src.c, target.c)
 }
 
-// startConnectToIntroduced3rdParty starts connection procedures to a third
-// party, in order to (eventually) send an Accept. This runs on Alice, after
-// receiving an introduction from Bob and is meant to connect to Carol.
-func (v *Vat) startConnectToIntroduced3rdParty(ctx context.Context, introducer *runningConn,
-	tpcd thirdPartyCapDescriptor) (connAndProvisionPromise, error) {
+// connectToIntroduced3rdParty connects to a third party, in order to
+// (eventually) send an Accept. This runs on Alice, after receiving an
+// introduction from Bob and is meant to connect to Carol.
+func (v *Vat) connectToIntroduced3rdParty(ctx context.Context, introducer *runningConn,
+	tpcd thirdPartyCapDescriptor) (*runningConn, provisionId, error) {
 
 	if v.cfg.net == nil {
-		return connAndProvisionPromise{}, err3PHWithoutVatNetwork
+		return nil, provisionId{}, err3PHWithoutVatNetwork
 	}
 
-	cpp := connAndProvisionPromise{capId: tpcd}
+	// TODO: check if already connected or already trying to connect to the
+	// target vat and reuse conn.
 
-	go func() {
-		c, provId, err := v.cfg.net.connectToIntroduced(ctx, introducer.c, tpcd)
-		if err != nil {
-			cpp.Fail(err)
-			return
-		}
+	c, provId, err := v.cfg.net.connectToIntroduced(ctx, v, introducer.c, tpcd)
+	if err != nil {
+		return nil, provisionId{}, err
+	}
 
-		rc := v.RunConn(c)
-		cpp.Fulfill(rc, provId)
-	}()
-
-	return cpp, nil
+	rc := v.RunConn(c)
+	return rc, provId, nil
 }
 
 type expectedAccept struct {

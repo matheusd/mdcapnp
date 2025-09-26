@@ -16,7 +16,8 @@ import (
 )
 
 type testVat struct {
-	name string
+	name  string
+	index int
 	*Vat
 }
 
@@ -35,6 +36,7 @@ func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
 
 	v := NewVat(testVatOpts...)
 	v.testIDsOffset = (th.vatCount + 1) * 1000
+	index := th.vatCount
 	th.vatCount++
 	th.g.Go(func(ctx context.Context) error {
 		err := v.Run(ctx)
@@ -43,7 +45,7 @@ func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
 		}
 		return err
 	})
-	return &testVat{Vat: v, name: name}
+	return &testVat{Vat: v, name: name, index: index}
 }
 
 func (th *testHarness) newTestConn() *testConn {
@@ -55,20 +57,26 @@ func (th *testHarness) newTestConn() *testConn {
 	}
 }
 
-func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
-	c1 := testPipeConn{
-		remName: v2.name,
-		in:      make(chan message, 10),
-		out:     make(chan message, 10),
+func (th *testHarness) twoVatsPipe(v1, v2 *testVat) (c1, c2 *testPipeConn) {
+	c1 = &testPipeConn{
+		remName:  v2.name,
+		remIndex: v2.index,
+		in:       make(chan message, 10),
+		out:      make(chan message, 10),
 	}
-	c2 := testPipeConn{
-		remName: v1.name,
-		in:      c1.out,
-		out:     c1.in,
+	c2 = &testPipeConn{
+		remName:  v1.name,
+		remIndex: v1.index,
+		in:       c1.out,
+		out:      c1.in,
 	}
+	return
+}
 
-	rc1 = v1.RunConn(&c1)
-	rc2 = v2.RunConn(&c2)
+func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
+	c1, c2 := th.twoVatsPipe(v1, v2)
+	rc1 = v1.RunConn(c1)
+	rc2 = v2.RunConn(c2)
 	return
 }
 
@@ -80,7 +88,7 @@ func newTestHarness(t testing.TB) *testHarness {
 	if _, isBench := t.(*testing.B); isBench {
 		logger = zerolog.Nop()
 	} else {
-		logger = zerolog.New(zerolog.NewConsoleWriter(zerolog.ConsoleTestWriter(t)))
+		logger = testLogger(t).With().Timestamp().Logger()
 	}
 
 	// Add g.Wait first to the cleanup because cancel() should be called

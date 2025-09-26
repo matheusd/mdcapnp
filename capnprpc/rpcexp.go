@@ -26,6 +26,7 @@ type capPointer struct { // Alias to capnpser.CapPointer
 func (cp *capPointer) Index() uint32 { return cp.index }
 
 type serStruct struct { // Alias to capnpser.Struct
+	rawData []byte
 }
 
 type anyPointer struct { // Alias to capnpser.AnyPointer
@@ -152,6 +153,42 @@ type provide struct {
 	recipient recipientId
 }
 
+type message_which int
+
+const (
+	message_which_bootstrap message_which = iota
+	message_which_return
+	message_which_call
+	message_which_finish
+	message_which_resolve
+	message_which_disembargo
+	message_which_accept
+	message_which_provide
+)
+
+func (mw message_which) String() string {
+	switch mw {
+	case message_which_bootstrap:
+		return "bootstrap"
+	case message_which_return:
+		return "return"
+	case message_which_call:
+		return "call"
+	case message_which_finish:
+		return "finish"
+	case message_which_resolve:
+		return "resolve"
+	case message_which_disembargo:
+		return "disembargo"
+	case message_which_accept:
+		return "accept"
+	case message_which_provide:
+		return "provide"
+	default:
+		return "unknown"
+	}
+}
+
 type message struct { // RPC message type
 	isBootstrap  bool
 	isReturn     bool
@@ -174,6 +211,28 @@ type message struct { // RPC message type
 	testEcho uint64 // Special test message.
 }
 
+func (m *message) Which() message_which {
+	switch {
+	case m.isBootstrap:
+		return message_which_bootstrap
+	case m.isReturn:
+		return message_which_return
+	case m.isCall:
+		return message_which_call
+	case m.isFinish:
+		return message_which_finish
+	case m.isResolve:
+		return message_which_resolve
+	case m.isDisembargo:
+		return message_which_disembargo
+	case m.isAccept:
+		return message_which_accept
+	case m.isProvide:
+		return message_which_provide
+	default:
+		panic("unknown message which")
+	}
+}
 func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
 func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
 func (m *message) AsBootstrap() bootstrap                   { return m.boot }
@@ -237,8 +296,14 @@ func (ap answerPromise) resolveToHandler(handler callHandler) error {
 	return err
 }
 
-func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId) error {
+func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid ImportId) error {
 	var err error
+
+	ap.rc.log.Debug().
+		Int("eid", int(ap.eid)).
+		Str("src", ap.rc.String()).
+		Str("target", tpRc.String()).
+		Msg("Resolving promised answer to third party")
 
 	// TODO: Determine this by calling rc.c.introduceTo(ap.rc.c) to get an
 	// IntroductionInfo.
@@ -281,6 +346,20 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId
 		refCount:      1,
 	}
 
+	// Warning: There's a potential race condition in the protocol here.
+	// We're expected to send a Resolve to the original caller ("Alice"),
+	// assuming that the third party ("Carol") has fully processed the
+	// Provide sent above and is ready to receive the Accept that the caller
+	// will send in response to the Resolve.
+	//
+	// On regular network and processing conditions and under the assumption
+	// that the network layer implementation uses TCP, which acks the
+	// received bytes, this will be true.
+	//
+	// However, in tests where processing is very fast or if Carol is
+	// congested, this may not be true. In that case, it may be necessary to
+	// introduce some delay in this point.
+
 	// Send resolve back to caller, pointing to the third party.
 	ap.rc.mu.Lock()
 	exp, ok := ap.rc.exports.get(ap.eid)
@@ -316,6 +395,10 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, tpIid ImportId
 	ap.rc.mu.Unlock()
 
 	return err
+}
+
+func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability) error {
+	return ap.resolveToThirdPartyImport(tpRc, ImportId(cap.eid))
 }
 
 type callReturnBuilder struct {

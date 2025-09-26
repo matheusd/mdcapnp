@@ -313,19 +313,12 @@ func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) er
 }
 
 func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipeline, stepIdx int,
-	srcConn *runningConn, newConnPromise connAndProvisionPromise) error {
+	srcConn *runningConn, tphCapDesc thirdPartyCapDescriptor) error {
 
-	// TODO: actually ask the vat to connect. Wait for connection to
-	// complete or error out. In case of error, fail this step.
-	// NOTE: multiple steps may be waiting for a connection to the same
-	// remote.
-	connAndProvision, err := newConnPromise.Wait(ctx)
+	rc, provId, err := v.connectToIntroduced3rdParty(ctx, srcConn, tphCapDesc)
 	if err != nil {
-		// TODO: mark pipeline step as failed.
 		return err
 	}
-
-	rc := connAndProvision.connection
 
 	v.log.Trace().
 		Str("src", srcConn.String()).
@@ -336,14 +329,16 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 	rc.mu.Lock()
 	acceptQid, ok := rc.questions.nextID()
 	if !ok {
-		// TODO: Mark pipeline step as failed.
 		rc.mu.Unlock()
 		return errTooManyOpenQuestions
 	}
+	// TODO: finalizer???
+	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}
+	rc.questions.set(acceptQid, q)
 	rc.mu.Unlock()
 	accept := accept{
 		qid:       acceptQid,
-		provision: connAndProvision.provision,
+		provision: provId,
 
 		// In the future, this could be dynamically determined, because
 		// the local vat can know whether there are pending pipelined
@@ -351,7 +346,6 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		embargo: true,
 	}
 	if err := v.sendAccept(ctx, rc, accept); err != nil {
-		// TODO: Mark pipeline step as failed.
 		return err
 	}
 
@@ -466,19 +460,26 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		resolveId = ImportId(resolvePromise)
 		resImport = imprt{typ: importTypeRemotePromise, pipe: imp.pipe, stepIdx: imp.stepIdx}
 	} else if capEntry.IsThirdPartyHosted() {
-		// Ask vat to call ConnectToIntroduced(). Get back a promise to
-		// the connection (connAndProvisionPromise).
+		// Start the 3PH resolution process. This will involve
+		// connecting to the third party (if we haven't already) and
+		// then sending the Accept with the provision id.
+		//
 		// TODO: If this is only level 1, use vineId instead and proxy
 		// requests.
-		cpp, err := v.startConnectToIntroduced3rdParty(ctx, rc, capEntry.AsThirdPartyHosted())
-		if err != nil {
-			return err
-		}
-		go v.resolveThirdPartyCapForPipeStep(ctx, pipe, imp.stepIdx, rc, cpp)
+		go func() {
+			err := v.resolveThirdPartyCapForPipeStep(ctx, pipe, imp.stepIdx, rc, capEntry.AsThirdPartyHosted())
+			if err != nil {
+				rc.log.Err(err).Msg("resolveThirdPartyCapForPipeStep failed")
+				// TODO: fail the pipeline step.
+			} else {
+				rc.log.Trace().Msg("resolveThirdPartyCapForPipeStep completed")
+			}
+		}()
 
 		// This doesn't change the pipeline step (promise). Any
 		// pipelined calls will be proxied through the existing conn
-		// until 3PH completes.
+		// until 3PH completes (more specifically, until the connection
+		// is completed and the Accept message is sent).
 		//
 		// Maybe in the future this could be changed to optinally
 		// cache calls locally until 3PH completes.
@@ -528,6 +529,8 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 		provideAid: aid,
 	}
 
+	logMsg := rc.log.Debug()
+
 	// Check if the target exists exported to the caller.
 	if prov.target.isImportedCap {
 		capExp, ok := rc.exports.get(ExportId(prov.target.impcap))
@@ -536,10 +539,13 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 		}
 
 		expAc.handler = capExp.handler
+		logMsg = logMsg.Str("typ", "importedCap").Int("iid", int(prov.target.impcap))
 	} else if prov.target.isPromisedAnswer {
 		if !rc.answers.has(AnswerId(prov.target.pans.qid)) {
 			return fmt.Errorf("answer not found %d", prov.target.pans.qid)
 		}
+
+		logMsg = logMsg.Str("typ", "promisedAnswer").Int("iid", int(prov.target.pans.qid))
 
 		// TODO: support
 		return fmt.Errorf("unsupported Provide for promised answer")
@@ -561,6 +567,9 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+
+	logMsg.Hex("uniqueKey", expAc.id[:]).
+		Msg("Asked to provide cap to third party")
 
 	return nil
 }
@@ -592,6 +601,13 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	}
 	rc.exports.set(eid, export{typ: exportTypeLocallyHosted, handler: handler, refCount: 1})
 	rc.answers.set(aid, answer{typ: answerTypeAccept, eid: eid})
+
+	rc.log.Debug().
+		Hex("provisionId", acResult.id[:]).
+		Int("eid", int(eid)).
+		Int("qid", int(ac.qid)).
+		Str("src", srcConn.String()).
+		Msg("Providing shared cap to conn")
 
 	// Send the Return that corresponds to the Accept to the newly
 	// introduced conn. This is the picked up capability (previously
@@ -711,7 +727,7 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 	}
 
 	if err != nil && !errors.Is(err, context.Canceled) {
-		logEvent := rc.log.Err(err)
+		logEvent := rc.log.Err(err).Str("which", msg.Which().String())
 		if rc.log.GetLevel() < zerolog.InfoLevel {
 			logEvent.Any("msg", msg)
 		}
@@ -729,13 +745,13 @@ var errTooManyExports = errors.New("too many exports")
 //
 // Note: this does _not_ commit the changes to the conn's tables yet.
 func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
-	stepIdx int, parentQid QuestionId) (thisQid QuestionId, err error) {
+	stepIdx int, parentQid QuestionId, conn *runningConn) (thisQid QuestionId, err error) {
 
 	var ok bool
 
 	step := pipe.step(stepIdx)
 	if step.rpcMsg.IsBootstrap() {
-		step.conn = pipe.conn
+		step.conn = conn // pipe.conn
 		if thisQid, ok = step.conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
