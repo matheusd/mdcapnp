@@ -40,7 +40,6 @@ type pipelineStep struct {
 
 	// Only accessed by the pipeline's execution goroutine.
 	rpcMsg message
-	conn   *runningConn
 }
 
 func finalizePipelineStep(step *pipelineStep) {
@@ -65,8 +64,7 @@ type pipeline struct {
 	steps []*pipelineStep
 
 	// Only set on pipeline creation.
-	vat *Vat
-	// conn          *runningConn
+	vat           *Vat
 	parent        *pipeline
 	parentStepIdx int
 }
@@ -145,7 +143,6 @@ func (pipe *pipeline) addStep() int {
 func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	fork := newPipeline(sizeHint)
 	fork.vat = pipe.vat
-	// fork.conn = pipe.conn
 	fork.parent = pipe
 	fork.parentStepIdx = i
 	return fork
@@ -198,12 +195,12 @@ func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
 
 func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
 	pipe := obj.pipe
-	var conn *runningConn
+	//	var conn *runningConn
 	pipe.mu.Lock()
 	if pipe.state != pipelineStateBuilding || pipe.wouldFork(obj.stepIndex) {
 		res.pipe = pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
 		res.stepIndex = 0
-		conn = pipe.step(obj.stepIndex).value.GetValue().conn
+		//conn = pipe.step(obj.stepIndex).value.GetValue().conn
 	} else {
 		res.pipe = pipe
 		res.stepIndex = res.pipe.addStep()
@@ -213,7 +210,7 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 	step.interfaceId = iid
 	step.methodId = mid
 	step.paramsBuilder = pb
-	step.value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: conn})
+	//step.value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: conn})
 	pipe.mu.Unlock()
 
 	return

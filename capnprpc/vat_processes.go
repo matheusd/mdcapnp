@@ -349,6 +349,11 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		return err
 	}
 
+	// Lock srcConn before modifying the pipeline's conn to avoid a possible
+	// race condition with startPipeline(). See the comment tagged as
+	// 3PHCONNISSUE.
+	srcConn.mu.Lock()
+
 	// From now on, any calls pipelined on this step will go directly to the
 	// third party (path has shortened!).
 	step := pipe.Step(stepIdx)
@@ -393,6 +398,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		ov.qid = acceptQid
 		return os, ov, nil
 	})
+	srcConn.mu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -417,6 +423,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		target:   disembargoTarget,
 	}}
 	if err := srcConn.queue(ctx, singleMsgBatch(dis)); err != nil {
+		srcConn.mu.Unlock()
 		return err
 	}
 
@@ -751,13 +758,12 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 
 	step := pipe.step(stepIdx)
 	if step.rpcMsg.IsBootstrap() {
-		step.conn = conn // pipe.conn
-		if thisQid, ok = step.conn.questions.nextID(); !ok {
+		if thisQid, ok = conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
 
 		step.rpcMsg.boot.qid = thisQid
-		step.conn.log.Debug().
+		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
 		return thisQid, nil
@@ -785,16 +791,14 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 		}
 		parentIid = parentStepValue.iid
 		parentQid = parentStepValue.qid
-		step.conn = parentStepValue.conn
+		// step.conn = parentStepValue.conn
 	} else {
 		// Still same pipeline, use the same conn as parent (parentQid
 		// already refers to the parent's question id).
-		parentStep := pipe.Step(pipe.parentStepIdx)
-		step.conn = parentStep.conn
 	}
 
 	// Can now determine question id.
-	if thisQid, ok = step.conn.questions.nextID(); !ok {
+	if thisQid, ok = conn.questions.nextID(); !ok {
 		return 0, errTooManyOpenQuestions
 	}
 	step.rpcMsg.call.qid = thisQid
@@ -807,7 +811,7 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			impcap:        parentIid,
 		}
 
-		step.conn.log.Debug().
+		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Int("iid", int(parentIid)).
 			Msg("Prepared call for exported cap")
@@ -819,7 +823,7 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			pans:             promisedAnswer{qid: parentQid},
 		}
 
-		step.conn.log.Debug().
+		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Int("pans", int(parentQid)).
 			Msg("Prepared call for in-pipeline promised answer")
@@ -834,9 +838,8 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 // commitOutMessage commits the changes of the pipeline step to the local Vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote Vat.
-func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int) error {
+func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, conn *runningConn) error {
 	step := pipe.step(stepIdx)
-	conn := step.conn
 
 	var qid QuestionId
 	var q question

@@ -82,6 +82,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 
 	// If this pipeline is a fork, wait until the its parent step is
 	// running, which means it can proceed.
+	var conn *runningConn
 	if p.parent != nil {
 		// Start parent if parent hasn't started yet.
 		parentState := p.parent.State()
@@ -104,6 +105,12 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		if parentStepState == pipelineStepFailed {
 			return parentStepVal.err
 		}
+
+		// This is a forked pipeline, so the conn is the same as the one
+		// for the parent step.
+		conn = parentStepVal.conn
+	} else {
+		conn = p.Step(0).value.GetValue().conn
 	}
 
 	// Shortcircuit empty pipelines (caller is likely to wait on parent).
@@ -129,7 +136,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		}
 	}
 
-	return v.startPipeline(ctx, p) // TODO: bring this code here.
+	return v.startPipeline(ctx, p, conn) // TODO: bring this code here.
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -214,11 +221,49 @@ func (v *Vat) stopConn(rc *runningConn) {
 // startPipeline starts processing a pipeline. This sends the entire pipeline to
 // the respective remote Vats and modifies the local vat's state according to
 // each step.
-func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
+func (v *Vat) startPipeline(ctx context.Context, p *pipeline, conn *runningConn) error {
 	v.log.Trace().Int("len", p.numSteps()).Msg("Starting pipeline")
 
-	conn := p.Step(0).value.GetValue().conn
-	conn.mu.Lock()
+	// Lock the conn to start modifying its tables. Note: this is harder
+	// than it looks because the conn (which was derived from a parent
+	// pipeline step) may change from under us during 3PH. See the comment
+	// tagged with 3PHCONNISSUE.
+	//
+	// What can happen is that, during 3PH, the pipeline step which is the
+	// parent of this pipeline may have its conn modified and a Disembargo
+	// may have been sent for it already. Thus, this conn (and associated
+	// message target) is no longer usable as the parent of this pipeline.
+	// But we can't know that until we lock the conn and check if the parent
+	// didn't change from under us. Thus the need to loop and obtain the
+	// conn again _inside_ the lock, to double check.
+	//
+	// The critical scenario that is fixed by this convoluted lock algo is
+	// the following:
+	//
+	// - startPipeline() is called with conn1 (conn1 is unlocked)
+	// - resolveThirdPartyCapForPipeStep changes the parent pipeline step to
+	// conn2 due to 3PH
+	// - resolveThirdPartyCapForPipeStep sends a Disembargo on conn1
+	// - conn1 is locked to send the Call message
+	// - Call is sent after Disembargo: protocol violation!
+	for {
+		conn.mu.Lock()
+		var otherConn *runningConn
+		if p.parent == nil {
+			otherConn = p.Step(0).value.GetValue().conn
+		} else {
+			otherConn = p.parent.Step(p.parentStepIdx).value.GetValue().conn
+		}
+		if otherConn != conn {
+			// Changed!!!! Try again.
+			conn.mu.Unlock()
+			conn = otherConn
+			continue
+		} else {
+			// Ok to keep going.
+			break
+		}
+	}
 	defer conn.mu.Unlock()
 
 	// p.conn.mu.Lock()
@@ -238,7 +283,7 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 	// queue for this conn is full.
 	for i := range p.numSteps() {
 		step := p.step(i)
-		err := step.conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
+		err := conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
 		if err != nil {
 			return err
 		}
@@ -246,7 +291,7 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline) error {
 
 	// Commit the changes to the local Vat.
 	for i := range p.numSteps() {
-		if err := v.commitOutMessage(ctx, p, i); err != nil {
+		if err := v.commitOutMessage(ctx, p, i, conn); err != nil {
 			return err
 		}
 	}
