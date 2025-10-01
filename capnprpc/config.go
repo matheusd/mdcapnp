@@ -7,6 +7,7 @@ package capnprpc
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -16,6 +17,11 @@ type vatConfig struct {
 	name             string
 	bootstrapHandler callHandler
 	net              VatNetwork
+	failOnConnErr    bool
+
+	// delayResolveIn3PH is how long to delay sending a resolve after
+	// sending a Provide.
+	delayResolveIn3PH time.Duration
 }
 
 // applyOptions applies the given options to the config.
@@ -78,5 +84,21 @@ func WithVatNetwork(net VatNetwork) VatOption {
 func withBootstrapHandler(h callHandler) VatOption {
 	return func(c *vatConfig) {
 		c.bootstrapHandler = h
+	}
+}
+
+// withFailOnConnErr sets up the vat to fail its own Run() function if any
+// connection fails for any reason other than a graceful close.
+func withFailOnConnErr(fail bool) VatOption {
+	return func(c *vatConfig) {
+		c.failOnConnErr = fail
+	}
+}
+
+// withDelayResolveIn3PH sets up how long to wait after sending a Provide
+// message to send the corresponding Resolve in a 3PH scenario.
+func withDelayResolveIn3PH(d time.Duration) VatOption {
+	return func(c *vatConfig) {
+		c.delayResolveIn3PH = d
 	}
 }

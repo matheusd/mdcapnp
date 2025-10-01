@@ -91,6 +91,7 @@ type runningConn struct {
 	c   conn
 	vat *Vat
 	log zerolog.Logger
+	rid uint64 // A unique running id, set by the vat when creating this.
 
 	boot bootstrapCap
 
@@ -205,4 +206,27 @@ func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
 
 func (rc *runningConn) Bootstrap() bootstrapCap {
 	return rc.boot // Any calls fork the pipeline.
+}
+
+type twoConnLocker struct {
+	rc1 *runningConn
+	rc2 *runningConn
+}
+
+func makeTwoConnLocker(rc1, rc2 *runningConn) twoConnLocker {
+	// Total ordering based on run id.
+	if rc2.rid < rc1.rid {
+		rc1, rc2 = rc2, rc1
+	}
+	return twoConnLocker{rc1: rc1, rc2: rc2}
+}
+
+func (tcl *twoConnLocker) lock() {
+	tcl.rc1.mu.Lock()
+	tcl.rc2.mu.Lock()
+}
+
+func (tcl *twoConnLocker) unlock() {
+	tcl.rc2.mu.Unlock()
+	tcl.rc1.mu.Unlock()
 }

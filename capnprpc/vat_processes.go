@@ -57,11 +57,21 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		return fmt.Errorf("only results supported")
 	}
 
+	if q.typ == questionTypeProvide {
+		res := ret.AsResults()
+		content := res.Content()
+		if !content.IsVoid() {
+			return fmt.Errorf("received non-void return for provide")
+		}
+		rc.log.Debug().Int("qid", int(qid)).Msg("Received Return message for prior Provide")
+		return nil
+	}
+
 	pipe := q.pipe.Value()
 	if pipe == nil {
 		// This pipeline isn't used anymore (was released and a Finish
 		// should've been sent, or will be shortly), so nothing to do.
-		rc.log.Debug().Int("qid", int(qid)).Msg("Received Return message for released pipeline")
+		rc.log.Warn().Int("qid", int(qid)).Msg("Received Return message for released pipeline")
 		return nil
 	}
 
@@ -136,6 +146,12 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
+		}
+
+		if ov.conn != rc {
+			return os, ov, fmt.Errorf("broken assumption: pipeline "+
+				"step has conn %s when being modified by conn %s",
+				ov.conn.String(), rc.String())
 		}
 
 		rc.log.Debug().
@@ -320,22 +336,42 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		return err
 	}
 
+	if rc == srcConn {
+		// TODO: Is this permitted?
+		return errors.New("same conns for 3PH")
+	}
+
+	// We need a lock on both conns to avoid logical races. But other
+	// goroutines may also be attempting to (or holding) locks on either (or
+	// both). So we need to ensure _every_ goroutine always locks _every_
+	// conn on the same order.
+	//
+	// One example of a logical race that can happen if this isn't done, is
+	// one where the Return for the Accept sent to third party is received
+	// and processed _before_ the pipeline step has been modified to point
+	// to the promised Accept answer: this causes an error while processing
+	// the return because of a broken assumption from where the next
+	// response would be coming from.
+	//
+	// Another potential race is a Call being sent after a Disembargo has
+	// been queued (see the comment tagged as 3PHCONNISSUE).
+	mu := makeTwoConnLocker(rc, srcConn)
+	mu.lock()
+	defer mu.unlock()
+
 	v.log.Trace().
 		Str("src", srcConn.String()).
 		Str("dst", rc.String()).
 		Msg("Shortening path after 3PH introduction")
 
 	// Send Accept() with embargo set to the new remote.
-	rc.mu.Lock()
 	acceptQid, ok := rc.questions.nextID()
 	if !ok {
-		rc.mu.Unlock()
 		return errTooManyOpenQuestions
 	}
 	// TODO: finalizer???
 	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}
 	rc.questions.set(acceptQid, q)
-	rc.mu.Unlock()
 	accept := accept{
 		qid:       acceptQid,
 		provision: provId,
@@ -345,17 +381,28 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		// calls or not.
 		embargo: true,
 	}
+	rc.log.Debug().
+		Int("qid", int(acceptQid)).
+		Str("srcConn", srcConn.String()).
+		Msg("Sending accept for 3PH introduction")
+
+	// Explicitly wait until the accept is in the third party vat (as acked
+	// under the assumption that send acks bytes received by the remote
+	// party).
+	//
+	// Note that there is _still_ room for a race here, if the Accept is
+	// processed slower than the Disembargo goes from the local vat (Alice)
+	// to the provider (Bob) and forwarded to the third party (Carol),
+	// because the Disembargo would arrive before the Accept.
+	//
+	// Note that this can also significantly increase contention and reduce
+	// performance for conns, because the conns to both Bob and Carol are
+	// locked here. We assume 3PH is rare enough that this won't be
+	// significant.
 	if err := v.sendAccept(ctx, rc, accept); err != nil {
 		return err
 	}
 
-	// Lock srcConn before modifying the pipeline's conn to avoid a possible
-	// race condition with startPipeline(). See the comment tagged as
-	// 3PHCONNISSUE.
-	srcConn.mu.Lock()
-
-	// From now on, any calls pipelined on this step will go directly to the
-	// third party (path has shortened!).
 	step := pipe.Step(stepIdx)
 	var disembargoTarget messageTarget
 	err = step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
@@ -398,7 +445,6 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		ov.qid = acceptQid
 		return os, ov, nil
 	})
-	srcConn.mu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -423,7 +469,6 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		target:   disembargoTarget,
 	}}
 	if err := srcConn.queue(ctx, singleMsgBatch(dis)); err != nil {
-		srcConn.mu.Unlock()
 		return err
 	}
 
@@ -649,12 +694,14 @@ func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis 
 		return fmt.Errorf("only disembargos of exports supported for now") // FIXME
 	}
 
+	// rc.log.Warn().Any("xx", fmt.Sprintf("%#v", rc.exports)).Int("bbb", int(dis.target.impcap)).Msgf("XXXXXX %x", dis.target.impcap)
 	exp, hasExp := rc.exports.get(ExportId(dis.target.impcap))
 	if !hasExp {
-		return errors.New("received disembargo for unknwon export")
+		return errDisembargoAcceptUnknownExport(dis.target.impcap)
 	}
 	if exp.typ != exportTypeThirdPartyExport {
-		return errors.New("received for disembargo on export that is not a third party export")
+		return fmt.Errorf("received for disembargo on export %d that is not a third party export",
+			dis.target.impcap)
 	}
 
 	// Forward disembargo to third party.
@@ -709,6 +756,8 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
+	rc.log.Trace().Str("which", msg.Which().String()).Msg("Starting to process inbound msg")
+
 	var err error
 	switch {
 	case msg.IsBootstrap():
@@ -735,9 +784,12 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logEvent := rc.log.Err(err).Str("which", msg.Which().String())
-		if rc.log.GetLevel() < zerolog.InfoLevel {
-			logEvent.Any("msg", msg)
+		if err, ok := err.(extraDataError); ok {
+			err.addExtraDataToLog(logEvent)
 		}
+		// if rc.log.GetLevel() < zerolog.InfoLevel {
+		//	logEvent.Any("msg", msg)
+		//}
 		logEvent.Msg("Error while processing inbound message")
 	}
 

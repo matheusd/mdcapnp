@@ -30,8 +30,16 @@ type testHarness struct {
 }
 
 func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
+	// Start with default options.
 	var testVatOpts []VatOption
-	testVatOpts = append(testVatOpts, WithName(name), WithLogger(&th.logger))
+	testVatOpts = append(testVatOpts,
+		WithName(name),
+		WithLogger(&th.logger),
+		withFailOnConnErr(true),
+		withDelayResolveIn3PH(time.Millisecond),
+	)
+
+	// Config according to test (allows overriding default).
 	testVatOpts = append(testVatOpts, opts...)
 
 	v := NewVat(testVatOpts...)

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"weak"
 
 	"matheusd.com/mdcapnp/capnpser"
@@ -164,6 +165,8 @@ const (
 	message_which_disembargo
 	message_which_accept
 	message_which_provide
+
+	message_which_testecho message_which = 999999
 )
 
 func (mw message_which) String() string {
@@ -229,6 +232,8 @@ func (m *message) Which() message_which {
 		return message_which_accept
 	case m.isProvide:
 		return message_which_provide
+	case m.testEcho > 0:
+		return message_which_testecho
 	default:
 		panic("unknown message which")
 	}
@@ -305,9 +310,14 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 		Str("target", tpRc.String()).
 		Msg("Resolving promised answer to third party")
 
+	vat := ap.rc.vat
+	if tpRc.vat != vat {
+		return errors.New("cannot solve to third party in different local vat")
+	}
+
 	// TODO: Determine this by calling rc.c.introduceTo(ap.rc.c) to get an
 	// IntroductionInfo.
-	iinfo, err := ap.rc.vat.getNetworkIntroduction(ap.rc, tpRc)
+	iinfo, err := vat.getNetworkIntroduction(ap.rc, tpRc)
 	if err != nil {
 		return err
 	}
@@ -324,7 +334,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 		err = fmt.Errorf("could not generate new question id for %s", tpRc)
 	} else {
 		provide.qid = qid
-		tpRc.questions.set(qid, question{}) // TODO: need to save anything?
+		tpRc.questions.set(qid, question{typ: questionTypeProvide})
 	}
 	tpRc.mu.Unlock()
 	if err != nil {
@@ -359,6 +369,17 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 	// However, in tests where processing is very fast or if Carol is
 	// congested, this may not be true. In that case, it may be necessary to
 	// introduce some delay in this point.
+	if vat.cfg.delayResolveIn3PH > 0 {
+		startSleep := time.Now()
+		select {
+		case endSleep := <-time.After(vat.cfg.delayResolveIn3PH):
+			ap.rc.log.Trace().
+				Dur("dur", endSleep.Sub(startSleep)).
+				Msg("Slept to delay Resolve after Provide in 3PH resolution")
+		case <-ap.rc.ctx.Done():
+			return ap.rc.ctx.Err()
+		}
+	}
 
 	// Send resolve back to caller, pointing to the third party.
 	ap.rc.mu.Lock()
@@ -386,7 +407,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 			Int("thirdPartyIid", int(tpIid)).
 			Msg("Resolving previously exported promise")
 
-		err = ap.rc.vat.queueResolve(ap.rc.ctx, ap.rc, ap.eid, exp, exp)
+		err = vat.queueResolve(ap.rc.ctx, ap.rc, ap.eid, exp, exp)
 	}
 
 	// After unlocking, any calls received from the remote to this answer
@@ -488,7 +509,15 @@ type AnswerId uint32
 type ExportId uint32
 type ImportId uint32
 
+type questionType int
+
+const (
+	questionTypeCall questionType = iota
+	questionTypeProvide
+)
+
 type question struct {
+	typ     questionType
 	pipe    weak.Pointer[pipeline]
 	stepIdx int
 }

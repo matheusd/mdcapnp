@@ -9,21 +9,28 @@ import (
 	"errors"
 	"runtime/trace"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
 )
 
+type connDone struct {
+	rc  *runningConn
+	err error
+}
+
 type Vat struct {
-	cfg vatConfig
-	log *zerolog.Logger
+	cfg     vatConfig
+	log     *zerolog.Logger
+	rcCount atomic.Uint64
 
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
 	newConn    chan *runningConn
-	connDone   chan *runningConn
+	connDone   chan connDone
 	expAccepts chan expectedAccept
 	getAccepts chan getExpectedAccept
 }
@@ -36,7 +43,7 @@ func NewVat(opts ...VatOption) *Vat {
 		cfg:        cfg,
 		log:        cfg.vatLogger(),
 		newConn:    make(chan *runningConn),
-		connDone:   make(chan *runningConn),
+		connDone:   make(chan connDone),
 		expAccepts: make(chan expectedAccept, 5),    // Buffered to reduce locking contention on caller
 		getAccepts: make(chan getExpectedAccept, 5), // Buffered to reduce locking contention on caller
 	}
@@ -45,6 +52,7 @@ func NewVat(opts ...VatOption) *Vat {
 
 func (v *Vat) RunConn(c conn) *runningConn {
 	rc := newRunningConn(c, v)
+	rc.rid = v.rcCount.Add(1)
 
 	// testIDsOffset is set during tests, to randomize the starting range of
 	// every table id per vat. This ensures code isn't relying on specific
@@ -80,8 +88,8 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	p.state = pipelineStateRunning
 	p.mu.Unlock()
 
-	// If this pipeline is a fork, wait until the its parent step is
-	// running, which means it can proceed.
+	// If this pipeline is a fork, wait until its parent step is running,
+	// which means it can proceed.
 	var conn *runningConn
 	if p.parent != nil {
 		// Start parent if parent hasn't started yet.
@@ -110,6 +118,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 		// for the parent step.
 		conn = parentStepVal.conn
 	} else {
+		// This only happens for bootstrap.
 		conn = p.Step(0).value.GetValue().conn
 	}
 
@@ -186,20 +195,21 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	// Remove conn once it finishes processing.
 	go func() {
 		err := connG.Wait()
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errConnStopped) {
 			v.log.Debug().Err(err).Msg("Conn goroutines finished due to error")
 		} else {
 			v.log.Trace().Msg("Conn goroutines finished successfully")
+			err = nil
 		}
 		select {
-		case v.connDone <- rc:
-		case <-time.After(time.Second):
+		case v.connDone <- connDone{rc: rc, err: err}:
+		case <-time.After(time.Second): // TODO: parametrize?
 		}
 	}()
 }
 
 func (v *Vat) stopConn(rc *runningConn) {
-	rc.cancel(errors.New("conn stopped")) // Ok to call multiple times if that's the case.
+	rc.cancel(errConnStopped) // Ok to call multiple times if that's the case.
 
 	// Every non-answered question is answered with an error.
 	for qid, q := range rc.questions.entries {
@@ -339,12 +349,16 @@ func (v *Vat) runStep(rs *vatRunState) error {
 		v.runConn(rs.ctx, rc)
 		rs.conns = append(rs.conns, rc)
 
-	case oc := <-v.connDone:
-		v.stopConn(oc)
-		rs.delConn(oc)
+	case cd := <-v.connDone:
+		v.stopConn(cd.rc)
+		rs.delConn(cd.rc)
+		if v.cfg.failOnConnErr && cd.err != nil {
+			return cd.err
+		}
 
 	case expAc := <-v.expAccepts:
 		rs.expAccepts[expAc.id] = expAc // TODO: How to timeout?
+		expAc.srcConn.log.Trace().Hex("uniqueKey", expAc.id[:]).Msg("Registered expected accept in vat")
 
 	case getAc := <-v.getAccepts:
 		if expAc, ok := rs.expAccepts[getAc.id]; !ok {
