@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 	"weak"
 
@@ -87,16 +88,18 @@ type exception struct {
 }
 
 type rpcReturn struct {
-	aid         AnswerId
-	isResults   bool
-	pay         payload
-	isException bool
-	exc         exception
+	aid            AnswerId
+	isResults      bool
+	pay            payload
+	isException    bool
+	exc            exception
+	noFinishNeeded bool
 }
 
-func (r *rpcReturn) AnswerId() AnswerId { return r.aid }
-func (r *rpcReturn) IsResults() bool    { return r.isResults }
-func (r *rpcReturn) AsResults() payload { return r.pay }
+func (r *rpcReturn) AnswerId() AnswerId   { return r.aid }
+func (r *rpcReturn) IsResults() bool      { return r.isResults }
+func (r *rpcReturn) AsResults() payload   { return r.pay }
+func (r *rpcReturn) NoFinishNeeded() bool { return r.noFinishNeeded }
 
 type promisedAnswer struct {
 	qid QuestionId
@@ -111,12 +114,15 @@ type messageTarget struct {
 }
 
 type call struct {
-	qid    QuestionId
-	target messageTarget
-	iid    uint64
-	mid    uint16
-	params payload
+	qid                 QuestionId
+	target              messageTarget
+	iid                 uint64
+	mid                 uint16
+	params              payload
+	noPromisePipelining bool
 }
+
+func (c *call) NoPromisePipelining() bool { return c.noPromisePipelining }
 
 type bootstrap struct {
 	qid QuestionId
@@ -255,6 +261,34 @@ func (m *message) IsAccept() bool                           { return m.isAccept 
 func (m *message) AsAccept() accept                         { return m.accept }
 func (m *message) IsProvide() bool                          { return m.isProvide }
 func (m *message) AsProvide() provide                       { return m.provide }
+
+type messagePool struct {
+	p *sync.Pool
+}
+
+func (mp *messagePool) getForPayloadSize(extraPayloadSize int) *message {
+	// TODO: size the message based on the size of call args.
+	return mp.p.Get().(*message)
+}
+
+func (mp *messagePool) get() *message {
+	return mp.p.Get().(*message)
+}
+
+func (mp *messagePool) put(m *message) {
+	*m = message{}
+	mp.p.Put(m)
+}
+
+func newMessagePool() *messagePool {
+	return &messagePool{
+		p: &sync.Pool{
+			New: func() any {
+				return &message{}
+			},
+		},
+	}
+}
 
 type interfaceId uint64
 type methodId uint16

@@ -19,6 +19,7 @@ const (
 	pipeStepStateBuilding pipelineStepState = iota
 	pipeStepStateRunning
 	pipeStepStateDone
+	pipeStepStateFinished
 	pipelineStepFailed // Must be last to be > all other states.
 )
 
@@ -39,12 +40,26 @@ type pipelineStep struct {
 	value sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
 
 	// Only accessed by the pipeline's execution goroutine.
-	rpcMsg message
+	rpcMsg *message
 }
 
 func finalizePipelineStep(step *pipelineStep) {
-	_, value := step.value.Get()
-	value.conn.cleanupQuestionIdDueToUnref(value.qid)
+	var qid QuestionId
+	var conn *runningConn
+	_ = step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os != pipelineStepFailed {
+			qid = ov.qid
+			ov.qid = 0
+			os = pipeStepStateFinished
+			conn = ov.conn
+		}
+
+		return os, ov, nil
+	})
+
+	if qid > 0 {
+		conn.cleanupQuestionIdDueToUnref(qid) // TODO: How does this conflict with other uses?
+	}
 }
 
 type pipelineState uint
@@ -58,6 +73,7 @@ const (
 
 type pipeline struct {
 	first pipelineStep
+
 	// mu protects the following fields.
 	mu    sync.Mutex
 	state pipelineState
@@ -227,7 +243,7 @@ func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error)
 	if err != nil {
 		return
 	}
-	if stepState != pipeStepStateDone { // Could be error.
+	if stepState == pipelineStepFailed { // Could be error.
 		err = stepValue.err
 		if err == nil {
 			err = fmt.Errorf("unknown final pipeline step state: %v", stepState)
@@ -279,4 +295,8 @@ func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error)
 	}
 
 	return
+}
+
+func releaseFuture[T any](ctx context.Context, cap futureCap[T]) {
+	finalizePipelineStep(cap.pipe.Step(cap.stepIndex))
 }

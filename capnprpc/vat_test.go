@@ -317,13 +317,14 @@ func BenchmarkVoidCall(b *testing.B) {
 		api := testAPIAsBootstrap(cc.Bootstrap())
 
 		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			err := api.VoidCall().Wait(ctx)
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
+
+		b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
 
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})

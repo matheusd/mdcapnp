@@ -29,6 +29,8 @@ type Vat struct {
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
+	mp *messagePool
+
 	newConn    chan *runningConn
 	connDone   chan connDone
 	expAccepts chan expectedAccept
@@ -42,6 +44,7 @@ func NewVat(opts ...VatOption) *Vat {
 	v := &Vat{
 		cfg:        cfg,
 		log:        cfg.vatLogger(),
+		mp:         newMessagePool(),
 		newConn:    make(chan *runningConn),
 		connDone:   make(chan connDone),
 		expAccepts: make(chan expectedAccept, 5),    // Buffered to reduce locking contention on caller
@@ -130,7 +133,7 @@ func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
 	// Prepare (as much as possible) messages for sending.
 	for i := range p.numSteps() {
 		step := p.Step(i)
-		step.rpcMsg = message{}
+		step.rpcMsg = v.mp.getForPayloadSize(0) // FIXME: estimate arg size
 		if step.interfaceId == 0 && step.methodId == 0 {
 			// Bootstrap.
 			step.rpcMsg.isBootstrap = true
@@ -171,12 +174,16 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 		for {
 			select {
 			case mb := <-rc.outQueue:
-				err := rc.c.send(ctx, mb.msg, mb.remainingInBatch)
+				err := rc.c.send(ctx, *mb.msg, mb.remainingInBatch)
 				if err != nil {
 					return err
 				}
 				if mb.sentChan != nil {
 					close(mb.sentChan)
+				}
+
+				if mb.msg.IsCall() || mb.msg.IsFinish() || mb.msg.IsReturn() {
+					v.mp.put(mb.msg)
 				}
 
 			case <-ctx.Done():
@@ -281,29 +288,28 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline, conn *runningConn)
 
 	// Determine how the local Vat will change in response to this
 	// pipeline.
-	var prevQid QuestionId
-	for i := range p.numSteps() {
-		var err error
-		if prevQid, err = v.prepareOutMessage(ctx, p, i, prevQid, conn); err != nil {
-			return err
-		}
-	}
-
-	// Generally, this fails only if ctx is done or if the outbound
-	// queue for this conn is full.
+	var prevQid, stepQid QuestionId
 	for i := range p.numSteps() {
 		step := p.step(i)
-		err := conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
+
+		var err error
+		if stepQid, err = v.prepareOutMessage(ctx, p, i, prevQid, conn); err != nil {
+			return err
+		}
+
+		// Generally, this fails only if ctx is done or if the outbound
+		// queue for this conn is full.
+		err = conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
 		if err != nil {
 			return err
 		}
-	}
 
-	// Commit the changes to the local Vat.
-	for i := range p.numSteps() {
-		if err := v.commitOutMessage(ctx, p, i, conn); err != nil {
+		// Commit the changes to the local Vat.
+		if err := v.commitOutMessage(ctx, p, i, conn, stepQid); err != nil {
 			return err
 		}
+
+		prevQid = stepQid
 	}
 
 	return nil

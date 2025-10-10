@@ -95,6 +95,7 @@ func newTestHarness(t testing.TB) *testHarness {
 	var logger zerolog.Logger
 	if _, isBench := t.(*testing.B); isBench {
 		logger = zerolog.Nop()
+		// logger = testLogger(t).With().Timestamp().Logger()
 	} else {
 		logger = testLogger(t).With().Timestamp().Logger()
 	}

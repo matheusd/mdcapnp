@@ -16,7 +16,7 @@ import (
 
 func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message) error {
 	bootMsg := msg.AsBootstrap()
-	reply := message{
+	reply := &message{ // TODO: fetch from v.mp
 		isReturn: true,
 		ret: rpcReturn{
 			aid:       AnswerId(bootMsg.qid),
@@ -35,7 +35,8 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message
 
 	// Modify answer table to track the bootrap export. bootExportId is set
 	// during conn setup automatically.
-	rc.answers.set(AnswerId(bootMsg.qid), answer{typ: answerTypeBootstrap, eid: rc.bootExportId})
+	ans := answer{typ: answerTypeBootstrap, eid: rc.bootExportId}
+	rc.answers.set(AnswerId(bootMsg.qid), ans)
 
 	rc.log.Debug().
 		Int("qid", int(bootMsg.qid)).
@@ -141,6 +142,14 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		return errors.New("unknown/unimplemented content type")
 	}
 
+	// Automatically remove question if result contains no caps and
+	// noFinishNeeded was set.
+	noFinishNeeded := ret.NoFinishNeeded()
+	if noFinishNeeded {
+		// TODO: need to validate if this is ok?
+		rc.questions.del(qid)
+	}
+
 	// Fulfill pieline waiting for this result.
 	step := pipe.Step(q.stepIdx)
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
@@ -157,6 +166,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		rc.log.Debug().
 			Int("qid", int(qid)).
 			Str("rtyp", stepResultType).
+			Bool("noFinishNeeded", noFinishNeeded).
 			Msg("Processed Return message")
 
 		ov.iid = stepImportId
@@ -167,6 +177,12 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		}
 
 		ov.value = stepResult
+
+		// If no finish is needed (no pipelining allowed from this),
+		// set as finished.
+		if noFinishNeeded {
+			ov.qid = 0
+		}
 		return pipeStepStateDone, ov, nil
 	})
 }
@@ -222,10 +238,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 	}
 
 	// Start preparing reply.
-	reply := message{
-		isReturn: true,
-		ret:      rpcReturn{aid: AnswerId(c.qid)},
-	}
+	var reply *message
 	crb := &rc.crb // Ok to reuse (rc is locked).
 	crb.payload = payload{content: anyPointer{
 		isVoid: true, // Void result by default on non-error.
@@ -240,6 +253,9 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 	err := exp.handler.Call(rc.ctx, callArgs, crb)
 	if ex, ok := err.(callExceptionError); ok {
 		// Turn the error into a returned exception.
+		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of exception
+		reply.isReturn = true
+		reply.ret.aid = AnswerId(c.qid)
 		reply.ret.isException = true
 		reply.ret.exc = ex.ToException()
 
@@ -255,48 +271,60 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		// Fatal connection error.
 		return err
 	} else {
+		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of return struct
+		reply.isReturn = true
+		reply.ret.aid = AnswerId(c.qid)
 		reply.ret.isResults = true
 		reply.ret.pay = crb.payload
 
-		// If the result is a capability, the answer is pipelinable, so
-		// track where the corresponding export will be.
-		var rootCapIndex int = -1
-		if crb.payload.content.IsCapPointer() {
-			rootCapIndex = int(crb.payload.content.AsCapPointer().index)
+		// No finish is needed if the call promised no pipelining or
+		// the result has no capabilities (i.e. the result is not
+		// callable).
+		noFinishNeeded := c.NoPromisePipelining() || len(crb.payload.capTable) == 0
+		reply.ret.noFinishNeeded = noFinishNeeded
+
+		if !noFinishNeeded {
+			// If the result is a capability, the answer is pipelinable, so
+			// track where the corresponding export will be.
+			var rootCapIndex int = -1
+			var rootCapExportId ExportId
+			if crb.payload.content.IsCapPointer() {
+				rootCapIndex = int(crb.payload.content.AsCapPointer().index)
+			}
+
+			// Track all exported caps.
+			for i, cp := range crb.payload.capTable {
+				if !cp.hasExportId() {
+					continue
+				}
+				capEid := cp.exportId()
+				if capExp, ok := rc.exports.get(capEid); ok {
+					// TODO: take a pointer instead?
+					capExp.refCount++
+					rc.exports.set(capEid, capExp)
+				} else if cp.IsSenderPromise() { // here sender == local vat.
+					capExp = export{typ: exportTypePromise, refCount: 1}
+					rc.exports.set(capEid, capExp)
+
+					rc.log.Trace().
+						Int("eid", int(capEid)).
+						Str("typ", "senderPromise").
+						Msg("Exporting capability")
+				} else {
+					return errors.New("other types of exports not implemented")
+				}
+
+				// If this is the root cap index, then track this export
+				// directly in the answer (for future pipelined calls).
+				if i == rootCapIndex {
+					rootCapExportId = capEid
+				}
+			}
+
+			// Save the answer in the answers table.
+			ans := answer{typ: answerTypeCall, eid: rootCapExportId}
+			rc.answers.set(AnswerId(c.qid), ans)
 		}
-		ans := answer{typ: answerTypeCall}
-
-		// Track all exported caps.
-		for i, cp := range crb.payload.capTable {
-			if !cp.hasExportId() {
-				continue
-			}
-			capEid := cp.exportId()
-			if capExp, ok := rc.exports.get(capEid); ok {
-				// TODO: take a pointer instead?
-				capExp.refCount++
-				rc.exports.set(capEid, capExp)
-			} else if cp.IsSenderPromise() { // here sender == local vat.
-				capExp = export{typ: exportTypePromise, refCount: 1}
-				rc.exports.set(capEid, capExp)
-
-				rc.log.Trace().
-					Int("eid", int(capEid)).
-					Str("typ", "senderPromise").
-					Msg("Exporting capability")
-			} else {
-				return errors.New("other types of exports not implemented")
-			}
-
-			// If this is the root cap index, then track this export
-			// directly in the answer (for future pipelined calls).
-			if i == rootCapIndex {
-				ans.eid = capEid
-			}
-		}
-
-		// Save the answer in the answers table.
-		rc.answers.set(AnswerId(c.qid), ans)
 
 		rc.log.Debug().
 			Int("qid", int(c.qid)).
@@ -464,7 +492,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 	// all the way to the third party. This will make the third party
 	// process the calls sent directly from the local vat (as opposed to
 	// those proxied by the original conn).
-	dis := message{isDisembargo: true, disembargo: disembargo{
+	dis := &message{isDisembargo: true, disembargo: disembargo{ // TODO: fetch from v.mp
 		isAccept: true,
 		target:   disembargoTarget,
 	}}
@@ -652,7 +680,8 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 		return errTooManyExports
 	}
 	rc.exports.set(eid, export{typ: exportTypeLocallyHosted, handler: handler, refCount: 1})
-	rc.answers.set(aid, answer{typ: answerTypeAccept, eid: eid})
+	ans := answer{typ: answerTypeAccept, eid: eid}
+	rc.answers.set(aid, ans)
 
 	rc.log.Debug().
 		Hex("provisionId", acResult.id[:]).
@@ -664,7 +693,7 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	// Send the Return that corresponds to the Accept to the newly
 	// introduced conn. This is the picked up capability (previously
 	// exported in srcConn).
-	retAccept := message{isReturn: true, ret: rpcReturn{
+	retAccept := &message{isReturn: true, ret: rpcReturn{ // TODO: fetch from v.mp
 		aid:       aid,
 		isResults: true,
 		pay: payload{
@@ -679,7 +708,7 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	retProvide := message{isReturn: true, ret: rpcReturn{
+	retProvide := &message{isReturn: true, ret: rpcReturn{ // TODO: fetch from v.mp
 		aid:       provideAid,
 		isResults: true,
 		pay: payload{
@@ -705,7 +734,7 @@ func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis 
 	}
 
 	// Forward disembargo to third party.
-	disProvide := message{isDisembargo: true, disembargo: disembargo{
+	disProvide := &message{isDisembargo: true, disembargo: disembargo{ // TODO: fetch from v.mp
 		isProvide: true,
 		provide:   exp.thirdPartyProvideQid,
 	}}
@@ -777,7 +806,9 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 	case msg.IsDisembargo():
 		err = v.processDisembargo(ctx, rc, msg.AsDisembargo())
 	case msg.testEcho != 0:
-		rc.queue(ctx, singleMsgBatch(msg))
+		echo := v.mp.get()
+		*echo = msg
+		rc.queue(ctx, singleMsgBatch(echo))
 	default:
 		err = errors.New("unknown Message type")
 	}
@@ -801,8 +832,6 @@ var errTooManyExports = errors.New("too many exports")
 
 // prepareOutMessage prepares an outgoing Message message that is part of a
 // pipeline to be sent to the remote Vat.
-//
-// Note: this does _not_ commit the changes to the conn's tables yet.
 func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 	stepIdx int, parentQid QuestionId, conn *runningConn) (thisQid QuestionId, err error) {
 
@@ -890,50 +919,38 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 // commitOutMessage commits the changes of the pipeline step to the local Vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote Vat.
-func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, conn *runningConn) error {
+func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, conn *runningConn, qid QuestionId) error {
 	step := pipe.step(stepIdx)
 
-	var qid QuestionId
-	var q question
-	if step.rpcMsg.isBootstrap {
-		qid = step.rpcMsg.boot.qid
-		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Bootstrap message")
-	} else if step.rpcMsg.isCall {
-		qid = step.rpcMsg.call.qid
-		conn.log.Debug().Int("qid", int(qid)).Msg("Comitted Call message")
-	} else {
+	if qid == 0 {
 		// Guard against errors while developing.
 		return errors.New("unimplemented commitment of message")
 	}
+	conn.log.Debug().Int("qid", int(qid)).Msg("Comitted outgoing message")
 
 	// runtime.AddCleanup(step, conn.cleanupQuestionIdDueToUnref, qid) // TODO: Save cleanup in question in case of early finish?
 	runtime.SetFinalizer(step, finalizePipelineStep)
-	q = question{pipe: weak.Make(pipe), stepIdx: stepIdx}
+	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}
 	conn.questions.set(qid, q)
 
-	// This step is now in flight. Allow forks from it to start. The forks
-	// won't go out after the entirety of this pipeline has processed,
-	// because this is running within the Vat's main goroutine.
-	if qid > 0 {
-		return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-			if os != pipeStepStateBuilding {
-				return os, ov, fmt.Errorf("invalid precondition state: %v", os)
-			}
-			ov.qid = qid
-			ov.conn = conn
-			return pipeStepStateRunning, ov, nil
-		})
-	}
-
-	return nil
+	// This step is now in flight. Allow forks from it to start.
+	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os != pipeStepStateBuilding {
+			return os, ov, fmt.Errorf("invalid precondition state: %v", os)
+		}
+		ov.qid = qid
+		ov.conn = conn
+		return pipeStepStateRunning, ov, nil
+	})
 }
 
-func (v *Vat) sendFinish(ctx context.Context, rc *runningConn, qid QuestionId) error {
+func (v *Vat) queueFinish(ctx context.Context, rc *runningConn, qid QuestionId) error {
 	rc.mu.Lock()
 	rc.questions.del(qid)
 	rc.mu.Unlock()
 
-	msg := message{
+	msg := v.mp.get()
+	*msg = message{
 		isFinish: true,
 		finish:   finish{qid: qid},
 	}
@@ -942,7 +959,7 @@ func (v *Vat) sendFinish(ctx context.Context, rc *runningConn, qid QuestionId) e
 }
 
 func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
-	msg := message{
+	msg := &message{ // TODO: fetch from v.mp
 		isResolve: true,
 		resolve:   resolve{pid: eid},
 	}
@@ -965,7 +982,7 @@ func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, e
 }
 
 func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error {
-	msg := message{
+	msg := &message{ // TODO: fetch from v.mp
 		isProvide: true,
 		provide:   p,
 	}
@@ -1000,7 +1017,8 @@ func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error
 }
 
 func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept accept) error {
-	outMsg := singleMsgBatch(message{isAccept: true, accept: accept})
+	msg := &message{isAccept: true, accept: accept} // TODO: fetch from v.mp
+	outMsg := singleMsgBatch(msg)
 	outMsg.wantSentAck()
 
 	if err := rc.queue(ctx, outMsg); err != nil {

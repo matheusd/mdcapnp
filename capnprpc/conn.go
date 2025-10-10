@@ -19,7 +19,7 @@ type msgBatch struct {
 }
 
 type outMsg struct {
-	msg              message
+	msg              *message
 	remainingInBatch int
 	sentChan         chan struct{}
 }
@@ -38,7 +38,7 @@ func (om *outMsg) waitSentAck(ctx context.Context) error {
 	}
 }
 
-func singleMsgBatch(msg message) outMsg {
+func singleMsgBatch(msg *message) outMsg {
 	return outMsg{msg: msg, remainingInBatch: 0}
 }
 
@@ -108,7 +108,7 @@ type runningConn struct {
 	// (incoming/outgoing table) to protect from remote misuse and restrict
 	// API.
 	mu        sync.Mutex
-	questions table[QuestionId, question]
+	questions questionsTable // table[QuestionId, question]
 	answers   table[AnswerId, answer]
 	imports   table[ImportId, imprt]
 	exports   table[ExportId, export]
@@ -129,6 +129,8 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 			Msg("Queueing outgoing message")
 	*/
 
+	which := m.msg.Which()
+
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
@@ -136,7 +138,7 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 	case rc.outQueue <- m:
 		rc.log.Trace().
 			Int("remInBatch", m.remainingInBatch).
-			Str("which", m.msg.Which().String()).
+			Str("which", which.String()).
 			Msg("Queued outgoing message")
 		return nil
 
@@ -158,7 +160,7 @@ func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
 		return
 	}
 
-	err := rc.vat.sendFinish(rc.ctx, rc, qid)
+	err := rc.vat.queueFinish(rc.ctx, rc, qid)
 	if err != nil {
 		rc.log.Err(err).Int("qid", int(qid)).Msg("Error sending Finish")
 	} else {
@@ -176,8 +178,8 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 		boot: bootstrapCap(newRootFutureCap[capability](1)),
 
-		outQueue:  make(chan outMsg, 40000), // TODO: Parametrize buffer size.
-		questions: makeTable[QuestionId, question](),
+		outQueue:  make(chan outMsg, 60000), // TODO: Parametrize buffer size.
+		questions: makeQuestionsTable(),     // makeTable[QuestionId, question](),
 		answers:   makeTable[AnswerId, answer](),
 		imports:   makeTable[ImportId, imprt](),
 		exports:   makeTable[ExportId, export](),

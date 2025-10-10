@@ -23,6 +23,10 @@ type futureVoid futureCap[struct{}]
 
 func (fv futureVoid) Wait(ctx context.Context) error {
 	_, err := waitResult(ctx, futureCap[struct{}](fv))
+
+	// FIXME: this should be done automatically when the result has no caps
+	// that can be pipelined.
+	releaseFuture(ctx, futureCap[struct{}](fv))
 	return err
 }
 
