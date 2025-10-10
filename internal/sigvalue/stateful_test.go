@@ -231,4 +231,34 @@ func BenchmarkStatefulWait(b *testing.B) {
 		}
 
 	})
+
+	b.Run("need wait", func(b *testing.B) {
+		st := NewStateful(0, 0)
+		ctx := testctx.New(b)
+
+		chanAdvance := make(chan int, 1)
+		go func() {
+			for i := range chanAdvance {
+				time.Sleep(time.Microsecond) // Yield.
+				st.Set(i, i)
+			}
+		}()
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for i := range b.N {
+			chanAdvance <- i
+			gotState, gotValue, err := st.WaitStateAtLeast(ctx, i)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if gotState != i || gotValue != i {
+				b.Fatalf("unexpected got: %d %d %d", i, gotState, gotValue)
+			}
+		}
+
+		close(chanAdvance)
+	})
+
 }
