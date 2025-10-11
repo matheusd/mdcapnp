@@ -168,6 +168,46 @@ func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
 	}
 }
 
+func (rc *runningConn) inLoop(ctx context.Context) error {
+	v := rc.vat
+	for {
+		msg, err := rc.c.receive(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Process input msg.
+		err = v.processInMessage(ctx, rc, msg)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (rc *runningConn) outLoop(ctx context.Context) error {
+	v := rc.vat
+	c := rc.c
+	for {
+		select {
+		case mb := <-rc.outQueue:
+			err := c.send(ctx, *mb.msg, mb.remainingInBatch)
+			if err != nil {
+				return err
+			}
+			if mb.sentChan != nil {
+				close(mb.sentChan)
+			}
+
+			if mb.msg.IsCall() || mb.msg.IsFinish() || mb.msg.IsReturn() {
+				v.mp.put(mb.msg)
+			}
+
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+}
+
 func newRunningConn(c conn, v *Vat) *runningConn {
 	log := v.log.With().Str("remote", c.remoteName()).Logger()
 

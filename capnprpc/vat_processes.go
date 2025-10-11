@@ -928,6 +928,10 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, c
 	}
 	conn.log.Debug().Int("qid", int(qid)).Msg("Comitted outgoing message")
 
+	// TODO: Do not add finalizer if return is known to have no caps?
+	// TODO: Maybe add to question directly (instead of weak.Pointer) to
+	// keep it around until we get a Return, then if needed (i.e. there are
+	// pipelines or finish is needed) add the weak ref.
 	// runtime.AddCleanup(step, conn.cleanupQuestionIdDueToUnref, qid) // TODO: Save cleanup in question in case of early finish?
 	runtime.SetFinalizer(step, finalizePipelineStep)
 	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}

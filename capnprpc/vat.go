@@ -155,44 +155,11 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	rc.ctx, rc.cancel = context.WithCancelCause(ctx)
 
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
-	connG.Go(func(ctx context.Context) error {
-		for {
-			msg, err := rc.c.receive(ctx)
-			if err != nil {
-				return err
-			}
-
-			// Process input msg.
-			err = v.processInMessage(ctx, rc, msg)
-			if err != nil {
-				return err
-			}
-		}
-	})
-
-	connG.Go(func(ctx context.Context) error {
-		for {
-			select {
-			case mb := <-rc.outQueue:
-				err := rc.c.send(ctx, *mb.msg, mb.remainingInBatch)
-				if err != nil {
-					return err
-				}
-				if mb.sentChan != nil {
-					close(mb.sentChan)
-				}
-
-				if mb.msg.IsCall() || mb.msg.IsFinish() || mb.msg.IsReturn() {
-					v.mp.put(mb.msg)
-				}
-
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			}
-		}
-	})
+	connG.Go(rc.inLoop)
+	connG.Go(rc.outLoop)
 
 	// Start the bootstrap pipeline (sends the bootstrap message).
+	// Parametrize doing this automatically?
 	/*
 		connG.Go(func(ctx context.Context) error {
 			return v.execPipeline(ctx, rc.boot.pipe)
