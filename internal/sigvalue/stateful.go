@@ -47,8 +47,8 @@ const (
 	waitNotGreater
 )
 
-type stateChangeWaiter[S StateType, V any] struct {
-	c  chan stateChangeEvent[S, V]
+type stateChangeWaiter[S StateType] struct {
+	c  chan struct{} // chan stateChangeEvent[S, V]
 	wt stateChangeWaiterType
 
 	targetState S
@@ -68,7 +68,7 @@ type Stateful[S StateType, V any] struct {
 
 	state   S
 	value   V
-	waiters []stateChangeWaiter[S, V]
+	waiters []stateChangeWaiter[S]
 }
 
 // NewStateful creates a new Stateful value initialized to the passed initial
@@ -97,8 +97,6 @@ func (s *Stateful[S, V]) checkAndCallWaiters() {
 		return
 	}
 
-	event := stateChangeEvent[S, V]{state: s.state, value: s.value}
-
 	// Determine which waiters (if any) to signal and remove them.
 	for i := 0; i < len(s.waiters); {
 		w := &s.waiters[i]
@@ -109,7 +107,8 @@ func (s *Stateful[S, V]) checkAndCallWaiters() {
 
 		// Signal the channel. Note this is done under the s.mu.Lock(),
 		// therefore w.c MUST be buffered to avoid deadlocking.
-		w.c <- event
+		// w.c <- event
+		close(w.c)
 		s.removeWaiterWithChan(w.c)
 	}
 }
@@ -154,13 +153,13 @@ func (s *Stateful[S, V]) GetValue() (value V) {
 	return
 }
 
-func (s *Stateful[S, V]) addWaiter() *stateChangeWaiter[S, V] {
-	c := make(chan stateChangeEvent[S, V], 1) // Channel MUST be buffered.
-	s.waiters = append(s.waiters, stateChangeWaiter[S, V]{c: c})
-	return &s.waiters[len(s.waiters)-1]
+func (s *Stateful[S, V]) addWaiter(wt stateChangeWaiterType, ts S) chan struct{} {
+	c := make(chan struct{})
+	s.waiters = append(s.waiters, stateChangeWaiter[S]{c: c, wt: wt, targetState: ts})
+	return c
 }
 
-func (s *Stateful[S, V]) removeWaiterWithChan(c chan stateChangeEvent[S, V]) {
+func (s *Stateful[S, V]) removeWaiterWithChan(c chan struct{}) {
 	for i := range s.waiters {
 		if s.waiters[i].c != c {
 			continue
@@ -170,29 +169,29 @@ func (s *Stateful[S, V]) removeWaiterWithChan(c chan stateChangeEvent[S, V]) {
 		if i < lw-1 {
 			s.waiters[i] = s.waiters[lw-1]
 		}
-		s.waiters[lw-1] = stateChangeWaiter[S, V]{}
+		s.waiters[lw-1] = stateChangeWaiter[S]{}
 		s.waiters = s.waiters[:lw-1]
 		break
 	}
 }
 
 func (s *Stateful[S, V]) waitStateFunc(ctx context.Context, targetState S, wt stateChangeWaiterType) (state S, value V, err error) {
-	var c chan stateChangeEvent[S, V]
+	var c chan struct{}
 
 	s.mu.Lock()
 	if s.matchesType(s.state, targetState, wt) {
 		state, value = s.state, s.value
 	} else {
-		w := s.addWaiter()
-		w.targetState = targetState
-		c = w.c
+		c = s.addWaiter(wt, targetState)
 	}
 	s.mu.Unlock()
 
 	if c != nil {
 		select {
-		case e := <-c:
-			state, value = e.state, e.value
+		case <-c:
+			s.mu.Lock()
+			state, value = s.state, s.value
+			s.mu.Unlock()
 		case <-ctx.Done():
 			err = context.Cause(ctx)
 			s.mu.Lock()

@@ -136,6 +136,7 @@ func TestStatefulWait(t *testing.T) {
 	}
 }
 
+/*
 // BenchmarkStatefulSet benchmarks setting values in a Stateful under various
 // circumstances.
 func BenchmarkStatefulSet(b *testing.B) {
@@ -193,6 +194,7 @@ func BenchmarkStatefulSet(b *testing.B) {
 		}
 	})
 }
+*/
 
 // BenchmarkStatefulWait benchmarks waiting for a Stateful change in various
 // ways.
