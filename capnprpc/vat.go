@@ -187,7 +187,7 @@ func (v *Vat) stopConn(rc *runningConn) {
 
 	// Every non-answered question is answered with an error.
 	for qid, q := range rc.questions.entries {
-		pipe := q.pipe.Value()
+		pipe := q.pipe()
 		if pipe != nil {
 			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
 			pipe.mu.Lock()

@@ -551,9 +551,17 @@ const (
 )
 
 type question struct {
-	typ     questionType
-	pipe    weak.Pointer[pipeline]
-	stepIdx int
+	typ        questionType
+	weakPipe   weak.Pointer[pipeline]
+	strongPipe *pipeline
+	stepIdx    int
+}
+
+func (q *question) pipe() *pipeline {
+	if q.strongPipe != nil {
+		return q.strongPipe
+	}
+	return q.weakPipe.Value()
 }
 
 type answerType int
@@ -593,7 +601,7 @@ type imprt struct {
 
 	// Set when this import is a remote promise (this is the target call
 	// waiting for the resolution).
-	pipe    weak.Pointer[pipeline]
+	pipe    weak.Pointer[pipeline] // TODO: may need same as question (weak/strong pipe).
 	stepIdx int
 }
 

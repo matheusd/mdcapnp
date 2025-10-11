@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"weak"
 
 	"github.com/rs/zerolog"
@@ -68,7 +67,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		return nil
 	}
 
-	pipe := q.pipe.Value()
+	pipe := q.pipe()
 	if pipe == nil {
 		// This pipeline isn't used anymore (was released and a Finish
 		// should've been sent, or will be shortly), so nothing to do.
@@ -90,7 +89,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 			imp = imprt{typ: importTypeSenderHosted}
 		} else if entry.IsSenderPromise() {
 			iid = ImportId(entry.AsSenderPromise())
-			imp = imprt{typ: importTypeRemotePromise, pipe: q.pipe, stepIdx: q.stepIdx}
+			imp = imprt{typ: importTypeRemotePromise, pipe: weak.Make(pipe), stepIdx: q.stepIdx}
 		} else {
 			return fmt.Errorf("unsupported capability type")
 		}
@@ -148,6 +147,16 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	if noFinishNeeded {
 		// TODO: need to validate if this is ok?
 		rc.questions.del(qid)
+	} else if q.strongPipe != nil {
+		// Question is holding own to a strong ref to pipe, but now we
+		// switch to a weak ref. We only do this if finish is needed,
+		// because noFinishNeeded==true means this has no pipelinable
+		// capabilities and finish won't need to be sent.
+		//
+		// Doing this conditionally avoids an allocation inside
+		// weak.MakePointer.
+		q.weakPipe = weak.Make(pipe)
+		q.strongPipe = nil
 	}
 
 	// Fulfill pieline waiting for this result.
@@ -398,7 +407,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		return errTooManyOpenQuestions
 	}
 	// TODO: finalizer???
-	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}
+	q := question{weakPipe: weak.Make(pipe), stepIdx: stepIdx}
 	rc.questions.set(acceptQid, q)
 	accept := accept{
 		qid:       acceptQid,
@@ -933,8 +942,8 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, c
 	// keep it around until we get a Return, then if needed (i.e. there are
 	// pipelines or finish is needed) add the weak ref.
 	// runtime.AddCleanup(step, conn.cleanupQuestionIdDueToUnref, qid) // TODO: Save cleanup in question in case of early finish?
-	runtime.SetFinalizer(step, finalizePipelineStep)
-	q := question{pipe: weak.Make(pipe), stepIdx: stepIdx}
+	// runtime.SetFinalizer(step, finalizePipelineStep)
+	q := question{strongPipe: pipe, stepIdx: stepIdx}
 	conn.questions.set(qid, q)
 
 	// This step is now in flight. Allow forks from it to start.
