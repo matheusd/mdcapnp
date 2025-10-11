@@ -66,9 +66,10 @@ type stateChangeWaiter[S StateType] struct {
 type Stateful[S StateType, V any] struct {
 	mu sync.Mutex
 
-	state   S
-	value   V
-	waiters []stateChangeWaiter[S]
+	state       S
+	value       V
+	firstWaiter stateChangeWaiter[S]
+	waiters     []stateChangeWaiter[S]
 }
 
 // NewStateful creates a new Stateful value initialized to the passed initial
@@ -93,8 +94,13 @@ func (s *Stateful[S, V]) matchesType(state, target S, wt stateChangeWaiterType) 
 // checkAndCallWaiters checks which waiters are fulfilled by the current state
 // and calls them.
 func (s *Stateful[S, V]) checkAndCallWaiters() {
-	if len(s.waiters) == 0 {
+	if s.firstWaiter.c == nil && len(s.waiters) == 0 {
 		return
+	}
+
+	if s.firstWaiter.c != nil && s.matchesType(s.state, s.firstWaiter.targetState, s.firstWaiter.wt) {
+		close(s.firstWaiter.c)
+		s.firstWaiter.c = nil
 	}
 
 	// Determine which waiters (if any) to signal and remove them.
@@ -155,7 +161,11 @@ func (s *Stateful[S, V]) GetValue() (value V) {
 
 func (s *Stateful[S, V]) addWaiter(wt stateChangeWaiterType, ts S) chan struct{} {
 	c := make(chan struct{})
-	s.waiters = append(s.waiters, stateChangeWaiter[S]{c: c, wt: wt, targetState: ts})
+	if s.firstWaiter.c == nil {
+		s.firstWaiter = stateChangeWaiter[S]{c: c, wt: wt, targetState: ts}
+	} else {
+		s.waiters = append(s.waiters, stateChangeWaiter[S]{c: c, wt: wt, targetState: ts})
+	}
 	return c
 }
 
@@ -193,10 +203,15 @@ func (s *Stateful[S, V]) waitStateFunc(ctx context.Context, targetState S, wt st
 			state, value = s.state, s.value
 			s.mu.Unlock()
 		case <-ctx.Done():
-			err = context.Cause(ctx)
 			s.mu.Lock()
-			s.removeWaiterWithChan(c)
+			if s.firstWaiter.c == c {
+				s.firstWaiter.c = nil
+			} else {
+				s.removeWaiterWithChan(c)
+			}
 			s.mu.Unlock()
+
+			err = context.Cause(ctx)
 		}
 	}
 
