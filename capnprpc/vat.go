@@ -132,12 +132,12 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 	}
 
 	// Prepare the RPC message for this single step
-	step.rpcMsg = v.mp.getForPayloadSize(0)
-	if step.interfaceId == 0 && step.methodId == 0 {
-		step.rpcMsg.isBootstrap = true
+	rpcMsg := v.mp.getForPayloadSize(0)
+	if step.parent == nil {
+		rpcMsg.isBootstrap = true
 	} else {
-		step.rpcMsg.isCall = true
-		step.rpcMsg.call = call{
+		rpcMsg.isCall = true
+		rpcMsg.call = call{
 			iid: step.interfaceId,
 			mid: step.methodId,
 		}
@@ -148,7 +148,7 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 		stepConn = parentStepConn
 	}
 
-	return v.sendStep(ctx, step, stepConn)
+	return v.sendStep(ctx, step, stepConn, rpcMsg)
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -202,7 +202,7 @@ func (v *Vat) stopConn(rc *runningConn) {
 
 // sendStep sends a pipeline step to the remote conn (i.e. sends a Call
 // message).
-func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningConn) error {
+func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningConn, rpcMsg *message) error {
 	v.log.Trace().Msg("Sending step")
 
 	// Lock the conn to start modifying its tables. Note: this is harder
@@ -244,13 +244,13 @@ func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningCon
 	}
 	defer conn.mu.Unlock()
 
-	stepQid, err := v.prepareOutMessageForStep(ctx, step, conn)
+	stepQid, err := v.prepareOutMessageForStep(ctx, step, conn, rpcMsg)
 	if err != nil {
 		return err
 	}
 
 	err = conn.queue(ctx, outMsg{
-		msg:              step.rpcMsg,
+		msg:              rpcMsg,
 		remainingInBatch: 0,
 	})
 	if err != nil {

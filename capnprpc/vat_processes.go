@@ -841,23 +841,23 @@ var errTooManyExports = errors.New("too many exports")
 // prepareOutMessageForStep prepares an outgoing Message message that is part of a
 // pipeline to be sent to the remote Vat.
 func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
-	conn *runningConn) (thisQid QuestionId, err error) {
+	conn *runningConn, rpcMsg *message) (thisQid QuestionId, err error) {
 
 	var ok bool
 
-	if step.rpcMsg.IsBootstrap() {
+	if rpcMsg.IsBootstrap() {
 		if thisQid, ok = conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
 
-		step.rpcMsg.boot.qid = thisQid
+		rpcMsg.boot.qid = thisQid
 		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
 		return thisQid, nil
 	}
 
-	if !step.rpcMsg.IsCall() {
+	if !rpcMsg.IsCall() {
 		// Only happens during development.
 		return 0, errors.New("unimplemented message type in prepareOutMessageForStep")
 	}
@@ -882,10 +882,10 @@ func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
 	if thisQid, ok = conn.questions.nextID(); !ok {
 		return 0, errTooManyOpenQuestions
 	}
-	step.rpcMsg.call.qid = thisQid
+	rpcMsg.call.qid = thisQid
 
 	if parentIid > 0 {
-		step.rpcMsg.call.target = messageTarget{
+		rpcMsg.call.target = messageTarget{
 			isImportedCap: true,
 			impcap:        parentIid,
 		}
@@ -895,7 +895,7 @@ func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
 			Int("iid", int(parentIid)).
 			Msg("Prepared call for exported cap")
 	} else if parentQid > 0 {
-		step.rpcMsg.call.target = messageTarget{
+		rpcMsg.call.target = messageTarget{
 			isPromisedAnswer: true,
 			pans:             promisedAnswer{qid: parentQid},
 		}

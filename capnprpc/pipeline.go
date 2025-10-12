@@ -6,6 +6,7 @@ package capnprpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"matheusd.com/mdcapnp/internal/sigvalue"
@@ -38,10 +39,6 @@ type pipelineStep struct {
 
 	value sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
 
-	// Only accessed by the pipeline's execution goroutine.
-	rpcMsg *message
-
-	vat    *Vat
 	parent *pipelineStep // Set only for forked steps
 }
 
@@ -65,12 +62,11 @@ func finalizePipelineStep(step *pipelineStep) {
 }
 
 func newRootStep(v *Vat) *pipelineStep {
-	return &pipelineStep{vat: v}
+	return &pipelineStep{}
 }
 
 func newChildStep(parent *pipelineStep) *pipelineStep {
 	return &pipelineStep{
-		vat:    parent.vat,
 		parent: parent,
 	}
 }
@@ -100,8 +96,24 @@ func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParam
 }
 
 func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error) {
+	// Find the vat.
+	var vat *Vat
+	step := cap.step
+	for step != nil && vat == nil {
+		conn := step.value.GetValue().conn
+		if conn != nil {
+			vat = conn.vat
+		}
+		step = step.parent
+	}
+
+	if vat == nil {
+		err = errors.New("could not find vat for pipeline")
+		return
+	}
+
 	// Run pipeline.
-	if err = cap.step.vat.execStep(ctx, cap.step); err != nil {
+	if err = vat.execStep(ctx, cap.step); err != nil {
 		return
 	}
 
