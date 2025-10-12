@@ -67,14 +67,16 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		return nil
 	}
 
-	pipe := q.pipe()
-	if pipe == nil {
-		// This pipeline isn't used anymore (was released and a Finish
-		// should've been sent, or will be shortly), so nothing to do.
-		rc.log.Warn().Int("qid", int(qid)).Msg("Received Return message for released pipeline")
+	step := q.step()
+	if step == nil {
+		rc.log.Warn().Int("qid", int(qid)).Msg("Received Return message for released step")
 		return nil
 	}
 
+	// Go through cap table, modify imports table based on what was
+	// exported by this call.
+	//
+	// TODO: only do this if the cap is referenced in the content?
 	// Go through cap table, modify imports table based on what was
 	// exported by this call.
 	//
@@ -89,7 +91,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 			imp = imprt{typ: importTypeSenderHosted}
 		} else if entry.IsSenderPromise() {
 			iid = ImportId(entry.AsSenderPromise())
-			imp = imprt{typ: importTypeRemotePromise, pipe: weak.Make(pipe), stepIdx: q.stepIdx}
+			imp = imprt{typ: importTypeRemotePromise, step: weak.Make(step)}
 		} else {
 			return fmt.Errorf("unsupported capability type")
 		}
@@ -147,7 +149,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	if noFinishNeeded {
 		// TODO: need to validate if this is ok?
 		rc.questions.del(qid)
-	} else if q.strongPipe != nil {
+	} else if q.strongStep != nil {
 		// Question is holding own to a strong ref to pipe, but now we
 		// switch to a weak ref. We only do this if finish is needed,
 		// because noFinishNeeded==true means this has no pipelinable
@@ -155,12 +157,11 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 		//
 		// Doing this conditionally avoids an allocation inside
 		// weak.MakePointer.
-		q.weakPipe = weak.Make(pipe)
-		q.strongPipe = nil
+		q.weakStep = weak.Make(step)
+		q.strongStep = nil
 	}
 
-	// Fulfill pieline waiting for this result.
-	step := pipe.Step(q.stepIdx)
+	// Fulfill pipeline waiting for this result.
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
@@ -365,7 +366,7 @@ func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) er
 	return err
 }
 
-func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipeline, stepIdx int,
+func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineStep,
 	srcConn *runningConn, tphCapDesc thirdPartyCapDescriptor) error {
 
 	rc, provId, err := v.connectToIntroduced3rdParty(ctx, srcConn, tphCapDesc)
@@ -406,8 +407,9 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 	if !ok {
 		return errTooManyOpenQuestions
 	}
+
 	// TODO: finalizer???
-	q := question{weakPipe: weak.Make(pipe), stepIdx: stepIdx}
+	q := question{weakStep: weak.Make(step)}
 	rc.questions.set(acceptQid, q)
 	accept := accept{
 		qid:       acceptQid,
@@ -418,6 +420,7 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		// calls or not.
 		embargo: true,
 	}
+
 	rc.log.Debug().
 		Int("qid", int(acceptQid)).
 		Str("srcConn", srcConn.String()).
@@ -440,10 +443,9 @@ func (v *Vat) resolveThirdPartyCapForPipeStep(ctx context.Context, pipe *pipelin
 		return err
 	}
 
-	step := pipe.Step(stepIdx)
 	var disembargoTarget messageTarget
 	err = step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-		if os == pipelineStepFailed {
+		if os == pipeStepFailed {
 			return os, ov, ov.err
 		}
 
@@ -526,10 +528,9 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		return fmt.Errorf("import %d is not a remote promise to be resolved", iid)
 	}
 
-	pipe := imp.pipe.Value()
-	if pipe == nil {
-		// Pipeline already canceled?
-		return fmt.Errorf("pipeline of import %d already released", iid)
+	step := imp.step.Value()
+	if step == nil {
+		return fmt.Errorf("step of import %d already released", iid)
 	}
 
 	// Similar to code in processReturn. Unify?
@@ -547,7 +548,7 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		// Resolved into another remote promise.
 		resolvePromise = capEntry.AsSenderPromise()
 		resolveId = ImportId(resolvePromise)
-		resImport = imprt{typ: importTypeRemotePromise, pipe: imp.pipe, stepIdx: imp.stepIdx}
+		resImport = imprt{typ: importTypeRemotePromise, step: imp.step}
 	} else if capEntry.IsThirdPartyHosted() {
 		// Start the 3PH resolution process. This will involve
 		// connecting to the third party (if we haven't already) and
@@ -556,12 +557,11 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		// TODO: If this is only level 1, use vineId instead and proxy
 		// requests.
 		go func() {
-			err := v.resolveThirdPartyCapForPipeStep(ctx, pipe, imp.stepIdx, rc, capEntry.AsThirdPartyHosted())
+			err := v.resolveThirdPartyCapForStep(ctx, step, rc, capEntry.AsThirdPartyHosted())
 			if err != nil {
-				rc.log.Err(err).Msg("resolveThirdPartyCapForPipeStep failed")
-				// TODO: fail the pipeline step.
+				rc.log.Err(err).Msg("resolveThirdPartyCapForStep failed")
 			} else {
-				rc.log.Trace().Msg("resolveThirdPartyCapForPipeStep completed")
+				rc.log.Trace().Msg("resolveThirdPartyCapForStep completed")
 			}
 		}()
 
@@ -577,7 +577,6 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		return errors.New("unknown cap entry type")
 	}
 
-	step := pipe.Step(imp.stepIdx)
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
@@ -839,14 +838,13 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 var errTooManyOpenQuestions = errors.New("too many open questions")
 var errTooManyExports = errors.New("too many exports")
 
-// prepareOutMessage prepares an outgoing Message message that is part of a
+// prepareOutMessageForStep prepares an outgoing Message message that is part of a
 // pipeline to be sent to the remote Vat.
-func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
-	stepIdx int, parentQid QuestionId, conn *runningConn) (thisQid QuestionId, err error) {
+func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
+	conn *runningConn) (thisQid QuestionId, err error) {
 
 	var ok bool
 
-	step := pipe.step(stepIdx)
 	if step.rpcMsg.IsBootstrap() {
 		if thisQid, ok = conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
@@ -861,41 +859,32 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 
 	if !step.rpcMsg.IsCall() {
 		// Only happens during development.
-		return 0, errors.New("unimplemented message type in prepareOutMessage")
+		return 0, errors.New("unimplemented message type in prepareOutMessageForStep")
+	}
+
+	if step.parent == nil {
+		// The only pipelineStep that doesn't have a parent is the
+		// bootstrap message, which was already handled.
+		return 0, errors.New("call message without parent pipeline step")
 	}
 
 	// Find the target of this call (conn and either parentIid or
 	// parentQid).
-	var parentIid ImportId
-	if stepIdx == 0 && pipe.parent == nil {
-		// Should never happen, but avoid a panic below.
-		return 0, errors.New("non-bootstrap call without a parent pipeline")
-	} else if stepIdx == 0 {
-		// Fork from a parent pipeline. Determine if the parent step has
-		// been resolved into an imported cap or we're still waiting for
-		// a remote Return.
-		parentStep := pipe.parent.Step(pipe.parentStepIdx)
-		parentStepStepState, parentStepValue := parentStep.value.Get()
-		if parentStepStepState == pipelineStepFailed {
-			return 0, parentStepValue.err
-		}
-		parentIid = parentStepValue.iid
-		parentQid = parentStepValue.qid
-		// step.conn = parentStepValue.conn
-	} else {
-		// Still same pipeline, use the same conn as parent (parentQid
-		// already refers to the parent's question id).
+	parentStep := step.parent
+	parentStepState, parentStepValue := parentStep.value.Get()
+	if parentStepState == pipeStepFailed {
+		return 0, parentStepValue.err
 	}
+	parentIid := parentStepValue.iid
+	parentQid := parentStepValue.qid
 
-	// Can now determine question id.
+	// Find next available question id.
 	if thisQid, ok = conn.questions.nextID(); !ok {
 		return 0, errTooManyOpenQuestions
 	}
 	step.rpcMsg.call.qid = thisQid
 
 	if parentIid > 0 {
-		// parentIid > 0 means this is already resolved into a returned
-		// import (either a remote promise or a concrete remote cap).
 		step.rpcMsg.call.target = messageTarget{
 			isImportedCap: true,
 			impcap:        parentIid,
@@ -906,8 +895,6 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			Int("iid", int(parentIid)).
 			Msg("Prepared call for exported cap")
 	} else if parentQid > 0 {
-		// parentQid > 0 means this is a pielined call to a promised
-		// answer.
 		step.rpcMsg.call.target = messageTarget{
 			isPromisedAnswer: true,
 			pans:             promisedAnswer{qid: parentQid},
@@ -918,18 +905,17 @@ func (v *Vat) prepareOutMessage(ctx context.Context, pipe *pipeline,
 			Int("pans", int(parentQid)).
 			Msg("Prepared call for in-pipeline promised answer")
 	} else {
-		// What happened mate?!?!?!
 		return 0, errors.New("unimplemented case")
 	}
 
 	return thisQid, nil
 }
 
-// commitOutMessage commits the changes of the pipeline step to the local Vat's
+// commitOutMessageForStep commits the changes of the pipeline step to the local Vat's
 // state, under the assumption that the given pipeline step was successfully
 // sent to the remote Vat.
-func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, conn *runningConn, qid QuestionId) error {
-	step := pipe.step(stepIdx)
+func (v *Vat) commitOutMessageForStep(_ context.Context, step *pipelineStep,
+	conn *runningConn, qid QuestionId) error {
 
 	if qid == 0 {
 		// Guard against errors while developing.
@@ -943,12 +929,12 @@ func (v *Vat) commitOutMessage(_ context.Context, pipe *pipeline, stepIdx int, c
 	// pipelines or finish is needed) add the weak ref.
 	// runtime.AddCleanup(step, conn.cleanupQuestionIdDueToUnref, qid) // TODO: Save cleanup in question in case of early finish?
 	// runtime.SetFinalizer(step, finalizePipelineStep)
-	q := question{strongPipe: pipe, stepIdx: stepIdx}
+	q := question{strongStep: step}
 	conn.questions.set(qid, q)
 
 	// This step is now in flight. Allow forks from it to start.
 	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-		if os != pipeStepStateBuilding {
+		if os != pipeStepStateSending {
 			return os, ov, fmt.Errorf("invalid precondition state: %v", os)
 		}
 		ov.qid = qid

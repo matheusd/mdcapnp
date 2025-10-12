@@ -159,6 +159,14 @@ func (s *Stateful[S, V]) GetValue() (value V) {
 	return
 }
 
+// GetState returns the current state.
+func (s *Stateful[S, V]) GetState() (state S) {
+	s.mu.Lock()
+	state = s.state
+	s.mu.Unlock()
+	return
+}
+
 func (s *Stateful[S, V]) addWaiter(wt stateChangeWaiterType, ts S) chan struct{} {
 	c := make(chan struct{})
 	if s.firstWaiter.c == nil {

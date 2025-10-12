@@ -6,8 +6,6 @@ package capnprpc
 
 import (
 	"testing"
-
-	"matheusd.com/depvendoredtestify/require"
 )
 
 type testCap struct{}
@@ -22,59 +20,37 @@ func (tcf testCapFuture) nextNoInline() testCapFuture {
 	return testCapFuture(remoteCall[testCap, testCap](futureCap[testCap](tcf), 1000, 11, nil))
 }
 
-// TODO: test forking a pipeline with only one step (i.e. bootstrap).
-
 // BenchmarkAddPipeRemoteCall benchmarks adding a remote call to a pipeline
 // under various circumstances.
 func BenchmarkAddPipeRemoteCall(b *testing.B) {
-	b.Run("no hint/inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](0))
+	v := NewVat()
+
+	b.Run("inline", func(b *testing.B) {
+		f := testCapFuture(newRootFutureCap[testCap](v))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
 			f = f.next()
 		}
-		require.Equal(b, b.N, f.stepIndex)
 	})
 
-	b.Run("no hint/no inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](0))
+	b.Run("no inline", func(b *testing.B) {
+		f := testCapFuture(newRootFutureCap[testCap](v))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
 			f = f.nextNoInline()
 		}
-		require.Equal(b, b.N, f.stepIndex)
-	})
-
-	b.Run("hint/inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](b.N))
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			f = f.next()
-		}
-		require.Equal(b, b.N, f.stepIndex)
-	})
-
-	b.Run("hint/no inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](b.N))
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			f = f.nextNoInline()
-		}
-		require.Equal(b, b.N, f.stepIndex)
 	})
 
 	b.Run("fork/inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](b.N))
-		var final testCapFuture = f.next() // First one doesn't count.
+		f := testCapFuture(newRootFutureCap[testCap](v))
+		var final testCapFuture = f.next()
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
 			final = f.next()
 		}
-		require.Equal(b, 0, final.stepIndex)
+		_ = final
 	})
 }

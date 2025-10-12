@@ -6,9 +6,7 @@ package capnprpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync"
 
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
@@ -17,10 +15,11 @@ type pipelineStepState int
 
 const (
 	pipeStepStateBuilding pipelineStepState = iota
+	pipeStepStateSending
 	pipeStepStateRunning
 	pipeStepStateDone
 	pipeStepStateFinished
-	pipelineStepFailed // Must be last to be > all other states.
+	pipeStepFailed // Must be last to be > all other states.
 )
 
 type pipelineStepStateValue struct {
@@ -41,13 +40,16 @@ type pipelineStep struct {
 
 	// Only accessed by the pipeline's execution goroutine.
 	rpcMsg *message
+
+	vat    *Vat
+	parent *pipelineStep // Set only for forked steps
 }
 
 func finalizePipelineStep(step *pipelineStep) {
 	var qid QuestionId
 	var conn *runningConn
 	_ = step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-		if os != pipelineStepFailed {
+		if os != pipeStepFailed {
 			qid = ov.qid
 			ov.qid = 0
 			os = pipeStepStateFinished
@@ -62,188 +64,53 @@ func finalizePipelineStep(step *pipelineStep) {
 	}
 }
 
-type pipelineState uint
-
-const (
-	pipelineStateBuilding pipelineState = iota
-	pipelineStateBuilt
-	pipelineStateRunning
-	pipelineStateConnDone
-)
-
-type pipeline struct {
-	first pipelineStep
-
-	// mu protects the following fields.
-	mu    sync.Mutex
-	state pipelineState
-	steps []*pipelineStep
-
-	// Only set on pipeline creation.
-	vat           *Vat
-	parent        *pipeline
-	parentStepIdx int
+func newRootStep(v *Vat) *pipelineStep {
+	return &pipelineStep{vat: v}
 }
 
-var fatalEmptyPipeline = "empty pipeline"
-var fatalInvalidStepIndex = "invalid step index"
-
-const defaultPipelineSizeHint = 5
-
-var errPipelineStarted = errors.New("pipeline started successfully (not a real error)")
-
-func newPipeline(sizeHint int) *pipeline {
-	return &pipeline{}
-}
-
-// State returns the current pipeline state.
-func (pipe *pipeline) State() pipelineState {
-	pipe.mu.Lock()
-	res := pipe.state
-	pipe.mu.Unlock()
-	return res
-}
-
-// LastStep returns the last pipeline step, handling special cases like a newly
-// forked pipeline.
-func (pipe *pipeline) LastStep() *pipelineStep {
-	pipe.mu.Lock()
-	if pipe.isEmpty() {
-		pipe.mu.Unlock()
-		if pipe.parent == nil {
-			panic(fatalEmptyPipeline)
-		}
-		return pipe.parent.LastStep()
+func newChildStep(parent *pipelineStep) *pipelineStep {
+	return &pipelineStep{
+		vat:    parent.vat,
+		parent: parent,
 	}
-	res := pipe.step(pipe.numSteps() - 1)
-	pipe.mu.Unlock()
-	return res
 }
-
-func (pipe *pipeline) step(i int) *pipelineStep {
-	if pipe.isEmpty() {
-		pipe.mu.Unlock()
-		if i != -1 {
-			panic(fatalInvalidStepIndex)
-		} else if pipe.parent == nil {
-			panic(fatalEmptyPipeline)
-		}
-		return pipe.parent.Step(pipe.parentStepIdx)
-	}
-	if i == 0 {
-		return &pipe.first
-	} else {
-		return pipe.steps[i-1]
-	}
-
-}
-
-// Step returns the ith step of the pipeline, handling special cases like a
-// newly forked pipeline.
-func (pipe *pipeline) Step(i int) *pipelineStep {
-	pipe.mu.Lock()
-	res := pipe.step(i)
-	pipe.mu.Unlock()
-	return res
-}
-
-func (pipe *pipeline) wouldFork(i int) bool {
-	return i != pipe.numSteps()-1
-}
-
-func (pipe *pipeline) addStep() int {
-	pipe.steps = append(pipe.steps, &pipelineStep{})
-	return pipe.numSteps() - 1
-}
-
-func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
-	fork := newPipeline(sizeHint)
-	fork.vat = pipe.vat
-	fork.parent = pipe
-	fork.parentStepIdx = i
-	return fork
-}
-
-func (pipe *pipeline) failAllSteps(err error) {
-	pipe.mu.Lock()
-	pipe.first.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-		if ov.err == nil {
-			ov.err = err
-		}
-		return pipelineStepFailed, ov, nil
-	})
-
-	for _, step := range pipe.steps {
-		step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-			if ov.err == nil {
-				ov.err = err
-			}
-			return pipelineStepFailed, ov, nil
-		})
-	}
-	pipe.mu.Unlock()
-}
-
-func (pipe *pipeline) numSteps() int {
-	return len(pipe.steps) + 1
-}
-
-func (pipe *pipeline) isEmpty() bool {
-	return false
-}
-
-var errPipelineNotBuildingState = errors.New("pipeline not in building state")
 
 type futureCap[T any] struct {
 	_ [0]T // Tag.
 
-	pipe      *pipeline
-	stepIndex int
+	step *pipelineStep
 }
 
-func newRootFutureCap[T any](pipeSizeHint int) futureCap[T] {
-	res := futureCap[T]{
-		pipe:      newPipeline(pipeSizeHint),
-		stepIndex: 0,
+func newRootFutureCap[T any](v *Vat) futureCap[T] {
+	return futureCap[T]{
+		step: newRootStep(v),
 	}
-	return res
 }
 
 func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
-	pipe := obj.pipe
-	//	var conn *runningConn
-	pipe.mu.Lock()
-	if pipe.state != pipelineStateBuilding || pipe.wouldFork(obj.stepIndex) {
-		res.pipe = pipe.fork(obj.stepIndex, defaultPipelineSizeHint)
-		res.stepIndex = 0
-		//conn = pipe.step(obj.stepIndex).value.GetValue().conn
-	} else {
-		res.pipe = pipe
-		res.stepIndex = res.pipe.addStep()
-	}
+	parentStep := obj.step
 
-	step := res.pipe.step(res.stepIndex)
-	step.interfaceId = iid
-	step.methodId = mid
-	step.paramsBuilder = pb
-	//step.value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: conn})
-	pipe.mu.Unlock()
+	// Every call creates a new step with parent reference
+	res.step = newChildStep(parentStep)
+	res.step.interfaceId = iid
+	res.step.methodId = mid
+	res.step.paramsBuilder = pb
 
-	return
+	return res
 }
 
 func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error) {
-	// Run cap.pipe
-	if err = cap.pipe.vat.execPipeline(ctx, cap.pipe); err != nil {
+	// Run pipeline.
+	if err = cap.step.vat.execStep(ctx, cap.step); err != nil {
 		return
 	}
 
 	// Wait until the required step of the pipeline completes or fails.
-	stepState, stepValue, err := cap.pipe.Step(cap.stepIndex).value.WaitStateAtLeast(ctx, pipeStepStateDone)
+	stepState, stepValue, err := cap.step.value.WaitStateAtLeast(ctx, pipeStepStateDone)
 	if err != nil {
 		return
 	}
-	if stepState == pipelineStepFailed { // Could be error.
+	if stepState == pipeStepFailed {
 		err = stepValue.err
 		if err == nil {
 			err = fmt.Errorf("unknown final pipeline step state: %v", stepState)
@@ -298,5 +165,5 @@ func waitResult[T any](ctx context.Context, cap futureCap[T]) (res T, err error)
 }
 
 func releaseFuture[T any](ctx context.Context, cap futureCap[T]) {
-	finalizePipelineStep(cap.pipe.Step(cap.stepIndex))
+	finalizePipelineStep(cap.step)
 }

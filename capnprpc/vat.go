@@ -77,78 +77,78 @@ func (v *Vat) RunConn(c conn) *runningConn {
 	return rc
 }
 
-// execPipeline starts the execution of a pipeline. All parent pipelines are
-// started (if not yet started) and preconditional steps are waited for.
-//
-// This blocks until the pipeline has fully started: the local vat has changed
-// its state in response to the pipeline being in-flight.
-func (v *Vat) execPipeline(ctx context.Context, p *pipeline) error {
-	p.mu.Lock()
-	if p.state != pipelineStateBuilding && p.state != pipelineStateBuilt {
-		p.mu.Unlock()
-		return errPipelineNotBuildingState
-	}
-	p.state = pipelineStateRunning
-	p.mu.Unlock()
+func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 
-	// If this pipeline is a fork, wait until its parent step is running,
-	// which means it can proceed.
-	var conn *runningConn
-	if p.parent != nil {
+	// Sanity check pipe hasn't run yet.
+	var stepConn *runningConn
+	err := step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		if os == pipeStepStateFinished {
+			return os, ov, errPipeStepAlreadyFinished
+		}
+		if os == pipeStepFailed {
+			return os, ov, ov.err
+		}
+		if os != pipeStepStateBuilding {
+			return os, ov, errPipelineNotBuildingState
+		}
+		os = pipeStepStateSending
+		stepConn = ov.conn
+		return os, ov, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Wait for parent to be running (if this is a child step)
+	var parentStepConn *runningConn
+	if step.parent != nil {
 		// Start parent if parent hasn't started yet.
-		parentState := p.parent.State()
-		if parentState == pipelineStateBuilding || parentState == pipelineStateBuilt {
-			err := v.execPipeline(ctx, p.parent)
+		parentState := step.parent.value.GetState()
+		if parentState == pipeStepStateBuilding {
+			err := v.execStep(ctx, step.parent)
 
 			// Ignore errPipelineNotBuildingState because it may
-			// have changed since the State() call.
+			// have changed since the State() call (happens if
+			// multiple children are starting a single parent
+			// concurrently).
 			if err != nil && !errors.Is(err, errPipelineNotBuildingState) {
 				return err
 			}
 		}
 
-		// Pipeline is running. Wait until the specific step is running.
-		parentStep := p.parent.Step(p.parentStepIdx)
-		parentStepState, parentStepVal, err := parentStep.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
+		parentState, parentVal, err := step.parent.value.WaitStateAtLeast(ctx, pipeStepStateRunning)
 		if err != nil {
 			return err
 		}
-		if parentStepState == pipelineStepFailed {
-			return parentStepVal.err
+		if parentState == pipeStepFailed {
+			return parentVal.err
+		}
+		if parentState == pipeStepStateFinished {
+			return errPipeParentStepAlreadyFinished
 		}
 
-		// This is a forked pipeline, so the conn is the same as the one
-		// for the parent step.
-		conn = parentStepVal.conn
+		// Ok to continue (parent is running or completed).
+		parentStepConn = parentVal.conn
+	}
+
+	// Prepare the RPC message for this single step
+	step.rpcMsg = v.mp.getForPayloadSize(0)
+	if step.interfaceId == 0 && step.methodId == 0 {
+		step.rpcMsg.isBootstrap = true
 	} else {
-		// This only happens for bootstrap.
-		conn = p.Step(0).value.GetValue().conn
-	}
-
-	// Shortcircuit empty pipelines (caller is likely to wait on parent).
-	if p.isEmpty() {
-		return nil
-	}
-
-	// Prepare (as much as possible) messages for sending.
-	for i := range p.numSteps() {
-		step := p.Step(i)
-		step.rpcMsg = v.mp.getForPayloadSize(0) // FIXME: estimate arg size
-		if step.interfaceId == 0 && step.methodId == 0 {
-			// Bootstrap.
-			step.rpcMsg.isBootstrap = true
-		} else {
-			step.rpcMsg.isCall = true
-			step.rpcMsg.call = call{
-				// target must be set in vat's run().
-				iid: step.interfaceId,
-				mid: step.methodId,
-				// TODO: params?
-			}
+		step.rpcMsg.isCall = true
+		step.rpcMsg.call = call{
+			iid: step.interfaceId,
+			mid: step.methodId,
 		}
 	}
 
-	return v.startPipeline(ctx, p, conn) // TODO: bring this code here.
+	// Determine connection from parent or step itself
+	if step.parent != nil {
+		stepConn = parentStepConn
+	}
+
+	return v.sendStep(ctx, step, stepConn)
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -187,26 +187,23 @@ func (v *Vat) stopConn(rc *runningConn) {
 
 	// Every non-answered question is answered with an error.
 	for qid, q := range rc.questions.entries {
-		pipe := q.pipe()
-		if pipe != nil {
-			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling pipeline step due to conn done")
-			pipe.mu.Lock()
-			pipe.state = pipelineStateConnDone
-			for i := range pipe.numSteps() {
-				pipe.step(i).value.Set(pipelineStepFailed, pipelineStepStateValue{err: errConnDone})
-			}
-			pipe.mu.Unlock()
+		step := q.step()
+		if step != nil {
+			rc.log.Trace().Int("qid", int(qid)).Msg("Cancelling step due to conn done")
+			step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+				if ov.err == nil {
+					ov.err = errConnDone
+				}
+				return pipeStepFailed, ov, nil
+			})
 		}
 	}
-
-	// TODO: what about expected 3PH accepts?
 }
 
-// startPipeline starts processing a pipeline. This sends the entire pipeline to
-// the respective remote Vats and modifies the local vat's state according to
-// each step.
-func (v *Vat) startPipeline(ctx context.Context, p *pipeline, conn *runningConn) error {
-	v.log.Trace().Int("len", p.numSteps()).Msg("Starting pipeline")
+// sendStep sends a pipeline step to the remote conn (i.e. sends a Call
+// message).
+func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningConn) error {
+	v.log.Trace().Msg("Sending step")
 
 	// Lock the conn to start modifying its tables. Note: this is harder
 	// than it looks because the conn (which was derived from a parent
@@ -224,62 +221,43 @@ func (v *Vat) startPipeline(ctx context.Context, p *pipeline, conn *runningConn)
 	// The critical scenario that is fixed by this convoluted lock algo is
 	// the following:
 	//
-	// - startPipeline() is called with conn1 (conn1 is unlocked)
+	// - sendStep() is called with conn1 (conn1 is unlocked)
 	// - resolveThirdPartyCapForPipeStep changes the parent pipeline step to
 	// conn2 due to 3PH
 	// - resolveThirdPartyCapForPipeStep sends a Disembargo on conn1
-	// - conn1 is locked to send the Call message
+	// - conn1 is locked (inside sendStep) to send the Call message
 	// - Call is sent after Disembargo: protocol violation!
 	for {
 		conn.mu.Lock()
 		var otherConn *runningConn
-		if p.parent == nil {
-			otherConn = p.Step(0).value.GetValue().conn
+		if step.parent != nil {
+			otherConn = step.parent.value.GetValue().conn
 		} else {
-			otherConn = p.parent.Step(p.parentStepIdx).value.GetValue().conn
+			otherConn = step.value.GetValue().conn
 		}
 		if otherConn != conn {
-			// Changed!!!! Try again.
 			conn.mu.Unlock()
 			conn = otherConn
 			continue
-		} else {
-			// Ok to keep going.
-			break
 		}
+		break
 	}
 	defer conn.mu.Unlock()
 
-	// p.conn.mu.Lock()
-	// defer p.conn.mu.Unlock()
-
-	// Determine how the local Vat will change in response to this
-	// pipeline.
-	var prevQid, stepQid QuestionId
-	for i := range p.numSteps() {
-		step := p.step(i)
-
-		var err error
-		if stepQid, err = v.prepareOutMessage(ctx, p, i, prevQid, conn); err != nil {
-			return err
-		}
-
-		// Generally, this fails only if ctx is done or if the outbound
-		// queue for this conn is full.
-		err = conn.queue(ctx, outMsg{msg: step.rpcMsg, remainingInBatch: p.numSteps() - i})
-		if err != nil {
-			return err
-		}
-
-		// Commit the changes to the local Vat.
-		if err := v.commitOutMessage(ctx, p, i, conn, stepQid); err != nil {
-			return err
-		}
-
-		prevQid = stepQid
+	stepQid, err := v.prepareOutMessageForStep(ctx, step, conn)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	err = conn.queue(ctx, outMsg{
+		msg:              step.rpcMsg,
+		remainingInBatch: 0,
+	})
+	if err != nil {
+		return err
+	}
+
+	return v.commitOutMessageForStep(ctx, step, conn, stepQid)
 }
 
 // vatRunState is the running state of the vat.

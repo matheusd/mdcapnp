@@ -216,7 +216,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 		vat: v,
 		log: log,
 
-		boot: bootstrapCap(newRootFutureCap[capability](1)),
+		boot: bootstrapCap(newRootFutureCap[capability](v)),
 
 		outQueue:  make(chan outMsg, 60000), // TODO: Parametrize buffer size.
 		questions: makeQuestionsTable(),     // makeTable[QuestionId, question](),
@@ -227,11 +227,8 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 	rc.crb.rc = rc
 
-	// TODO: prepare boot message.
-	rc.boot.pipe.vat = v
-	// rc.boot.pipe.conn = rc
-	rc.boot.pipe.state = pipelineStateBuilt
-	rc.boot.pipe.Step(0).value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: rc})
+	// Prepare boot message.
+	rc.boot.step.value.Set(pipeStepStateBuilding, pipelineStepStateValue{conn: rc})
 
 	return rc
 }
@@ -243,7 +240,7 @@ func (bc bootstrapCap) Wait(ctx context.Context) (capability, error) {
 }
 
 func castBootstrap[T any](bc bootstrapCap) futureCap[T] {
-	return futureCap[T]{pipe: bc.pipe, stepIndex: bc.stepIndex}
+	return futureCap[T]{step: bc.step}
 }
 
 func (rc *runningConn) Bootstrap() bootstrapCap {

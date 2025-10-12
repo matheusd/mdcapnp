@@ -26,3 +26,6 @@ func (err errDisembargoAcceptUnknownExport) addExtraDataToLog(e *zerolog.Event) 
 }
 
 var errConnStopped = errors.New("conn stopped")
+var errPipelineNotBuildingState = errors.New("pipeline not in building state")
+var errPipeStepAlreadyFinished = errors.New("pipeline step already finished")
+var errPipeParentStepAlreadyFinished = errors.New("pipeline parent step already finished")
