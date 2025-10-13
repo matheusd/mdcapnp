@@ -9,11 +9,11 @@ import (
 )
 
 type testCap struct{}
-type testCapFuture futureCap[testCap]
+type testCapFuture callFuture[testCap]
 
 func (tcf testCapFuture) next() testCapFuture {
 	return testCapFuture(remoteCall[testCap, testCap](
-		futureCap[testCap](tcf),
+		callFuture[testCap](tcf),
 		callSetup{
 			interfaceId: 1000,
 			methodId:    11,
@@ -24,7 +24,7 @@ func (tcf testCapFuture) next() testCapFuture {
 //go:noinline
 func (tcf testCapFuture) nextNoInline() testCapFuture {
 	return testCapFuture(remoteCall[testCap, testCap](
-		futureCap[testCap](tcf),
+		callFuture[testCap](tcf),
 		callSetup{
 			interfaceId: 1000,
 			methodId:    11,
