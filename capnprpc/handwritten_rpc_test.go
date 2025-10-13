@@ -12,7 +12,7 @@ import (
 type futureString callFuture[string]
 
 func (fs futureString) wait(ctx context.Context) (string, error) {
-	return waitResult(ctx, callFuture[string](fs))
+	return castCallResultOrErr[string](waitResult(ctx, callFuture[string](fs)))
 }
 
 type testAPI callFuture[capability]
@@ -70,7 +70,7 @@ func (api testAPI) GetUser(id string) testUser {
 
 // Wait until this is resolved as a concrete, exported capability.
 func (api testAPI) Wait(ctx context.Context) (capability, error) {
-	return waitResult(ctx, callFuture[capability](api))
+	return castCallResultOrErr[capability](waitResult(ctx, callFuture[capability](api)))
 }
 
 func (api testAPI) WaitDiscardResult(ctx context.Context) error {

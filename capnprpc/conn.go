@@ -236,7 +236,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 type bootstrapCap callFuture[capability]
 
 func (bc bootstrapCap) Wait(ctx context.Context) (capability, error) {
-	return waitResult(ctx, callFuture[capability](bc))
+	return castCallResultOrErr[capability](waitResult(ctx, callFuture[capability](bc)))
 }
 
 func castBootstrap[T any](bc bootstrapCap) callFuture[T] {

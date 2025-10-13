@@ -95,7 +95,55 @@ func remoteCall[T, U any](obj callFuture[T], csetup callSetup) (res callFuture[U
 	return res
 }
 
-func waitResult[T any](ctx context.Context, cap callFuture[T]) (res T, err error) {
+func castCallResult[T any](callResult any) (res T, err error) {
+	// Check if result is already the expected return type.
+	var ok bool
+	if res, ok = callResult.(T); ok {
+		return
+	}
+
+	// Not an error, and not type T, so must be an AnyPointer with the
+	// Content field of a Payload result.
+	var resAnyPointer anyPointer
+	if resAnyPointer, ok = callResult.(anyPointer); !ok {
+		err = fmt.Errorf("future expected AnyPointer but got %T", callResult)
+		return
+	}
+
+	// Content may be either a Struct or a CapPointer, and T will be an
+	// alias to one of these (depending on what's expected based on the
+	// schema).
+	//
+	// TODO: better way to convert to T?
+	var contentAny any
+	if resAnyPointer.IsStruct() {
+		contentAny = resAnyPointer.AsStruct()
+	} else if resAnyPointer.IsCapPointer() {
+		// TODO: How to convert capPointer to importId???
+		contentAny = resAnyPointer.AsCapPointer()
+	} else {
+		err = fmt.Errorf("content is not struct or capPointer")
+		return
+	}
+
+	res, ok = contentAny.(T)
+	if !ok {
+		err = fmt.Errorf("future expected %T but got back %T", res, contentAny)
+	}
+
+	return
+}
+
+func castCallResultOrErr[T any](callResult any, inErr error) (res T, err error) {
+	if inErr != nil {
+		err = inErr
+	} else {
+		res, err = castCallResult[T](callResult)
+	}
+	return
+}
+
+func waitResult[T any](ctx context.Context, cap callFuture[T]) (res any, err error) {
 	// Find the vat.
 	var vat *Vat
 	step := cap.step
@@ -125,7 +173,7 @@ func waitResult[T any](ctx context.Context, cap callFuture[T]) (res T, err error
 	if stepState == pipeStepFailed {
 		err = stepValue.err
 		if err == nil {
-			err = fmt.Errorf("unknown final pipeline step state: %v", stepState)
+			err = fmt.Errorf("unknown error in failed pipeline step state: %v", stepState)
 		}
 		return
 	}
@@ -137,42 +185,7 @@ func waitResult[T any](ctx context.Context, cap callFuture[T]) (res T, err error
 		return
 	}
 
-	// Check if result is the expected return type.
-	if _, ok = pipeRes.(T); ok {
-		res = pipeRes.(T)
-		return
-	}
-
-	// FIXME: nothing else needed after this???
-
-	// Not an error, so must be an AnyPointer with the Content field of a
-	// Payload result.
-	var content anyPointer
-	if content, ok = pipeRes.(anyPointer); !ok {
-		err = fmt.Errorf("future expected AnyPointer but got %T", pipeRes)
-		return
-	}
-
-	// Content may be either a Struct or a CapPointer, and T will be an
-	// alias to one of these (depending on what's expected based on the
-	// schema).
-	//
-	// TODO: better way to convert to T?
-	var contentAny any
-	if content.IsStruct() {
-		contentAny = content.AsStruct()
-	} else if content.IsCapPointer() {
-		contentAny = content.AsCapPointer()
-	} else {
-		err = fmt.Errorf("content is not struct or capPointer")
-		return
-	}
-
-	res, ok = contentAny.(T)
-	if !ok {
-		err = fmt.Errorf("future expected %T but got back %T", res, pipeRes)
-	}
-
+	res = pipeRes
 	return
 }
 
