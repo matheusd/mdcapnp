@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-type testCap struct{}
-type testCapFuture callFuture[testCap]
+type testCapFuture callFuture
 
 func (tcf testCapFuture) next() testCapFuture {
-	return testCapFuture(remoteCall[testCap, testCap](
-		callFuture[testCap](tcf),
+	return testCapFuture(remoteCall(
+		callFuture(tcf),
 		callSetup{
 			interfaceId: 1000,
 			methodId:    11,
@@ -23,8 +22,8 @@ func (tcf testCapFuture) next() testCapFuture {
 
 //go:noinline
 func (tcf testCapFuture) nextNoInline() testCapFuture {
-	return testCapFuture(remoteCall[testCap, testCap](
-		callFuture[testCap](tcf),
+	return testCapFuture(remoteCall(
+		callFuture(tcf),
 		callSetup{
 			interfaceId: 1000,
 			methodId:    11,
@@ -38,7 +37,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	v := NewVat()
 
 	b.Run("inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](v))
+		f := testCapFuture(newRootFutureCap(v))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -47,7 +46,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	})
 
 	b.Run("no inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](v))
+		f := testCapFuture(newRootFutureCap(v))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
@@ -56,7 +55,7 @@ func BenchmarkAddPipeRemoteCall(b *testing.B) {
 	})
 
 	b.Run("fork/inline", func(b *testing.B) {
-		f := testCapFuture(newRootFutureCap[testCap](v))
+		f := testCapFuture(newRootFutureCap(v))
 		var final testCapFuture = f.next()
 		b.ReportAllocs()
 		b.ResetTimer()

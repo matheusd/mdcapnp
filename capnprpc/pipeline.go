@@ -73,19 +73,17 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 	}
 }
 
-type callFuture[T any] struct {
-	_ [0]T // Tag.
-
+type callFuture struct {
 	step *pipelineStep
 }
 
-func newRootFutureCap[T any](v *Vat) callFuture[T] {
-	return callFuture[T]{
+func newRootFutureCap(v *Vat) callFuture {
+	return callFuture{
 		step: newRootStep(v),
 	}
 }
 
-func remoteCall[T, U any](obj callFuture[T], csetup callSetup) (res callFuture[U]) {
+func remoteCall(obj callFuture, csetup callSetup) (res callFuture) {
 	parentStep := obj.step
 
 	// Every call creates a new step with parent reference
@@ -143,7 +141,7 @@ func castCallResultOrErr[T any](callResult any, inErr error) (res T, err error) 
 	return
 }
 
-func waitResult[T any](ctx context.Context, cap callFuture[T]) (res any, err error) {
+func waitResult(ctx context.Context, cap callFuture) (res any, err error) {
 	// Find the vat.
 	var vat *Vat
 	step := cap.step
@@ -189,6 +187,6 @@ func waitResult[T any](ctx context.Context, cap callFuture[T]) (res any, err err
 	return
 }
 
-func releaseFuture[T any](ctx context.Context, cap callFuture[T]) {
+func releaseFuture(ctx context.Context, cap callFuture) {
 	finalizePipelineStep(cap.step)
 }

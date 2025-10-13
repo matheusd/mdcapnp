@@ -216,7 +216,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 		vat: v,
 		log: log,
 
-		boot: bootstrapCap(newRootFutureCap[capability](v)),
+		boot: bootstrapCap(newRootFutureCap(v)),
 
 		outQueue:  make(chan outMsg, 60000), // TODO: Parametrize buffer size.
 		questions: makeQuestionsTable(),     // makeTable[QuestionId, question](),
@@ -233,14 +233,14 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 	return rc
 }
 
-type bootstrapCap callFuture[capability]
+type bootstrapCap callFuture
 
 func (bc bootstrapCap) Wait(ctx context.Context) (capability, error) {
-	return castCallResultOrErr[capability](waitResult(ctx, callFuture[capability](bc)))
+	return castCallResultOrErr[capability](waitResult(ctx, callFuture(bc)))
 }
 
-func castBootstrap[T any](bc bootstrapCap) callFuture[T] {
-	return callFuture[T]{step: bc.step}
+func castBootstrap(bc bootstrapCap) callFuture {
+	return callFuture{step: bc.step}
 }
 
 func (rc *runningConn) Bootstrap() bootstrapCap {
