@@ -23,10 +23,6 @@ type futureVoid callFuture
 
 func (fv futureVoid) Wait(ctx context.Context) error {
 	_, err := waitResult(ctx, callFuture(fv))
-
-	// FIXME: this should be done automatically when the result has no caps
-	// that can be pipelined.
-	releaseFuture(ctx, callFuture(fv))
 	return err
 }
 
