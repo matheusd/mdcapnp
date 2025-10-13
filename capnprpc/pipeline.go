@@ -12,6 +12,13 @@ import (
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
+// callSetup are the requirements to build and send a Call message.
+type callSetup struct {
+	interfaceId   uint64
+	methodId      uint16
+	paramsBuilder callParamsBuilder // Builds the Params field of an rpc.Call struct
+}
+
 type pipelineStepState int
 
 const (
@@ -32,14 +39,9 @@ type pipelineStepStateValue struct {
 }
 
 type pipelineStep struct {
-	interfaceId   uint64
-	methodId      uint16
-	argsBuilder   func(*msgBuilder) error // Builds an rpc.Call struct
-	paramsBuilder callParamsBuilder       // Builds the Params field of an rpc.Call struct
-
-	value sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
-
-	parent *pipelineStep // Set only for forked steps
+	value  sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
+	parent *pipelineStep
+	csetup callSetup
 }
 
 func finalizePipelineStep(step *pipelineStep) {
@@ -83,14 +85,12 @@ func newRootFutureCap[T any](v *Vat) futureCap[T] {
 	}
 }
 
-func remoteCall[T, U any](obj futureCap[T], iid uint64, mid uint16, pb callParamsBuilder) (res futureCap[U]) {
+func remoteCall[T, U any](obj futureCap[T], csetup callSetup) (res futureCap[U]) {
 	parentStep := obj.step
 
 	// Every call creates a new step with parent reference
 	res.step = newChildStep(parentStep)
-	res.step.interfaceId = iid
-	res.step.methodId = mid
-	res.step.paramsBuilder = pb
+	res.step.csetup = csetup
 
 	return res
 }

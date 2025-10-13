@@ -138,8 +138,8 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 	} else {
 		rpcMsg.isCall = true
 		rpcMsg.call = call{
-			iid: step.interfaceId,
-			mid: step.methodId,
+			iid: step.csetup.interfaceId,
+			mid: step.csetup.methodId,
 		}
 	}
 

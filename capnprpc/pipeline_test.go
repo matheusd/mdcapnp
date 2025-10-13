@@ -12,12 +12,24 @@ type testCap struct{}
 type testCapFuture futureCap[testCap]
 
 func (tcf testCapFuture) next() testCapFuture {
-	return testCapFuture(remoteCall[testCap, testCap](futureCap[testCap](tcf), 1000, 11, nil))
+	return testCapFuture(remoteCall[testCap, testCap](
+		futureCap[testCap](tcf),
+		callSetup{
+			interfaceId: 1000,
+			methodId:    11,
+		},
+	))
 }
 
 //go:noinline
 func (tcf testCapFuture) nextNoInline() testCapFuture {
-	return testCapFuture(remoteCall[testCap, testCap](futureCap[testCap](tcf), 1000, 11, nil))
+	return testCapFuture(remoteCall[testCap, testCap](
+		futureCap[testCap](tcf),
+		callSetup{
+			interfaceId: 1000,
+			methodId:    11,
+		},
+	))
 }
 
 // BenchmarkAddPipeRemoteCall benchmarks adding a remote call to a pipeline

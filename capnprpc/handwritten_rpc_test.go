@@ -32,21 +32,40 @@ func (fv futureVoid) Wait(ctx context.Context) error {
 
 const testAPI_Void_CallID = 101
 const testAPI_GetAnotherAPI_CallID = 102
+const testAPI_GetUser_CallID = 103
 
 func (api testAPI) VoidCall() futureVoid {
-	return futureVoid(remoteCall[capability, struct{}](futureCap[capability](api), testAPI_InterfaceID, testAPI_Void_CallID, nil))
+	return futureVoid(remoteCall[capability, struct{}](
+		futureCap[capability](api),
+		callSetup{
+			interfaceId: testAPI_InterfaceID,
+			methodId:    testAPI_Void_CallID,
+		},
+	))
 }
 
 func (api testAPI) GetAnotherAPICap() testAPI {
-	return testAPI(remoteCall[capability, capability](futureCap[capability](api), testAPI_InterfaceID, testAPI_GetAnotherAPI_CallID, nil))
+	return testAPI(remoteCall[capability, capability](
+		futureCap[capability](api),
+		callSetup{
+			interfaceId: testAPI_InterfaceID,
+			methodId:    testAPI_GetAnotherAPI_CallID,
+		},
+	))
 }
 
 func (api testAPI) GetUser(id string) testUser {
-	pb := func(*msgBuilder) error {
-		_ = id
-		return nil
-	}
-	return testUser(remoteCall[capability, testUserCap](futureCap[capability](api), 1000, 10, pb))
+	return testUser(remoteCall[capability, testUserCap](
+		futureCap[capability](api),
+		callSetup{
+			interfaceId: testAPI_InterfaceID,
+			methodId:    testAPI_GetUser_CallID,
+			paramsBuilder: func(*msgBuilder) error {
+				_ = id
+				return nil
+			},
+		},
+	))
 }
 
 // Wait until this is resolved as a concrete, exported capability.
@@ -67,20 +86,29 @@ type testUserCap struct{}
 type testUser futureCap[testUserCap]
 
 func (usr testUser) GetProfile() testUserProfile {
-	pb := func(*msgBuilder) error {
-		return nil
-	}
-	return testUserProfile(remoteCall[testUserCap, testUserProfileCap](futureCap[testUserCap](usr), 1000, 11, pb))
+	return testUserProfile(remoteCall[testUserCap, testUserProfileCap](
+		futureCap[testUserCap](usr),
+		callSetup{
+			interfaceId: 1000,
+			methodId:    11,
+			paramsBuilder: func(*msgBuilder) error {
+				return nil
+			},
+		},
+	))
 }
 
 type testUserProfileCap struct{}
 type testUserProfile futureCap[testUserProfileCap]
 
 func (up testUserProfile) GetAvatarData() futureString {
-	pb := func(*msgBuilder) error {
-		return nil
-	}
-	return futureString(remoteCall[testUserProfileCap, string](futureCap[testUserProfileCap](up), 1000, 11, pb))
+	return futureString(remoteCall[testUserProfileCap, string](
+		futureCap[testUserProfileCap](up),
+		callSetup{
+			interfaceId: 1000,
+			methodId:    11,
+		},
+	))
 }
 
 func example01() {
