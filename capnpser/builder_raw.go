@@ -18,7 +18,7 @@ func (rb *UnsafeRawBuilder) SetWord(offset WordOffset, value Word) {
 
 func (rb *UnsafeRawBuilder) maskAndMergeWord(offset WordOffset, mask, value Word) {
 	ptr := (*Word)(unsafe.Add(rb.ptr, offset*WordSize))
-	*ptr = *ptr&mask | value
+	*ptr = *ptr&^mask | value
 }
 
 func (rb *UnsafeRawBuilder) SetString(ptrOffset WordOffset, v string, startOffset WordOffset) (nextOffset WordOffset) {

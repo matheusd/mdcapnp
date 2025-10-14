@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
+	types "matheusd.com/mdcapnp/capnprpc/types"
 )
 
 type msgBatch struct {
@@ -176,8 +177,17 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 			return err
 		}
 
+		if msg.rawSerMsg != nil {
+			var rpcMsg types.Message
+			err = rpcMsg.ReadFromRoot(msg.rawSerMsg)
+			if err == nil {
+				err = v.processInMessageAlt(ctx, rc, rpcMsg, msg.rawSerMsg)
+			}
+		} else {
+			err = v.processInMessage(ctx, rc, msg)
+		}
+
 		// Process input msg.
-		err = v.processInMessage(ctx, rc, msg)
 		if err != nil {
 			return err
 		}
@@ -189,17 +199,30 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 	c := rc.c
 	for {
 		select {
-		case mb := <-rc.outQueue:
-			err := c.send(ctx, *mb.msg, mb.remainingInBatch)
+		case outMsg := <-rc.outQueue:
+			// Debug.
+			/*
+				if mb.msg.rawSerMb != nil {
+					msgRawData, _ := mb.msg.rawSerMb.Serialize()
+					rc.log.Trace().
+						Hex("msg", msgRawData).
+						Msg("DEBUG MSG")
+				}
+			*/
+
+			err := c.send(ctx, *outMsg.msg, outMsg.remainingInBatch)
 			if err != nil {
 				return err
 			}
-			if mb.sentChan != nil {
-				close(mb.sentChan)
+			if outMsg.sentChan != nil {
+				close(outMsg.sentChan)
 			}
 
-			if mb.msg.IsCall() || mb.msg.IsFinish() || mb.msg.IsReturn() {
-				v.mp.put(mb.msg)
+			if outMsg.msg.IsFinish() || outMsg.msg.IsReturn() {
+				v.mp.put(outMsg.msg)
+			} else if outMsg.msg.rawSerMb != nil {
+				v.mbp.put(outMsg.msg.rawSerMb)
+				v.mp.put(outMsg.msg) // Transitional code
 			}
 
 		case <-ctx.Done():

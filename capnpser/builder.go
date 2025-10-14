@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"unsafe"
 )
 
@@ -38,6 +39,20 @@ func (sb *StructBuilder) hasPointer(ptrIndex PointerFieldIndex) bool {
 	return ptrIndex < PointerFieldIndex(sb.sz.PointerSectionSize)
 }
 
+func (sb *StructBuilder) SetUint64(dataIndex DataFieldIndex, v uint64) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		// finalOff := dataIndex.uncheckedWordOffset(sb.off)
+		// sb.seg.uncheckedSetWord(finalOff, Word(v))
+		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
+	}
+	return
+}
 func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error) {
 	if !sb.hasData(dataIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
@@ -53,7 +68,7 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 	return
 }
 
-func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, mask Int32DataFieldSetMask, v int32) (err error) {
+func (sb *StructBuilder) SetUint16(dataIndex DataFieldIndex, shift Uint16DataFieldShift, v uint16) (err error) {
 	if !sb.hasData(dataIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
 		// or error out?
@@ -62,7 +77,35 @@ func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, mask Int32DataFieldS
 		// Structure already fully allocated, no need to check for
 		// bounds.
 		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(mask), Word(v))
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffff)<<shift, Word(v)<<shift)
+	}
+	return
+}
+
+func (sb *StructBuilder) SetUint32(dataIndex DataFieldIndex, shift Uint32DataFieldShift, v uint32) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
+	}
+	return
+}
+
+func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, shift Uint32DataFieldShift, v int32) (err error) {
+	if !sb.hasData(dataIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainDataField(dataIndex)
+	} else {
+		// Structure already fully allocated, no need to check for
+		// bounds.
+		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
 	}
 	return
 }
@@ -76,7 +119,7 @@ func (sb *StructBuilder) SetBool(dataIndex DataFieldIndex, bit byte, v bool) (er
 		// Structure already fully allocated, no need to check for
 		// bounds.
 		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), ^(1 << bit), boolToWord(v)<<bit)
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), ^(1 << bit), boolToWord(v)<<bit)
+		sb.urb.maskAndMergeWord(WordOffset(dataIndex), (1 << bit), boolToWord(v)<<bit)
 	}
 	return
 }
@@ -90,7 +133,7 @@ func (sb *StructBuilder) SetFloat64(dataIndex DataFieldIndex, v float64) (err er
 		// Structure already fully allocated, no need to check for
 		// bounds.
 		// sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
-		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
+		sb.urb.SetWord(WordOffset(dataIndex), Word(math.Float64bits(v)))
 	}
 	return
 }
@@ -117,21 +160,80 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 		return errors.New("needs handling")
 	}
 
+	// Offset of the pointer field that will reference the new list. This
+	// is relative to the start of this struct (sb).
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
 	// Determine concrete pointer offset inside struct. This doesn't need
 	// overflow checks because the entire struct has been allocated, thus
 	// this pointer offset is known to be in bounds.
-	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
+	concretePtrOff := ptrOff + sb.off
 
 	// Determine the relative offset from the field pointer offset to the
 	// actual data. This finishes the construction of the list pointer.
-	// lsPtr.startOffset = lsPtr.startOffset - ptrOff - 1
-	lsPtr.startOffset = lsPtr.startOffset - ptrOff - 1
+	lsPtr.startOffset = lsPtr.startOffset - concretePtrOff - 1
 
 	// Structure already fully allocated, no need to check for
 	// bounds.
 	// sb.seg.uncheckedSetWord(ptrOff, Word(lsPtr.toPointer()))
 	sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
 	return nil
+}
+
+func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructSize) (nsb StructBuilder, err error) {
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainPointerField(ptrIndex)
+		return
+	}
+
+	nsb, err = sb.mb.NewStruct(size)
+	if err != nil {
+		return
+	}
+
+	// TODO: handle inter-segment pointer.
+	// if sb.seg.id != 0 {
+	if nsb.sid != 0 {
+		panic("needs handling")
+	}
+
+	// Offset of the pointer field that will reference the new struct. This
+	// is relative to the start of this struct (sb).
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
+	// Determine concrete pointer offset inside struct. This doesn't need
+	// overflow checks because the entire struct has been allocated, thus
+	// this pointer offset is known to be in bounds.
+	concretePtrOff := ptrOff + sb.off
+
+	// Determine the relative offset from the field pointer offset to the
+	// actual data. This finishes the construction of the struct pointer.
+	sp := structPointer{
+		dataOffset:         nsb.off - concretePtrOff - 1,
+		dataSectionSize:    size.DataSectionSize,
+		pointerSectionSize: size.PointerSectionSize,
+	}
+
+	// Structure already fully allocated, no need to check for
+	// bounds.
+	sb.urb.SetWord(ptrOff, Word(sp.toPointer()))
+
+	return
+}
+
+func (sb *StructBuilder) NewStructAsUnionValue(ptrIndex PointerFieldIndex,
+	size StructSize, unionField DataFieldIndex, unionFieldShift Uint16DataFieldShift,
+	unionFieldValue uint16) (nsb StructBuilder, err error) {
+
+	nsb, err = sb.NewStructField(ptrIndex, size)
+	if err != nil {
+		return
+	}
+
+	err = sb.SetUint16(unionField, unionFieldShift, unionFieldValue)
+	return
 }
 
 type SegmentBuilder struct {
@@ -498,6 +600,16 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 		off: off,
 		sz:  size,
 	}, nil
+}
+
+// NewRootStruct initializes a new struct and sets it as the root struct on this
+// message.
+func (mb *MessageBuilder) NewRootStruct(size StructSize) (sb StructBuilder, err error) {
+	sb, err = mb.NewStruct(size)
+	if err == nil {
+		err = mb.SetRoot(&sb)
+	}
+	return
 }
 
 // newText allocates and places s as a new text in the meesage. The text is

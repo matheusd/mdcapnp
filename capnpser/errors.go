@@ -67,6 +67,8 @@ var errDepthLimitExceeded = errors.New("depth limit exceeded")
 
 var errNotListPointer = errors.New("not a list pointer")
 
+var errNotStructPointer = errors.New("not a struct pointer")
+
 var errNoRootPointer = errors.New("message does not have a root pointer")
 
 var errInvalidNegativeStructOffset = errors.New("invalid negative struct offset")

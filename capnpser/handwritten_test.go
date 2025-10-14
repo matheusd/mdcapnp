@@ -81,7 +81,7 @@ func (stb *GoserbenchSmallStructBuilder) SetBirthDay(v int64) {
 }
 
 func (stb *GoserbenchSmallStructBuilder) SetSiblings(v int32) {
-	(*StructBuilder)(stb).SetInt32(1, Int32FieldSetMaskLo, v)
+	(*StructBuilder)(stb).SetInt32(1, Uint32FieldLo, v)
 }
 
 func (stb *GoserbenchSmallStructBuilder) SetSpouse(v bool) {

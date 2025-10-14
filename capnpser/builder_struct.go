@@ -51,7 +51,7 @@ func (sb *UnsafeStructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) {
 	sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(v))
 }
 
-func (sb *UnsafeStructBuilder) SetInt32(dataIndex DataFieldIndex, mask Int32DataFieldSetMask, v int32) {
+func (sb *UnsafeStructBuilder) SetInt32(dataIndex DataFieldIndex, mask Uint32DataFieldSetMask, v int32) {
 	sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
 }
 

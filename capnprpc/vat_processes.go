@@ -11,14 +11,16 @@ import (
 	"weak"
 
 	"github.com/rs/zerolog"
+	types "matheusd.com/mdcapnp/capnprpc/types"
+	"matheusd.com/mdcapnp/capnpser"
 )
 
-func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message) error {
-	bootMsg := msg.AsBootstrap()
+func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.Bootstrap) error {
+	bootQid := AnswerId(boot.QuestionId())
 	reply := &message{ // TODO: fetch from v.mp
 		isReturn: true,
 		ret: rpcReturn{
-			aid:       AnswerId(bootMsg.qid),
+			aid:       bootQid,
 			isResults: true,
 			pay: payload{
 				content: anyPointer{
@@ -35,10 +37,10 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, msg message
 	// Modify answer table to track the bootrap export. bootExportId is set
 	// during conn setup automatically.
 	ans := answer{typ: answerTypeBootstrap, eid: rc.bootExportId}
-	rc.answers.set(AnswerId(bootMsg.qid), ans)
+	rc.answers.set(bootQid, ans)
 
 	rc.log.Debug().
-		Int("qid", int(bootMsg.qid)).
+		Int("qid", int(bootQid)).
 		Int("eid", int(rc.bootExportId)).
 		Msg("Exported Bootstrap")
 
@@ -199,52 +201,73 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 
 var errCallWithoutId = errors.New("call with zero interfaceId and methodId")
 
-func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
-	if c.iid == 0 && c.mid == 0 {
+func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) error {
+	iid, mid := c.InterfaceId(), c.MethodId()
+	if iid == 0 && mid == 0 {
 		// Only bootstrap is allowed to have iid+mid == 0.
 		return errCallWithoutId
 	}
 
-	if rc.answers.has(AnswerId(c.qid)) {
-		return fmt.Errorf("remote already asked question %d", c.qid)
+	qid := c.QuestionId()
+	if rc.answers.has(AnswerId(qid)) {
+		return fmt.Errorf("remote already asked question %d", qid)
 	}
+
+	logEvent := rc.log.Trace().
+		Int("qid", int(qid))
 
 	// Determine the target of this call (either an exported cap or a
 	// promised answer).
+	target, err := c.Target()
+	if err != nil {
+		return fmt.Errorf("unable to read target from call: %v", err)
+	}
 	var eid ExportId
-	if c.target.isPromisedAnswer {
+	switch target.Which() {
+	case types.MessageTarget_Which_PromisedAnswer:
 		// Promised answers are in the answer table.
 		//
 		// TODO: Recursively track it down if the answer is another
 		// promise.
-		q, ok := rc.answers.get(AnswerId(c.target.pans.qid))
+		pans, err := target.AsPromisedAnswer()
+		if err != nil {
+			return fmt.Errorf("unable to decode promised answer: %v", err)
+		}
+		pansQid := pans.QuestionId()
+		q, ok := rc.answers.get(AnswerId(pansQid))
 		if !ok {
-			return fmt.Errorf("call referenced unknown promised answer %d", c.target.pans.qid)
+			return fmt.Errorf("call referenced unknown promised answer %d", pansQid)
 		}
 
+		logEvent.Int("pansQid", int(pansQid))
+
 		eid = q.eid // What about promises?
-	} else if c.target.isImportedCap {
-		eid = ExportId(c.target.impcap)
-	} else {
+	case types.MessageTarget_Which_ImportedCap:
+		impCap := target.AsImportedCap()
+		eid = ExportId(impCap)
+		logEvent.Int("impCap", int(impCap))
+	default:
 		return errors.New("unsupported call target")
 	}
 
 	exp, ok := rc.exports.get(eid)
 	if !ok {
+		logEvent.Msg("Booooo")
 		return fmt.Errorf("call message target determined to be unset export %d", eid)
 	}
 
 	if exp.typ != exportTypeLocallyHosted {
 		return fmt.Errorf("unsupported export type %d", exp.typ)
 	}
+	logEvent.Int("eid", int(eid)).Str("etype", exp.typ.String())
 
 	// TODO: proxy calls when exp.typ == exportTypeThirdPartyExport.
 
 	callArgs := callHandlerArgs{
-		iid:    interfaceId(c.iid),
-		mid:    methodId(c.mid),
-		params: c.params,
-		rc:     rc,
+		iid: interfaceId(iid),
+		mid: methodId(mid),
+		// params: c.params, // FIXME how?
+		rc: rc,
 	}
 
 	// Start preparing reply.
@@ -254,23 +277,19 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 		isVoid: true, // Void result by default on non-error.
 	}}
 
-	rc.log.Trace().
-		Int("qid", int(c.qid)).
-		Int("eid", int(eid)).
-		Msg("Locally handling call")
-
 	// Make the call!
-	err := exp.handler.Call(rc.ctx, callArgs, crb)
+	logEvent.Msg("Locally handling call")
+	err = exp.handler.Call(rc.ctx, callArgs, crb)
 	if ex, ok := err.(callExceptionError); ok {
 		// Turn the error into a returned exception.
 		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of exception
 		reply.isReturn = true
-		reply.ret.aid = AnswerId(c.qid)
+		reply.ret.aid = AnswerId(qid)
 		reply.ret.isException = true
 		reply.ret.exc = ex.ToException()
 
 		rc.log.Debug().
-			Int("qid", int(c.qid)).
+			Int("qid", int(qid)).
 			Int("eid", int(eid)).
 			Dict("ex", zerolog.Dict().
 				Int("type", reply.ret.exc.typ).
@@ -283,7 +302,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 	} else {
 		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of return struct
 		reply.isReturn = true
-		reply.ret.aid = AnswerId(c.qid)
+		reply.ret.aid = AnswerId(qid)
 		reply.ret.isResults = true
 		reply.ret.pay = crb.payload
 
@@ -333,11 +352,11 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c call) error {
 
 			// Save the answer in the answers table.
 			ans := answer{typ: answerTypeCall, eid: rootCapExportId}
-			rc.answers.set(AnswerId(c.qid), ans)
+			rc.answers.set(AnswerId(qid), ans)
 		}
 
 		rc.log.Debug().
-			Int("qid", int(c.qid)).
+			Int("qid", int(qid)).
 			Int("eid", int(eid)).
 			Msg("Processed call into payload result")
 	}
@@ -788,21 +807,61 @@ func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis disemb
 	}
 }
 
+func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg types.Message, rawMsg *capnpser.Message) error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
+	which := msg.Which()
+	rc.log.Trace().Str("which", which.String()).Msg("Starting to process inbound msg")
+
+	var err error
+	switch which {
+	case types.Message_Which_Bootstrap:
+		var boot types.Bootstrap
+		boot, err = msg.AsBootstrap()
+		if err == nil {
+			err = v.processBootstrap(ctx, rc, boot)
+		}
+
+	case types.Message_Which_Call:
+		var call types.Call
+		call, err = msg.AsCall()
+		if err == nil {
+			err = v.processCall(ctx, rc, call)
+		}
+
+	default:
+		err = fmt.Errorf("unknown Message type %d", which)
+	}
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		logEvent := rc.log.Err(err).Str("which", which.String())
+		if err, ok := err.(extraDataError); ok {
+			err.addExtraDataToLog(logEvent)
+		}
+		if rc.log.GetLevel() < zerolog.InfoLevel {
+			msgRawData := rawMsg.Arena().RawDataCopy()
+			for i, data := range msgRawData {
+				logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
+			}
+		}
+		logEvent.Msg("Error while processing inbound message")
+	}
+
+	return nil
+}
+
 // processInMessage processes an incoming message from a remote Vat.
 func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	rc.log.Trace().Str("which", msg.Which().String()).Msg("Starting to process inbound msg")
+	rc.log.Trace().Str("which", msg.Which().String()).Msg("Starting to process inbound msg (OLD)")
 
 	var err error
 	switch {
-	case msg.IsBootstrap():
-		err = v.processBootstrap(ctx, rc, msg)
 	case msg.IsReturn():
 		err = v.processReturn(ctx, rc, msg.AsReturn())
-	case msg.IsCall():
-		err = v.processCall(ctx, rc, msg.AsCall())
 	case msg.IsFinish():
 		err = v.processFinish(ctx, rc, msg.AsFinish())
 	case msg.IsResolve():
@@ -841,25 +900,21 @@ var errTooManyExports = errors.New("too many exports")
 // prepareOutMessageForStep prepares an outgoing Message message that is part of a
 // pipeline to be sent to the remote Vat.
 func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
-	conn *runningConn, rpcMsg *message) (thisQid QuestionId, err error) {
+	conn *runningConn, cmb rpcCallMsgBuilder) (thisQid QuestionId, err error) {
 
 	var ok bool
 
-	if rpcMsg.IsBootstrap() {
+	if cmb.isBootstrap {
 		if thisQid, ok = conn.questions.nextID(); !ok {
 			return 0, errTooManyOpenQuestions
 		}
 
-		rpcMsg.boot.qid = thisQid
+		bb := cmb.bootstrapBuilder()
+		bb.SetQuestionId(thisQid)
 		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Msg("Prepared Bootstrap message")
 		return thisQid, nil
-	}
-
-	if !rpcMsg.IsCall() {
-		// Only happens during development.
-		return 0, errors.New("unimplemented message type in prepareOutMessageForStep")
 	}
 
 	if step.parent == nil {
@@ -882,23 +937,26 @@ func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
 	if thisQid, ok = conn.questions.nextID(); !ok {
 		return 0, errTooManyOpenQuestions
 	}
-	rpcMsg.call.qid = thisQid
+	cb := cmb.callBuilder()
+	cb.SetQuestionId(thisQid)
+	mtb, err := cb.NewTarget()
+	if err != nil {
+		return 0, err
+	}
 
 	if parentIid > 0 {
-		rpcMsg.call.target = messageTarget{
-			isImportedCap: true,
-			impcap:        parentIid,
-		}
+		mtb.SetImportedCap(parentIid)
 
 		conn.log.Debug().
 			Int("qid", int(thisQid)).
 			Int("iid", int(parentIid)).
 			Msg("Prepared call for exported cap")
 	} else if parentQid > 0 {
-		rpcMsg.call.target = messageTarget{
-			isPromisedAnswer: true,
-			pans:             promisedAnswer{qid: parentQid},
+		pab, err := mtb.NewPromisedAnswer()
+		if err != nil {
+			return 0, err
 		}
+		pab.SetQuestionId(parentQid)
 
 		conn.log.Debug().
 			Int("qid", int(thisQid)).

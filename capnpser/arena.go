@@ -142,6 +142,24 @@ func (arena *Arena) DecodeSingleSegment(fb []byte) error {
 	return nil
 }
 
+// RawDataCopy returns a copy of the underlying arena data. This is mostly
+// useful for debugging issues.
+func (arena *Arena) RawDataCopy() (res [][]byte) {
+	var segs []*Segment
+	if arena.segs != nil {
+		segs = *arena.segs
+	}
+
+	res = make([][]byte, 1+len(segs))
+	res[0] = append([]byte(nil), arena.s.b...)
+	if arena.segs != nil {
+		for i := range segs {
+			res[i+1] = append([]byte(nil), segs[i].b...)
+		}
+	}
+	return
+}
+
 func (arena *Arena) Reset(b []byte) {
 	arena.s.b = b
 	arena.fb = nil

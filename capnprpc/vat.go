@@ -14,6 +14,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
+	"matheusd.com/mdcapnp/capnpser"
 )
 
 type connDone struct {
@@ -29,7 +30,8 @@ type Vat struct {
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
-	mp *messagePool
+	mp  *messagePool
+	mbp *messageBuilderPool
 
 	newConn    chan *runningConn
 	connDone   chan connDone
@@ -45,6 +47,7 @@ func NewVat(opts ...VatOption) *Vat {
 		cfg:        cfg,
 		log:        cfg.vatLogger(),
 		mp:         newMessagePool(),
+		mbp:        newMessageBuilderPool(),
 		newConn:    make(chan *runningConn),
 		connDone:   make(chan connDone),
 		expAccepts: make(chan expectedAccept, 5),    // Buffered to reduce locking contention on caller
@@ -132,15 +135,27 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 	}
 
 	// Prepare the RPC message for this single step
-	rpcMsg := v.mp.getForPayloadSize(0)
-	if step.parent == nil {
-		rpcMsg.isBootstrap = true
-	} else {
-		rpcMsg.isCall = true
-		rpcMsg.call = call{
-			iid: step.csetup.interfaceId,
-			mid: step.csetup.methodId,
+	rpcMsgBuilder, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
+	if err != nil {
+		return err
+	}
+	cmb := rpcCallMsgBuilder{rpcMsgBuilder: rpcMsgBuilder, isBootstrap: step.parent == nil}
+	if cmb.isBootstrap {
+		bb, err := cmb.mb.NewBoostrap()
+		if err != nil {
+			return err
 		}
+		cmb.builder = capnpser.StructBuilder(bb)
+	} else {
+		call, err := cmb.mb.NewCall()
+		if err != nil {
+			return err
+		}
+		_ = call.SetInterfaceId(step.csetup.interfaceId)
+		_ = call.SetMethodId(step.csetup.methodId)
+		cmb.builder = capnpser.StructBuilder(call)
+
+		// TODO: prepare call args.
 	}
 
 	// Determine connection from parent or step itself
@@ -148,7 +163,7 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 		stepConn = parentStepConn
 	}
 
-	return v.sendStep(ctx, step, stepConn, rpcMsg)
+	return v.sendStep(ctx, step, stepConn, cmb)
 }
 
 func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
@@ -202,9 +217,7 @@ func (v *Vat) stopConn(rc *runningConn) {
 
 // sendStep sends a pipeline step to the remote conn (i.e. sends a Call
 // message).
-func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningConn, rpcMsg *message) error {
-	v.log.Trace().Msg("Sending step")
-
+func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningConn, cmb rpcCallMsgBuilder) error {
 	// Lock the conn to start modifying its tables. Note: this is harder
 	// than it looks because the conn (which was derived from a parent
 	// pipeline step) may change from under us during 3PH. See the comment
@@ -244,11 +257,13 @@ func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningCon
 	}
 	defer conn.mu.Unlock()
 
-	stepQid, err := v.prepareOutMessageForStep(ctx, step, conn, rpcMsg)
+	stepQid, err := v.prepareOutMessageForStep(ctx, step, conn, cmb)
 	if err != nil {
 		return err
 	}
 
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = cmb.serMb
 	err = conn.queue(ctx, outMsg{
 		msg:              rpcMsg,
 		remainingInBatch: 0,

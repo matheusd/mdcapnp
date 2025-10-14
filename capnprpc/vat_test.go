@@ -14,6 +14,7 @@ import (
 
 	"github.com/canastic/chantest"
 	"matheusd.com/depvendoredtestify/require"
+	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/testctx"
 )
 
@@ -34,8 +35,11 @@ func TestBootstrapSendSide(t *testing.T) {
 
 	// Vat sends a Bootstrap message.
 	var bootQid uint32
-	tc.checkNextSent(func(m message) error {
-		boot := m.AsBootstrap()
+	tc.checkNextSentRpcMsg(func(m types.Message) error {
+		boot, err := m.AsBootstrap()
+		if err != nil {
+			return err
+		}
 		bootQid = uint32(boot.QuestionId())
 		return nil
 	})
@@ -74,7 +78,10 @@ func TestBootstrapReceiveSide(t *testing.T) {
 
 	// Vat receives a Bootstrap message.
 	targetQid := QuestionId(666)
-	tc.fillNextReceiveWith(message{isBootstrap: true, boot: bootstrap{qid: targetQid}})
+	msg, mb := th.newRpcMsg()
+	boot, _ := msg.NewBoostrap()
+	boot.SetQuestionId(targetQid)
+	tc.fillNextReceiveWithSer(mb)
 
 	// Vat sends the Bootstrap cap.
 	var bootQid QuestionId

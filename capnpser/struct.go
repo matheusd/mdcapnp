@@ -48,6 +48,13 @@ func (s *Struct) HasData(dataIndex DataFieldIndex) bool {
 	return s.ptr.dataOffset > 0 && dataIndex < DataFieldIndex(s.ptr.dataSectionSize)
 }
 
+func (s *Struct) Uint64(dataIndex DataFieldIndex) (res uint64) {
+	if s.HasData(dataIndex) {
+		res = uint64(s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset)))
+	}
+	return
+}
+
 func (s *Struct) Int64(dataIndex DataFieldIndex) (res int64) {
 	if s.HasData(dataIndex) {
 		res = int64(s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset)))
@@ -62,26 +69,65 @@ func (s *Struct) Float64(dataIndex DataFieldIndex) (res float64) {
 	return
 }
 
-type Int32DataFieldShift int
+type Uint16DataFieldShift int
 
 const (
-	Int32FieldLo Int32DataFieldShift = 0
-	Int32FieldHi Int32DataFieldShift = 32
+	Uint16FieldShift0 Uint16DataFieldShift = 0
+	Uint16FieldShift1 Uint16DataFieldShift = 16
+	Uint16FieldShift2 Uint16DataFieldShift = 32
+	Uint16FieldShift3 Uint16DataFieldShift = 48
 )
 
-type Int32DataFieldSetMask Word
+type Uint16DataFieldSetMask Word
 
 const (
-	Int32FieldSetMaskLo Int32DataFieldSetMask = 0x00000000ffffffff
-	Int32FieldSetMaskHi Int32DataFieldSetMask = 0xffffffff0000000
+	Uint16FieldSetMask0 Uint16DataFieldSetMask = 0x000000000000ffff
+	Uint16FieldSetMask1 Uint16DataFieldSetMask = 0x00000000ffff0000
+	Uint16FieldSetMask2 Uint16DataFieldSetMask = 0x0000ffff0000000
+	Uint16FieldSetMask3 Uint16DataFieldSetMask = 0xffff00000000000
 )
+
+func (s *Struct) Uint16(dataIndex DataFieldIndex, shift Uint16DataFieldShift) (res uint16) {
+	if s.HasData(dataIndex) {
+		data := s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = uint16(data >> shift)
+	}
+	return
+}
+
+type Uint32DataFieldShift int
+
+const (
+	Int32FieldLo  Uint32DataFieldShift = 0
+	Uint32FieldLo Uint32DataFieldShift = 0
+	Int32FieldHi  Uint32DataFieldShift = 32
+	Uint32FieldHi Uint32DataFieldShift = 32
+)
+
+type Uint32DataFieldSetMask Word
+
+const (
+	Uint32FieldSetMaskLo Uint32DataFieldSetMask = 0x00000000ffffffff
+	Uint32FieldSetMaskHi Uint32DataFieldSetMask = 0xffffffff0000000
+)
+
+// Uint32 returns a data field as an uint32. Given that an uint32 field occupies
+// either the low or high end of data word, the second parameter disambiguates
+// between the two.
+func (s *Struct) Uint32(dataIndex DataFieldIndex, shift Uint32DataFieldShift) (res uint32) {
+	if s.HasData(dataIndex) {
+		data := s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
+		res = uint32(data >> shift)
+	}
+	return
+}
 
 // Int32 returns a data field as an int32. Given that an int32 field occupies
 // either the low or high end of data word, the second parameter disambiguates
 // between the two.
 //
 // TODO: review if this is the way to go.
-func (s *Struct) Int32(dataIndex DataFieldIndex, shift Int32DataFieldShift) (res int32) {
+func (s *Struct) Int32(dataIndex DataFieldIndex, shift Uint32DataFieldShift) (res int32) {
 	if s.HasData(dataIndex) {
 		data := s.seg.uncheckedGetWord(dataIndex.uncheckedWordOffset(s.ptr.dataOffset))
 		res = int32(data >> shift)
@@ -100,11 +146,13 @@ func (s *Struct) Bool(dataIndex DataFieldIndex, bit byte) (res bool) {
 	return res
 }
 
-func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listPointer, listDL depthLimit, err error) {
+func (s *Struct) readFieldPtr(ptrIndex PointerFieldIndex) (seg *Segment, ptrType pointerType,
+	ptr pointer, dl depthLimit, pointerOffset WordOffset, err error) {
+
 	// Check if we can descend further into the struct (to fetch the first
 	// list pointer).
 	var ok bool
-	listDL, ok = s.dl.dec()
+	dl, ok = s.dl.dec()
 	if !ok {
 		err = errDepthLimitExceeded
 		return
@@ -124,13 +172,13 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	// This does not need an overflow check because the entire struct
 	// (including this pointer offset which is <= pointerSectionSize) is
 	// known to be in bounds.
-	pointerOffset := s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
-	ptr := s.seg.uncheckedGetWordAsPointer(pointerOffset)
+	pointerOffset = s.ptr.dataOffset + WordOffset(s.ptr.dataSectionSize) + WordOffset(ptrIndex)
+	ptr = s.seg.uncheckedGetWordAsPointer(pointerOffset)
 
 	// De-ref far pointers into the concrete list segment and near pointer.
-	ptrType := ptr.pointerType()
+	ptrType = ptr.pointerType()
 	if ptrType == pointerTypeFarPointer /*ptr.isFarPointer()*/ {
-		seg, ptr, listDL, err = derefFarPointer(s.arena, listDL, ptr)
+		seg, ptr, dl, err = derefFarPointer(s.arena, dl, ptr)
 		if err != nil {
 			return
 		}
@@ -138,6 +186,16 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	} else {
 		seg = s.seg
 	}
+
+	return
+}
+
+func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listPointer, listDL depthLimit, err error) {
+
+	var ptr pointer
+	var ptrType pointerType
+	var pointerOffset WordOffset
+	seg, ptrType, ptr, listDL, pointerOffset, err = s.readFieldPtr(ptrIndex)
 
 	// Check if the final pointer (after potential deref) is a list pointer.
 	if ptrType != pointerTypeList /*!ptr.isListPointer() */ {
@@ -148,6 +206,7 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 
 	// Determine concrete offset into segment of where the list actually
 	// starts.
+	var ok bool
 	if lp.startOffset, ok = addWordOffsetsWithCarry(pointerOffset, lp.startOffset, 1); !ok {
 		err = errWordOffsetSumOverflows{lp.startOffset, pointerOffset}
 		return
@@ -215,4 +274,42 @@ func (s *Struct) UnsafeStringXXX(dataIndex DataFieldIndex, size WordCount) strin
 
 	buf = buf[:strLen-1]
 	return *(*string)(unsafe.Pointer(&buf))
+}
+
+func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error) {
+	seg, ptrType, ptr, structDL, pointerOffset, err := s.readFieldPtr(ptrIndex)
+
+	// Check if the final pointer (after potential deref) is a struct
+	// pointer.
+	if ptrType != pointerTypeStruct {
+		err = errNotStructPointer
+		return
+	}
+	sp := ptr.toStructPointer()
+
+	// Determine concrete offset into segment of where the struct actually
+	// starts.
+	var ok bool
+	if sp.dataOffset, ok = addWordOffsetsWithCarry(pointerOffset, sp.dataOffset, 1); !ok {
+		err = errWordOffsetSumOverflows{sp.dataOffset, pointerOffset}
+		return
+	}
+
+	// Check if entire struct is readable.
+	fullSize := WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
+	if err = seg.checkBounds(sp.dataOffset, fullSize); err != nil {
+		return
+	}
+	if err = s.arena.ReadLimiter().CanRead(fullSize); err != nil {
+		return
+	}
+
+	*res = Struct{
+		seg:   seg,
+		arena: s.arena,
+		dl:    structDL,
+		ptr:   sp,
+	}
+	return
+
 }

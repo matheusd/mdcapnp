@@ -12,6 +12,7 @@ import (
 	"time"
 	"weak"
 
+	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
 )
 
@@ -172,6 +173,7 @@ const (
 	message_which_accept
 	message_which_provide
 
+	message_which_rawRmb   message_which = 999998
 	message_which_testecho message_which = 999999
 )
 
@@ -199,18 +201,18 @@ func (mw message_which) String() string {
 }
 
 type message struct { // RPC message type
-	isBootstrap  bool
-	isReturn     bool
-	isCall       bool
+	//isBootstrap  bool
+	isReturn bool
+	//isCall       bool
 	isFinish     bool
 	isResolve    bool
 	isDisembargo bool
 	isAccept     bool
 	isProvide    bool
 
-	boot       bootstrap
-	ret        rpcReturn
-	call       call
+	//boot       bootstrap
+	ret rpcReturn
+	//call       call
 	finish     finish
 	resolve    resolve
 	disembargo disembargo
@@ -218,16 +220,20 @@ type message struct { // RPC message type
 	provide    provide
 
 	testEcho uint64 // Special test message.
+
+	rawSerBytes []byte
+	rawSerMb    *capnpser.MessageBuilder
+	rawSerMsg   *capnpser.Message
 }
 
 func (m *message) Which() message_which {
 	switch {
-	case m.isBootstrap:
-		return message_which_bootstrap
+	//case m.isBootstrap:
+	//	return message_which_bootstrap
 	case m.isReturn:
 		return message_which_return
-	case m.isCall:
-		return message_which_call
+	//case m.isCall:
+	//	return message_which_call
 	case m.isFinish:
 		return message_which_finish
 	case m.isResolve:
@@ -240,27 +246,31 @@ func (m *message) Which() message_which {
 		return message_which_provide
 	case m.testEcho > 0:
 		return message_which_testecho
+	case m.rawSerMb != nil:
+		return message_which_rawRmb
 	default:
 		panic("unknown message which")
 	}
 }
 func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
-func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
-func (m *message) AsBootstrap() bootstrap                   { return m.boot }
-func (m *message) IsReturn() bool                           { return m.isReturn }
-func (m *message) AsReturn() rpcReturn                      { return m.ret }
-func (m *message) IsCall() bool                             { return m.isCall }
-func (m *message) AsCall() call                             { return m.call }
-func (m *message) IsFinish() bool                           { return m.isFinish }
-func (m *message) AsFinish() finish                         { return m.finish }
-func (m *message) IsResolve() bool                          { return m.isResolve }
-func (m *message) AsResolve() resolve                       { return m.resolve }
-func (m *message) IsDisembargo() bool                       { return m.isDisembargo }
-func (m *message) AsDisembargo() disembargo                 { return m.disembargo }
-func (m *message) IsAccept() bool                           { return m.isAccept }
-func (m *message) AsAccept() accept                         { return m.accept }
-func (m *message) IsProvide() bool                          { return m.isProvide }
-func (m *message) AsProvide() provide                       { return m.provide }
+
+// func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
+// func (m *message) AsBootstrap() bootstrap                   { return m.boot }
+func (m *message) IsReturn() bool      { return m.isReturn }
+func (m *message) AsReturn() rpcReturn { return m.ret }
+
+// func (m *message) IsCall() bool                             { return m.isCall }
+// func (m *message) AsCall() call             { return m.call }
+func (m *message) IsFinish() bool           { return m.isFinish }
+func (m *message) AsFinish() finish         { return m.finish }
+func (m *message) IsResolve() bool          { return m.isResolve }
+func (m *message) AsResolve() resolve       { return m.resolve }
+func (m *message) IsDisembargo() bool       { return m.isDisembargo }
+func (m *message) AsDisembargo() disembargo { return m.disembargo }
+func (m *message) IsAccept() bool           { return m.isAccept }
+func (m *message) AsAccept() accept         { return m.accept }
+func (m *message) IsProvide() bool          { return m.isProvide }
+func (m *message) AsProvide() provide       { return m.provide }
 
 type messagePool struct {
 	p *sync.Pool
@@ -288,6 +298,79 @@ func newMessagePool() *messagePool {
 			},
 		},
 	}
+}
+
+type rpcMsgBuilder struct {
+	serMb *capnpser.MessageBuilder
+	mb    types.MessageBuilder
+}
+
+type messageBuilderPool struct {
+	alloc capnpser.Allocator // Alloc strategy for outbound rpc messages.
+	p     *sync.Pool
+}
+
+func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize int) (rpcMsgBuilder, error) {
+	// TODO: reuse allocator.
+	// TODO: calculate the size hint.
+	serMb := mp.p.Get().(*capnpser.MessageBuilder)
+	mb, err := types.NewRootMessageBuilder(serMb)
+	if err != nil {
+		return rpcMsgBuilder{}, err
+	}
+	return rpcMsgBuilder{serMb: serMb, mb: mb}, nil
+}
+
+func (mp *messageBuilderPool) get() (rpcMsgBuilder, error) {
+	return mp.getForPayloadSize(0)
+}
+
+func (mp *messageBuilderPool) put(serMb *capnpser.MessageBuilder) {
+	err := serMb.Reset()
+	if err != nil {
+		panic(err) // Simple allocator never errors on Reset().
+	}
+	mp.p.Put(serMb)
+}
+
+func newMessageBuilderPool() *messageBuilderPool {
+	alloc := capnpser.NewSimpleSingleAllocator(16, false)
+	return &messageBuilderPool{
+		alloc: alloc,
+		p: &sync.Pool{
+			New: func() any {
+				serMb, err := capnpser.NewMessageBuilder(alloc)
+				if err != nil {
+					// SimpleSingleAlloc never errors here.
+					panic(err)
+				}
+				return serMb
+			},
+		},
+	}
+}
+
+type rpcCallMsgBuilder struct {
+	rpcMsgBuilder
+	builder     capnpser.StructBuilder
+	isBootstrap bool
+}
+
+func (rb *rpcCallMsgBuilder) initAsBootstrap() error {
+	b, err := rb.mb.NewBoostrap()
+	if err != nil {
+		return err
+	}
+	rb.builder = capnpser.StructBuilder(b)
+	return nil
+}
+
+func (rb *rpcCallMsgBuilder) bootstrapBuilder() types.BootstrapBuilder {
+	return types.BootstrapBuilder(rb.builder)
+}
+
+func (rb *rpcCallMsgBuilder) callBuilder() types.CallBuilder {
+	return types.CallBuilder(rb.builder)
 }
 
 type interfaceId uint64
@@ -538,10 +621,10 @@ type inMsg struct {
 
 // To be generated from rpc.capnp
 
-type QuestionId uint32
-type AnswerId uint32
-type ExportId uint32
-type ImportId uint32
+type QuestionId = types.QuestionId
+type AnswerId = types.AnswerId
+type ExportId = types.ExportId
+type ImportId = types.ImportId
 
 type questionType int
 

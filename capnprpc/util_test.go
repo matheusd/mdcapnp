@@ -13,6 +13,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
+	types "matheusd.com/mdcapnp/capnprpc/types"
+	"matheusd.com/mdcapnp/capnpser"
 )
 
 type testVat struct {
@@ -22,6 +24,7 @@ type testVat struct {
 }
 
 type testHarness struct {
+	alloc    capnpser.Allocator
 	t        testing.TB
 	vatCount int
 	ctx      context.Context
@@ -67,16 +70,22 @@ func (th *testHarness) newTestConn() *testConn {
 
 func (th *testHarness) twoVatsPipe(v1, v2 *testVat) (c1, c2 *testPipeConn) {
 	c1 = &testPipeConn{
-		remName:  v2.name,
-		remIndex: v2.index,
-		in:       make(chan message, 10),
-		out:      make(chan message, 10),
+		remName:   v2.name,
+		remIndex:  v2.index,
+		nextOut:   make(chan *message, 1),
+		wroteOut:  make(chan struct{}, 1),
+		nextIn:    make(chan *message, 1),
+		inWritten: make(chan struct{}, 1),
+		recvMsg:   message{rawSerBytes: make([]byte, 0, 512)},
 	}
 	c2 = &testPipeConn{
-		remName:  v1.name,
-		remIndex: v1.index,
-		in:       c1.out,
-		out:      c1.in,
+		remName:   v1.name,
+		remIndex:  v1.index,
+		nextIn:    c1.nextOut,
+		wroteOut:  c1.inWritten,
+		nextOut:   c1.nextIn,
+		inWritten: c1.wroteOut,
+		recvMsg:   message{rawSerBytes: make([]byte, 0, 512)},
 	}
 	return
 }
@@ -86,6 +95,18 @@ func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
 	rc1 = v1.RunConn(c1)
 	rc2 = v2.RunConn(c2)
 	return
+}
+
+func (th *testHarness) newRpcMsg() (types.MessageBuilder, *capnpser.MessageBuilder) {
+	mb, err := capnpser.NewMessageBuilder(th.alloc)
+	if err != nil {
+		th.t.Fatal(err)
+	}
+	msg, err := types.NewRootMessageBuilder(mb)
+	if err != nil {
+		th.t.Fatal(err)
+	}
+	return msg, mb
 }
 
 func newTestHarness(t testing.TB) *testHarness {
@@ -116,6 +137,7 @@ func newTestHarness(t testing.TB) *testHarness {
 
 	th := &testHarness{
 		ctx:    ctx,
+		alloc:  capnpser.NewSimpleSingleAllocator(16, false),
 		t:      t,
 		g:      g,
 		logger: logger,

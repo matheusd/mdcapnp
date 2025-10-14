@@ -15,6 +15,11 @@ func MakeMsg(arena *Arena) Message {
 	return Message{arena: arena, dl: defaultDepthLimit}
 }
 
+// Arena returns the underlying Arena associated with this message.
+func (msg *Message) Arena() *Arena {
+	return msg.arena
+}
+
 // SetDepthLimit sets the depth limit for reading structs and de-referencing
 // pointers from this message. To have an effect, this must be called before
 // [ReadRoot].
