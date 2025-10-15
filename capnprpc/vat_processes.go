@@ -870,6 +870,7 @@ func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis disemb
 }
 
 func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg types.Message, rawMsg *capnpser.Message) error {
+
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 

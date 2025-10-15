@@ -178,6 +178,15 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 		}
 
 		if msg.rawSerMsg != nil {
+			/*
+				logEvent := rc.log.Debug()
+				msgRawData := msg.rawSerMsg.Arena().RawDataCopy()
+				for i, data := range msgRawData {
+					logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
+				}
+				logEvent.Msg("debug processIn")
+			*/
+
 			var rpcMsg types.Message
 			err = rpcMsg.ReadFromRoot(msg.rawSerMsg)
 			if err == nil {

@@ -39,8 +39,9 @@ type StructListBuilder struct {
 	listLen  listSize // Cannot be > listCap
 	listCap  listSize
 
-	mb  *MessageBuilder
-	urb UnsafeRawBuilder
+	mb *MessageBuilder
+	// urb UnsafeRawBuilder
+	urb SegmentBuilder
 	sid SegmentID
 }
 
@@ -56,7 +57,7 @@ func (slb *StructListBuilder) Cap() int {
 
 func (slb *StructListBuilder) writeTagWord() {
 	pointer := buildRawStructPointer(WordOffset(slb.listLen), slb.itemSize)
-	slb.urb.SetWord(0, Word(pointer))
+	slb.urb.SetWord(slb.off, Word(pointer))
 }
 
 // SetLen modifies the length of the list. It can increase or decrease the
@@ -85,6 +86,7 @@ func (slb *StructListBuilder) at(i int) (res StructBuilder) {
 		mb:  slb.mb,
 		sid: slb.sid,
 		// urb: slb.urb.Child(relOff),
+		urb: slb.urb,
 	}
 	return
 }
@@ -167,9 +169,9 @@ func (sb *StructBuilder) SetUint64(dataIndex DataFieldIndex, v uint64) (err erro
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// finalOff := dataIndex.uncheckedWordOffset(sb.off)
-		// sb.seg.uncheckedSetWord(finalOff, Word(v))
-		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
+		finalOff := dataIndex.uncheckedWordOffset(sb.off)
+		sb.urb.SetWord(finalOff, Word(v))
+		// sb.urb.SetWord(WordOffset(dataIndex), Word(v))
 	}
 	return
 }
@@ -181,9 +183,9 @@ func (sb *StructBuilder) SetInt64(dataIndex DataFieldIndex, v int64) (err error)
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// finalOff := dataIndex.uncheckedWordOffset(sb.off)
-		// sb.seg.uncheckedSetWord(finalOff, Word(v))
-		sb.urb.SetWord(WordOffset(dataIndex), Word(v))
+		finalOff := dataIndex.uncheckedWordOffset(sb.off)
+		sb.urb.SetWord(finalOff, Word(v))
+		// sb.urb.SetWord(WordOffset(dataIndex), Word(v))
 	}
 	return
 }
@@ -196,8 +198,8 @@ func (sb *StructBuilder) SetUint16(dataIndex DataFieldIndex, shift Uint16DataFie
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffff)<<shift, Word(v)<<shift)
+		sb.urb.maskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(0xffff)<<shift, Word(v)<<shift)
+		// sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffff)<<shift, Word(v)<<shift)
 	}
 	return
 }
@@ -210,8 +212,8 @@ func (sb *StructBuilder) SetUint32(dataIndex DataFieldIndex, shift Uint32DataFie
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
+		sb.urb.maskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(0xffffffff)<<shift, Word(v)<<shift)
+		// sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
 	}
 	return
 }
@@ -224,8 +226,8 @@ func (sb *StructBuilder) SetInt32(dataIndex DataFieldIndex, shift Uint32DataFiel
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(mask), Word(v))
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
+		sb.urb.maskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), Word(0xffffffff)<<shift, Word(v)<<shift)
+		// sb.urb.maskAndMergeWord(WordOffset(dataIndex), Word(0xffffffff)<<shift, Word(v)<<shift)
 	}
 	return
 }
@@ -238,8 +240,8 @@ func (sb *StructBuilder) SetBool(dataIndex DataFieldIndex, bit byte, v bool) (er
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// sb.seg.uncheckedMaskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), ^(1 << bit), boolToWord(v)<<bit)
-		sb.urb.maskAndMergeWord(WordOffset(dataIndex), (1 << bit), boolToWord(v)<<bit)
+		sb.urb.maskAndMergeWord(dataIndex.uncheckedWordOffset(sb.off), (1 << bit), boolToWord(v)<<bit)
+		// sb.urb.maskAndMergeWord(WordOffset(dataIndex), (1 << bit), boolToWord(v)<<bit)
 	}
 	return
 }
@@ -252,8 +254,8 @@ func (sb *StructBuilder) SetFloat64(dataIndex DataFieldIndex, v float64) (err er
 	} else {
 		// Structure already fully allocated, no need to check for
 		// bounds.
-		// sb.seg.uncheckedSetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
-		sb.urb.SetWord(WordOffset(dataIndex), Word(math.Float64bits(v)))
+		sb.urb.SetWord(dataIndex.uncheckedWordOffset(sb.off), Word(math.Float64bits(v)))
+		// sb.urb.SetWord(WordOffset(dataIndex), Word(math.Float64bits(v)))
 	}
 	return
 }
@@ -295,8 +297,8 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 
 	// Structure already fully allocated, no need to check for
 	// bounds.
-	// sb.seg.uncheckedSetWord(ptrOff, Word(lsPtr.toPointer()))
-	sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
+	sb.urb.SetWord(concretePtrOff, Word(lsPtr.toPointer()))
+	// sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
 	return nil
 }
 
@@ -321,12 +323,12 @@ func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructS
 
 	// Offset of the pointer field that will reference the new struct. This
 	// is relative to the start of this struct (sb).
-	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
 
 	// Determine concrete pointer offset of ptrOff inside struct. This
 	// doesn't need overflow checks because the entire struct has been
 	// allocated, thus this pointer offset is known to be in bounds.
-	concretePtrOff := ptrOff + sb.off
+	concretePtrOff := ptrOff // + sb.off
 
 	// Determine the relative offset from the field pointer offset to the
 	// actual data. This finishes the construction of the struct pointer.
@@ -338,7 +340,7 @@ func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructS
 
 	// Structure already fully allocated, no need to check for
 	// bounds.
-	sb.urb.SetWord(ptrOff, Word(sp.toPointer()))
+	sb.urb.SetWord(concretePtrOff, Word(sp.toPointer()))
 
 	return
 }
@@ -371,7 +373,7 @@ func (sb *StructBuilder) SetAnyPointer(ptrIndex PointerFieldIndex, v AnyPointerB
 	// simple indices, and null pointers don't point anywhere. Neither
 	// requires actual data to link to.
 	if v.ptr.isCapPointer() || v.ptr.isNullPointer() || v.ptr.isZeroStruct() {
-		sb.urb.SetWord(ptrOff, Word(v.ptr))
+		sb.urb.SetWord(sb.off+ptrOff, Word(v.ptr))
 		return nil
 	}
 
@@ -409,7 +411,7 @@ func (sb *StructBuilder) SetAnyPointer(ptrIndex PointerFieldIndex, v AnyPointerB
 	ptr := v.ptr.withDataOffset(v.off - concretePtrOff - 1)
 
 	// Write the pointer field.
-	sb.urb.SetWord(ptrOff, Word(ptr))
+	sb.urb.SetWord(concretePtrOff, Word(ptr))
 	return nil
 }
 
@@ -434,10 +436,10 @@ func (sb *StructBuilder) NewStructListField(ptrIndex PointerFieldIndex, itemSize
 
 	// Offset of the pointer field inside sb. No need to check for overflow
 	// because the struct has been validated to contain this pointer.
-	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
 
 	// Determine concrete offset from structure start until ptrOff.
-	concretePtrOff := sb.off + ptrOff
+	concretePtrOff := /*sb.off*/ +ptrOff
 
 	// Build the final list pointer.
 	lsPtr := listPointer{
@@ -447,7 +449,7 @@ func (sb *StructBuilder) NewStructListField(ptrIndex PointerFieldIndex, itemSize
 	}
 
 	// Write the pointer field.
-	sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
+	sb.urb.SetWord(concretePtrOff, Word(lsPtr.toPointer()))
 	return
 }
 
@@ -465,8 +467,12 @@ func (sb *SegmentBuilder) ID() SegmentID {
 // only be called when the caller is sure the given word is already allocated in
 // the segment.
 func (sb *SegmentBuilder) SetWord(offset WordOffset, value Word) {
-	// binary.LittleEndian.PutUint64(sb.as.uncheckedSegSlice(sb.id, offset, 1), uint64(value))
 	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], uint64(value))
+
+	// ptr := (*Word)(unsafe.Pointer(unsafe.SliceData((*sb.b)[offset*WordSize:])))
+	// *ptr = value
+
+	// binary.LittleEndian.PutUint64(sb.as.uncheckedSegSlice(sb.id, offset, 1), uint64(value))
 	// binary.LittleEndian.PutUint64(sb.b[offset*WordSize:(offset+1)*WordSize], uint64(value))
 	// *(*Word)(unsafe.Add(sb.ptr, offset*WordSize)) = value
 }
@@ -474,6 +480,9 @@ func (sb *SegmentBuilder) SetWord(offset WordOffset, value Word) {
 func (sb *SegmentBuilder) maskAndMergeWord(offset WordOffset, mask, value Word) {
 	old := binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:])
 	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&^uint64(mask)|uint64(value))
+
+	// ptr := (*Word)(unsafe.Pointer(unsafe.SliceData((*sb.b)[offset*WordSize:])))
+	// *ptr = *ptr&^mask | value
 
 	/*
 		ptr := (*Word)(unsafe.Add(sb.ptr, offset*WordSize))
@@ -868,18 +877,17 @@ func (mb *MessageBuilder) NewStructList(itemSize StructSize, listLen, listCap in
 		return
 	}
 
-	var b []byte
-
-	res.sid, b, res.off, err = mb.allocateValidSizeXXX(0, WordCount(totalWordCount))
+	res.urb, res.off, err = mb.allocateValidSize(0, WordCount(totalWordCount))
 	if err != nil {
 		return
 	}
 
-	res.urb = UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[res.off*WordSize]))}
+	// res.urb = UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[res.off*WordSize]))}
 	res.listCap = listSize(listCap)
 	res.listLen = listSize(listLen)
 	res.mb = mb
 	res.itemSize = itemSize
+	res.sid = res.urb.id
 
 	// Write the initial tag word.
 	res.writeTagWord()
