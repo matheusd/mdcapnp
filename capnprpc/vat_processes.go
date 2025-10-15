@@ -15,47 +15,6 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-// newReturnPayload is a hlper that initializes a Return message with a Result
-// payload.
-func (v *Vat) newReturnPayload(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, payBuilder types.PayloadBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
-	if err != nil {
-		return
-	}
-
-	// Reply is a Return with a single cap.
-	reply, err := rpcMsgBuilder.mb.NewReturn()
-	if err != nil {
-		return
-	}
-	reply.SetAnswerId(aid)
-	payBuilder, err = reply.NewResults()
-	return
-}
-
-// newSingleCapReturn is a helper that initializes a Return message with a
-// single cap as the payload.
-func (v *Vat) newSingleCapReturn(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, capDesc types.CapDescriptorBuilder, err error) {
-	var payBuilder types.PayloadBuilder
-	rpcMsgBuilder, payBuilder, err = v.newReturnPayload(aid)
-	if err != nil {
-		return
-	}
-
-	// Reply is a Return with a single cap.
-	if err = payBuilder.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0)); err != nil {
-		return
-	}
-
-	var capTable capnpser.GenericStructListBuilder[types.CapDescriptorBuilder]
-	capTable, err = payBuilder.NewCapTable(1, 1)
-	if err != nil {
-		return
-	}
-	capDesc = capTable.At(0)
-	return
-}
-
 func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.Bootstrap) error {
 	bootQid := AnswerId(boot.QuestionId())
 
@@ -464,14 +423,14 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
-func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) error {
+func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin types.Finish) error {
 	var err error
-	aid := AnswerId(fin.qid)
+	aid := AnswerId(fin.QuestionId())
 
 	if !rc.answers.has(aid) {
 		err = fmt.Errorf("answer %d not in answers table", aid)
 	} else {
-		rc.answers.del(AnswerId(fin.qid))
+		rc.answers.del(aid)
 	}
 
 	// TODO: release exported caps?
@@ -933,6 +892,13 @@ func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg type
 			err = v.processCall(ctx, rc, call)
 		}
 
+	case types.Message_Which_Finish:
+		var fin types.Finish
+		fin, err = msg.AsFinish()
+		if err == nil {
+			err = v.processFinish(ctx, rc, fin)
+		}
+
 	case types.Message_Which_Return:
 		var ret types.Return
 		ret, err = msg.AsReturn()
@@ -970,8 +936,6 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 
 	var err error
 	switch {
-	case msg.IsFinish():
-		err = v.processFinish(ctx, rc, msg.AsFinish())
 	case msg.IsResolve():
 		err = v.processResolve(ctx, rc, msg.AsResolve())
 	case msg.IsProvide():
@@ -1114,13 +1078,14 @@ func (v *Vat) queueFinish(ctx context.Context, rc *runningConn, qid QuestionId) 
 	rc.questions.del(qid)
 	rc.mu.Unlock()
 
-	msg := v.mp.get()
-	*msg = message{
-		isFinish: true,
-		finish:   finish{qid: qid},
+	rpcMsgBuilder, _, err := v.newFinish(qid)
+	if err != nil {
+		return err
 	}
 
-	return rc.queue(ctx, singleMsgBatch(msg))
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
 func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {

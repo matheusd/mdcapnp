@@ -218,9 +218,7 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 				close(outMsg.sentChan)
 			}
 
-			if outMsg.msg.IsFinish() {
-				v.mp.put(outMsg.msg)
-			} else if outMsg.msg.rawSerMb != nil {
+			if outMsg.msg.rawSerMb != nil {
 				v.mbp.put(outMsg.msg.rawSerMb)
 				v.mp.put(outMsg.msg) // Transitional code
 			}

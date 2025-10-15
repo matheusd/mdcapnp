@@ -355,22 +355,42 @@ func (b *ReturnBuilder) NewException() (sb ExceptionBuilder, err error) {
 	return
 }
 
+const (
+	finish_questionId_dataField      = 0
+	finish_questionId_dataFieldShift = capnpser.Uint32FieldLo
+)
+
+type Finish capnpser.Struct
+
+func (s *Finish) QuestionId() QuestionId {
+	return QuestionId((*capnpser.Struct)(s).Uint32(finish_questionId_dataField, finish_questionId_dataFieldShift))
+}
+
+type FinishBuilder capnpser.StructBuilder
+
+func (b *FinishBuilder) SetQuestionId(v QuestionId) error {
+	return (*capnpser.StructBuilder)(b).SetUint32(finish_questionId_dataField, finish_questionId_dataFieldShift, uint32(v))
+}
+
 type Message_Which int
 
 const (
 	Message_Which_Call      Message_Which = 2
-	Message_Which_Bootstrap Message_Which = 8
 	Message_Which_Return    Message_Which = 3
+	Message_Which_Finish    Message_Which = 4
+	Message_Which_Bootstrap Message_Which = 8
 )
 
 func (w Message_Which) String() string {
 	switch w {
 	case Message_Which_Call:
 		return "call"
-	case Message_Which_Bootstrap:
-		return "bootstrap"
 	case Message_Which_Return:
 		return "return"
+	case Message_Which_Finish:
+		return "finish"
+	case Message_Which_Bootstrap:
+		return "bootstrap"
 	default:
 		return fmt.Sprintf("unknown which %d", w)
 	}
@@ -402,6 +422,11 @@ func (s *Message) AsCall() (res Call, err error) {
 	return
 }
 
+func (s *Message) AsFinish() (res Finish, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
 func (s *Message) AsReturn() (res Return, err error) {
 	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
 	return
@@ -426,6 +451,16 @@ func (b *MessageBuilder) NewCall() (sb CallBuilder, err error) {
 	var nsb capnpser.StructBuilder
 	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(messageTarget_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
 	sb = CallBuilder(nsb)
+	return
+}
+
+func (b *MessageBuilder) NewFinish() (sb FinishBuilder, err error) {
+	var structSize = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 0}
+	const unionValue = uint16(Message_Which_Finish)
+
+	var nsb capnpser.StructBuilder
+	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(messageTarget_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
+	sb = FinishBuilder(nsb)
 	return
 }
 
