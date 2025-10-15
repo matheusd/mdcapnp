@@ -116,7 +116,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, seg1.id) // Sanity check.
 	require.EqualValues(t, 1, off1)    // Sanity check.
-	seg1.uncheckedSetWord(off1, v1)
+	seg1.SetWord(off1, v1)
 
 	// Allocate a large amount to cause a re-allocation in the internal
 	// buffer.
@@ -128,15 +128,15 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	v2 := Word(0x99aabbccddeeff00)
 	seg2, off2, err := mb.allocate(0, 1)
 	require.NoError(t, err)
-	seg2.uncheckedSetWord(off2, v2)
+	seg2.SetWord(off2, v2)
 
 	// Ensure the second offset was made far from the first offset.
 	require.EqualValues(t, seg1.id, seg2.id)
 	require.Equal(t, off1+extraWords+1, off2)
 
 	// Ensure both segment builders can read each other's values.
-	require.Equal(t, v1, seg2.uncheckedGetWord(off1))
-	require.Equal(t, v2, seg1.uncheckedGetWord(off2))
+	require.Equal(t, v1, seg2.GetWord(off1))
+	require.Equal(t, v2, seg1.GetWord(off2))
 
 	// Create a new segment and allocate the third word on it.
 	alloc.createNewSeg = true
@@ -144,7 +144,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	seg3, off3, err := mb.allocate(0, 4)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, seg3.id) // Sanity check.
-	seg3.uncheckedSetWord(off3, v3)
+	seg3.SetWord(off3, v3)
 	require.NotEqualValues(t, seg3.id, seg1.id)
 
 	// Allocate a new word back in the first segment.
@@ -153,7 +153,7 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	seg4, off4, err := mb.allocate(0, 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, seg4.id) // Sanity check.
-	seg4.uncheckedSetWord(off4, v4)
+	seg4.SetWord(off4, v4)
 
 	// Ensure segment builders on segment 0 can read each other's values.
 	//
@@ -161,15 +161,15 @@ func TestSegmentBuilderPreservesBufAfterRealloc(t *testing.T) {
 	// segments and new segment buffers, old segment builders (created
 	// before the reallocs) can still read new values (i.e. they are all
 	// pointing to the _same_ buffer).
-	require.Equal(t, v1, seg1.uncheckedGetWord(off1))
-	require.Equal(t, v1, seg2.uncheckedGetWord(off1))
-	require.Equal(t, v1, seg4.uncheckedGetWord(off1))
-	require.Equal(t, v2, seg1.uncheckedGetWord(off2))
-	require.Equal(t, v2, seg2.uncheckedGetWord(off2))
-	require.Equal(t, v2, seg4.uncheckedGetWord(off2))
-	require.Equal(t, v4, seg1.uncheckedGetWord(off4))
-	require.Equal(t, v4, seg2.uncheckedGetWord(off4))
-	require.Equal(t, v4, seg4.uncheckedGetWord(off4))
+	require.Equal(t, v1, seg1.GetWord(off1))
+	require.Equal(t, v1, seg2.GetWord(off1))
+	require.Equal(t, v1, seg4.GetWord(off1))
+	require.Equal(t, v2, seg1.GetWord(off2))
+	require.Equal(t, v2, seg2.GetWord(off2))
+	require.Equal(t, v2, seg4.GetWord(off2))
+	require.Equal(t, v4, seg1.GetWord(off4))
+	require.Equal(t, v4, seg2.GetWord(off4))
+	require.Equal(t, v4, seg4.GetWord(off4))
 }
 
 // BenchmarkBuilderSetInt64 benchmarks the SetInt64 function.

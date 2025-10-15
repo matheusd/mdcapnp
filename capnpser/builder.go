@@ -461,19 +461,19 @@ func (sb *SegmentBuilder) ID() SegmentID {
 	return sb.id
 }
 
-// uncheckedSetWord sets the word at the given offset in the segment. This must
+// SetWord sets the word at the given offset in the segment. This must
 // only be called when the caller is sure the given word is already allocated in
 // the segment.
-func (sb *SegmentBuilder) uncheckedSetWord(offset WordOffset, value Word) {
+func (sb *SegmentBuilder) SetWord(offset WordOffset, value Word) {
 	// binary.LittleEndian.PutUint64(sb.as.uncheckedSegSlice(sb.id, offset, 1), uint64(value))
 	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], uint64(value))
 	// binary.LittleEndian.PutUint64(sb.b[offset*WordSize:(offset+1)*WordSize], uint64(value))
 	// *(*Word)(unsafe.Add(sb.ptr, offset*WordSize)) = value
 }
 
-func (sb *SegmentBuilder) uncheckedMaskAndMergeWord(offset WordOffset, mask, value Word) {
+func (sb *SegmentBuilder) maskAndMergeWord(offset WordOffset, mask, value Word) {
 	old := binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:])
-	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&uint64(mask)|uint64(value))
+	binary.LittleEndian.PutUint64((*sb.b)[offset*WordSize:], old&^uint64(mask)|uint64(value))
 
 	/*
 		ptr := (*Word)(unsafe.Add(sb.ptr, offset*WordSize))
@@ -498,7 +498,7 @@ func (sb *SegmentBuilder) uncheckedMaskAndMergeWord(offset WordOffset, mask, val
 	*/
 }
 
-func (sb *SegmentBuilder) uncheckedGetWord(offset WordOffset) Word {
+func (sb *SegmentBuilder) GetWord(offset WordOffset) Word {
 	return Word(binary.LittleEndian.Uint64((*sb.b)[offset*WordSize:]))
 	// return *(*Word)(unsafe.Add(sb.ptr, offset*WordSize))
 }
