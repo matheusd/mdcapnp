@@ -84,7 +84,7 @@ func (slb *StructListBuilder) at(i int) (res StructBuilder) {
 		sz:  slb.itemSize,
 		mb:  slb.mb,
 		sid: slb.sid,
-		urb: slb.urb.Child(relOff),
+		// urb: slb.urb.Child(relOff),
 	}
 	return
 }
@@ -144,9 +144,9 @@ func NewGenericStructListBuilderField[T ~StructBuilderType](s *StructBuilder,
 type StructBuilderType = struct {
 	off WordOffset // Concrete offset into segment where struct data begins.
 	sz  StructSize
-	// seg SegmentBuilder
 	mb  *MessageBuilder
-	urb UnsafeRawBuilder
+	urb SegmentBuilder
+	// urb UnsafeRawBuilder
 	sid SegmentID
 }
 type StructBuilder StructBuilderType
@@ -819,8 +819,15 @@ func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err error) {
 	// TotalSize() is necessarily a valid size because it is only up to
 	// 2^17-2 words.
-	// seg, off, err := mb.allocateValidSize(0, size.TotalSize())
-	sid, b, off, err := mb.allocateValidSizeXXX(0, size.TotalSize())
+	/*
+		sid, b, off, err := mb.allocateValidSizeXXX(0, size.TotalSize())
+		if err != nil {
+			return StructBuilder{}, err
+		}
+		urb := UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[off*WordSize]))}
+	*/
+
+	urb, off, err := mb.allocateValidSize(0, size.TotalSize())
 	if err != nil {
 		return StructBuilder{}, err
 	}
@@ -828,8 +835,8 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 	return StructBuilder{
 		// seg: seg,
 		mb:  mb,
-		sid: sid, // seg.id,
-		urb: UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[off*WordSize]))},
+		sid: urb.id, // sid, // seg.id,
+		urb: urb,
 		off: off,
 		sz:  size,
 	}, nil
