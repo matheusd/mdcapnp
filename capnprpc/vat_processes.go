@@ -595,8 +595,8 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 	return nil
 }
 
-func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) error {
-	iid := ImportId(res.pid)
+func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res types.Resolve) error {
+	iid := ImportId(res.PromiseId())
 	imp, ok := rc.imports.get(iid)
 	if !ok {
 		return fmt.Errorf("import id %d not found", iid)
@@ -611,23 +611,32 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		return fmt.Errorf("step of import %d already released", iid)
 	}
 
+	if res.Which() != types.Resolve_Which_Cap {
+		// TODO: handle exception.
+		return errors.New("unhandled exception case for resolve")
+	}
+
 	// Similar to code in processReturn. Unify?
-	capEntry := res.cap
+	capEntry, err := res.AsCap()
+	if err != nil {
+		return err
+	}
 	var resolveCap capability
 	var resolvePromise ExportId
 	var resolveId ImportId
 	var resImport imprt
-	if capEntry.IsSenderHosted() {
+	switch capEntry.Which() {
+	case types.CapDescriptor_Which_SenderHosted:
 		// Resolved into a remote capability.
 		resolveCap = capability{eid: ExportId(capEntry.AsSenderHosted())}
 		resolveId = ImportId(capEntry.AsSenderHosted())
 		resImport = imprt{typ: importTypeSenderHosted}
-	} else if capEntry.IsSenderPromise() {
+	case types.CapDescriptor_Which_SenderPromise:
 		// Resolved into another remote promise.
 		resolvePromise = capEntry.AsSenderPromise()
 		resolveId = ImportId(resolvePromise)
 		resImport = imprt{typ: importTypeRemotePromise, step: imp.step}
-	} else if capEntry.IsThirdPartyHosted() {
+	case types.CapDescriptor_Which_ThirdPartyHosted:
 		// Start the 3PH resolution process. This will involve
 		// connecting to the third party (if we haven't already) and
 		// then sending the Accept with the provision id.
@@ -651,7 +660,7 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res resolve) 
 		// Maybe in the future this could be changed to optinally
 		// cache calls locally until 3PH completes.
 		return nil
-	} else {
+	default:
 		return errors.New("unknown cap entry type")
 	}
 
@@ -907,6 +916,13 @@ func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg type
 			err = v.processReturn(ctx, rc, ret)
 		}
 
+	case types.Message_Which_Resolve:
+		var res types.Resolve
+		res, err = msg.AsResolve()
+		if err == nil {
+			err = v.processResolve(ctx, rc, res)
+		}
+
 	default:
 		err = fmt.Errorf("unknown Message type %d", which)
 	}
@@ -937,8 +953,6 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 
 	var err error
 	switch {
-	case msg.IsResolve():
-		err = v.processResolve(ctx, rc, msg.AsResolve())
 	case msg.IsProvide():
 		err = v.processProvide(ctx, rc, msg.AsProvide())
 	case msg.IsAccept():

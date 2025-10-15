@@ -205,7 +205,7 @@ type message struct { // RPC message type
 	// isReturn bool
 	//isCall       bool
 	//isFinish     bool
-	isResolve    bool
+	//isResolve    bool
 	isDisembargo bool
 	isAccept     bool
 	isProvide    bool
@@ -214,7 +214,7 @@ type message struct { // RPC message type
 	// ret rpcReturn
 	//call       call
 	// finish     finish
-	resolve    resolve
+	//resolve    resolve
 	disembargo disembargo
 	accept     accept
 	provide    provide
@@ -236,8 +236,8 @@ func (m *message) Which() message_which {
 	//	return message_which_call
 	//case m.isFinish:
 	//	return message_which_finish
-	case m.isResolve:
-		return message_which_resolve
+	//case m.isResolve:
+	//	return message_which_resolve
 	case m.isDisembargo:
 		return message_which_disembargo
 	case m.isAccept:
@@ -263,8 +263,8 @@ func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
 // func (m *message) AsCall() call             { return m.call }
 // func (m *message) IsFinish() bool           { return m.isFinish }
 // func (m *message) AsFinish() finish         { return m.finish }
-func (m *message) IsResolve() bool          { return m.isResolve }
-func (m *message) AsResolve() resolve       { return m.resolve }
+// func (m *message) IsResolve() bool          { return m.isResolve }
+// func (m *message) AsResolve() resolve       { return m.resolve }
 func (m *message) IsDisembargo() bool       { return m.isDisembargo }
 func (m *message) AsDisembargo() disembargo { return m.disembargo }
 func (m *message) IsAccept() bool           { return m.isAccept }

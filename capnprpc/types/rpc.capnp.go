@@ -192,6 +192,8 @@ const (
 	capDescriptor_union_ptrField       = 0
 )
 
+var capDescriptor_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+
 type CapDescriptor capnpser.Struct
 
 func (s *CapDescriptor) Which() CapDescriptor_Which {
@@ -264,13 +266,15 @@ func (b *PayloadBuilder) SetContent(v capnpser.AnyPointerBuilder) error {
 }
 
 func (b *PayloadBuilder) NewCapTable(listLen, listCap int) (capnpser.GenericStructListBuilder[CapDescriptorBuilder], error) {
-	objSize := capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+	objSize := capDescriptor_size
 	return capnpser.NewGenericStructListBuilderField[CapDescriptorBuilder]((*capnpser.StructBuilder)(b), payload_capTable_ptrField, objSize, listLen, listCap)
 }
 
 const (
 	exception_reason_ptrField = 0
 )
+
+var exception_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 3}
 
 type Exception capnpser.Struct
 
@@ -346,7 +350,7 @@ func (b *ReturnBuilder) NewResults() (sb PayloadBuilder, err error) {
 }
 
 func (b *ReturnBuilder) NewException() (sb ExceptionBuilder, err error) {
-	var structSize = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 3}
+	var structSize = exception_size
 	const unionValue = uint16(Return_Which_Exception)
 
 	var nsb capnpser.StructBuilder
@@ -372,12 +376,74 @@ func (b *FinishBuilder) SetQuestionId(v QuestionId) error {
 	return (*capnpser.StructBuilder)(b).SetUint32(finish_questionId_dataField, finish_questionId_dataFieldShift, uint32(v))
 }
 
+type Resolve_Which int
+
+const (
+	Resolve_Which_Cap       Resolve_Which = 0
+	Resolve_Which_Exception Resolve_Which = 1
+)
+
+const (
+	resolve_promiseId_dataField      = 0
+	resolve_promiseId_dataFieldShift = capnpser.Uint32FieldLo
+	resolve_union_dataField          = 0
+	resolve_union_dataFieldShift     = capnpser.Uint16FieldShift2
+	resolve_union_ptrField           = 0
+)
+
+type Resolve capnpser.Struct
+
+func (s *Resolve) PromiseId() ExportId {
+	return ExportId((*capnpser.Struct)(s).Uint32(resolve_promiseId_dataField, resolve_promiseId_dataFieldShift))
+}
+
+func (s *Resolve) Which() Resolve_Which {
+	return Resolve_Which((*capnpser.Struct)(s).Uint16(resolve_union_dataField, resolve_union_dataFieldShift))
+}
+
+func (s *Resolve) AsCap() (res CapDescriptor, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(resolve_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Resolve) AsException() (res Exception, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(resolve_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+type ResolveBuilder capnpser.StructBuilder
+
+func (b *ResolveBuilder) SetPromiseId(v ExportId) error {
+	return (*capnpser.StructBuilder)(b).SetUint32(resolve_promiseId_dataField, resolve_promiseId_dataFieldShift, uint32(v))
+}
+
+func (b *ResolveBuilder) NewCap() (sb CapDescriptorBuilder, err error) {
+	var structSize = capDescriptor_size
+	const unionValue = uint16(Resolve_Which_Cap)
+
+	var nsb capnpser.StructBuilder
+	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(resolve_union_ptrField, structSize, resolve_union_dataField, resolve_union_dataFieldShift, unionValue)
+	sb = CapDescriptorBuilder(nsb)
+	return
+}
+
+func (b *ResolveBuilder) NewException() (sb ExceptionBuilder, err error) {
+	var structSize = exception_size
+	const unionValue = uint16(Resolve_Which_Exception)
+
+	var nsb capnpser.StructBuilder
+	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(resolve_union_ptrField, structSize, resolve_union_dataField, resolve_union_dataFieldShift, unionValue)
+	sb = ExceptionBuilder(nsb)
+	return
+}
+
 type Message_Which int
 
 const (
 	Message_Which_Call      Message_Which = 2
 	Message_Which_Return    Message_Which = 3
 	Message_Which_Finish    Message_Which = 4
+	Message_Which_Resolve   Message_Which = 5
 	Message_Which_Bootstrap Message_Which = 8
 )
 
@@ -389,6 +455,8 @@ func (w Message_Which) String() string {
 		return "return"
 	case Message_Which_Finish:
 		return "finish"
+	case Message_Which_Resolve:
+		return "resolve"
 	case Message_Which_Bootstrap:
 		return "bootstrap"
 	default:
@@ -432,6 +500,11 @@ func (s *Message) AsReturn() (res Return, err error) {
 	return
 }
 
+func (s *Message) AsResolve() (res Resolve, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
 type MessageBuilder capnpser.StructBuilder
 
 func (b *MessageBuilder) NewBoostrap() (sb BootstrapBuilder, err error) {
@@ -471,6 +544,16 @@ func (b *MessageBuilder) NewReturn() (sb ReturnBuilder, err error) {
 	var nsb capnpser.StructBuilder
 	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(messageTarget_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
 	sb = ReturnBuilder(nsb)
+	return
+}
+
+func (b *MessageBuilder) NewResolve() (sb ResolveBuilder, err error) {
+	var structSize = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+	const unionValue = uint16(Message_Which_Resolve)
+
+	var nsb capnpser.StructBuilder
+	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(messageTarget_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
+	sb = ResolveBuilder(nsb)
 	return
 }
 
