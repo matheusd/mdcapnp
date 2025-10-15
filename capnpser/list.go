@@ -4,7 +4,9 @@
 
 package capnpser
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 type listElementSize int
 
@@ -17,6 +19,8 @@ const (
 
 type listSize uint32
 
+// listWordCount is the total number of words for storage of a  list of the
+// given type and element size (as read from a pointer).
 func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 	switch elSize {
 	case listElSizeVoid:
@@ -25,7 +29,10 @@ func listWordCount(elSize listElementSize, lsSize listSize) WordCount {
 		return WordCount((lsSize + 63) / 64)
 	case listElSizeByte:
 		return WordCount((lsSize + 7) / 8)
+	case listElSizeComposite:
+		return WordCount(lsSize + 1) // + tag word
 	// FIXME: add missing types
+
 	default:
 		panic("unknown el size")
 	}
@@ -41,9 +48,10 @@ func listByteCount(elSize listElementSize, lsSize listSize) ByteCount {
 }
 
 type List struct {
-	seg *Segment
-	ptr listPointer
-	dl  depthLimit
+	seg   *Segment
+	arena *Arena
+	ptr   listPointer
+	dl    depthLimit
 }
 
 func (ls *List) LenBytes() ByteCount {
@@ -97,3 +105,51 @@ func (ls *List) UnsafeString() string {
 	buf := ls.seg.uncheckedSlice(ls.ptr.startOffset, ByteCount(ls.ptr.listSize-1)) // -1 to skip final null
 	return *(*string)(unsafe.Pointer(&buf))
 }
+
+type StructList struct {
+	l        List
+	itemSize StructSize
+	listLen  listSize
+}
+
+// Len returns the number of elements in this list.
+func (sl *StructList) Len() int {
+	return int(sl.listLen)
+}
+
+// At returns the i'th element of the list. Panics if the item is out of bounds.
+func (sl *StructList) At(i int) Struct {
+	if i < 0 {
+		panic("i is out of bounds (< 0)")
+	}
+	if i > int(sl.listLen) {
+		panic("i is out of bounds (> len)")
+	}
+
+	ptr := structPointer{
+		dataOffset:         sl.l.ptr.startOffset + WordOffset(i)*WordOffset(sl.itemSize.TotalSize()) + 1, // +1 tag word
+		dataSectionSize:    sl.itemSize.DataSectionSize,
+		pointerSectionSize: sl.itemSize.PointerSectionSize,
+	}
+
+	return Struct{
+		seg:   sl.l.seg,
+		arena: sl.l.arena,
+		dl:    sl.l.dl,
+		ptr:   ptr,
+	}
+}
+
+func ReadGenericStructList[T ~StructType](s *Struct, ptrIndex PointerFieldIndex) (GenericStructList[T], error) {
+	var sl StructList
+	err := s.ReadStructList(ptrIndex, &sl)
+	return GenericStructList[T]{sl}, err
+
+}
+
+type GenericStructList[T ~StructType] struct {
+	sl StructList
+}
+
+func (gsl *GenericStructList[T]) Len() int   { return gsl.sl.Len() }
+func (gsl *GenericStructList[T]) At(i int) T { return T(gsl.sl.At(i)) }

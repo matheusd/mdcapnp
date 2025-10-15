@@ -12,17 +12,136 @@ import (
 	"unsafe"
 )
 
-type ListBuilder struct {
-	seg SegmentBuilder
+type AnyPointerBuilder struct {
+	mb *MessageBuilder
 
-	elSize   listElementSize
-	listSize listSize
-
-	// sz  ListSize
-	off WordOffset
+	off WordOffset // Concrete offset into segment where pointer data begins (if this is a struct/list).
+	ptr pointer
+	sid SegmentID
 }
 
-type StructBuilder struct {
+func CapPointerAsAnyPointerBuilder(index uint32) AnyPointerBuilder {
+	return AnyPointerBuilder{
+		ptr: buildRawCapPointer(index),
+	}
+}
+
+func ZeroStructAsPointerBuilder() AnyPointerBuilder {
+	return AnyPointerBuilder{
+		ptr: zeroStructPointer,
+	}
+}
+
+type StructListBuilder struct {
+	off WordOffset // Concrete offset into segment where struct data begins.
+
+	itemSize StructSize
+	listLen  listSize // Cannot be > listCap
+	listCap  listSize
+
+	mb  *MessageBuilder
+	urb UnsafeRawBuilder
+	sid SegmentID
+}
+
+// Len is the current length of the list.
+func (slb *StructListBuilder) Len() int {
+	return int(slb.listLen)
+}
+
+// Cap is the capacity of the list.
+func (slb *StructListBuilder) Cap() int {
+	return int(slb.listCap)
+}
+
+func (slb *StructListBuilder) writeTagWord() {
+	pointer := buildRawStructPointer(WordOffset(slb.listLen), slb.itemSize)
+	slb.urb.SetWord(0, Word(pointer))
+}
+
+// SetLen modifies the length of the list. It can increase or decrease the
+// length without modifiying the internal structures.
+func (slb *StructListBuilder) SetLen(newLen int) {
+	if newLen < 0 {
+		panic("new len cannot be < 0")
+	}
+	if newLen > int(slb.listCap) {
+		panic("new len cannot be > cap")
+	}
+	slb.listLen = listSize(newLen)
+	slb.writeTagWord()
+}
+
+// At returns the builder for the i'th element of the list. Does NOT perform
+// bounds check.
+func (slb *StructListBuilder) at(i int) (res StructBuilder) {
+	// Determine offset of this structure. No need to check for bounds
+	// because the list is assumed initialized at least up to len i.
+	relOff := WordOffset(1 + WordOffset(WordCount(i)*slb.itemSize.TotalSize()))
+
+	res = StructBuilder{
+		off: slb.off + relOff,
+		sz:  slb.itemSize,
+		mb:  slb.mb,
+		sid: slb.sid,
+		urb: slb.urb.Child(relOff),
+	}
+	return
+}
+
+// At returns the builder for the i'th element of the list. Panics if the item
+// is out of bounds.
+func (slb *StructListBuilder) At(i int) (res StructBuilder) {
+	if i < 0 {
+		panic("i is < 0 (out of bounds)")
+	}
+	if i > slb.Len() {
+		panic("i is > len (out of bounds)")
+	}
+	return slb.at(i)
+}
+
+// Add an item to the list.
+func (slb *StructListBuilder) Add() (res StructBuilder) {
+	if slb.listLen == slb.listCap {
+		panic(errors.New("list is full"))
+	}
+
+	i := int(slb.listLen)
+	slb.listLen++
+
+	// Write the new tag word with added element.
+	slb.writeTagWord()
+
+	return slb.at(i)
+}
+
+type GenericStructListBuilder[T ~StructBuilderType] struct {
+	slb StructListBuilder
+}
+
+func (gslb *GenericStructListBuilder[T]) SetLen(i int) { gslb.slb.SetLen(i) }
+func (gslb *GenericStructListBuilder[T]) Len() int     { return gslb.slb.Len() }
+func (gslb *GenericStructListBuilder[T]) Cap() int     { return gslb.slb.Cap() }
+func (gslb *GenericStructListBuilder[T]) At(i int) T   { return T(gslb.slb.At(i)) }
+func (gslb *GenericStructListBuilder[T]) Add(i int) T  { return T(gslb.slb.Add()) }
+
+func NewGenericStructListBuilder[T ~StructBuilderType](mb *MessageBuilder,
+	itemSize StructSize, listLen, listCap int) (res GenericStructListBuilder[T], err error) {
+
+	res.slb, err = mb.NewStructList(itemSize, listLen, listCap)
+	return
+}
+
+func NewGenericStructListBuilderField[T ~StructBuilderType](s *StructBuilder,
+	ptrIndex PointerFieldIndex, itemSize StructSize, listLen, listCap int) (
+	res GenericStructListBuilder[T], err error) {
+
+	res.slb, err = s.NewStructListField(ptrIndex, itemSize, listLen, listCap)
+	return
+}
+
+type StructBuilderType = struct {
 	off WordOffset // Concrete offset into segment where struct data begins.
 	sz  StructSize
 	// seg SegmentBuilder
@@ -30,6 +149,7 @@ type StructBuilder struct {
 	urb UnsafeRawBuilder
 	sid SegmentID
 }
+type StructBuilder StructBuilderType
 
 func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
 	return dataIndex < DataFieldIndex(sb.sz.DataSectionSize)
@@ -203,9 +323,9 @@ func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructS
 	// is relative to the start of this struct (sb).
 	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
 
-	// Determine concrete pointer offset inside struct. This doesn't need
-	// overflow checks because the entire struct has been allocated, thus
-	// this pointer offset is known to be in bounds.
+	// Determine concrete pointer offset of ptrOff inside struct. This
+	// doesn't need overflow checks because the entire struct has been
+	// allocated, thus this pointer offset is known to be in bounds.
 	concretePtrOff := ptrOff + sb.off
 
 	// Determine the relative offset from the field pointer offset to the
@@ -233,6 +353,101 @@ func (sb *StructBuilder) NewStructAsUnionValue(ptrIndex PointerFieldIndex,
 	}
 
 	err = sb.SetUint16(unionField, unionFieldShift, unionFieldValue)
+	return
+}
+
+func (sb *StructBuilder) SetAnyPointer(ptrIndex PointerFieldIndex, v AnyPointerBuilder) error {
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		return errStructBuilderDoesNotContainPointerField(ptrIndex)
+	}
+
+	// Offset of the pointer field inside sb. No need to check for overflow
+	// because the struct has been validated to contain this pointer.
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
+	// Cap pointers and null pointers are written directly. Cap pointers are
+	// simple indices, and null pointers don't point anywhere. Neither
+	// requires actual data to link to.
+	if v.ptr.isCapPointer() || v.ptr.isNullPointer() || v.ptr.isZeroStruct() {
+		sb.urb.SetWord(ptrOff, Word(v.ptr))
+		return nil
+	}
+
+	ptrType := v.ptr.pointerType()
+	if ptrType == pointerTypeFarPointer {
+		// TODO: support pointing to ther segments.
+		return errors.New("far pointers unsupported")
+	}
+
+	// The only cases left are non-null list and struct pointers. Sanity
+	// check.
+	if ptrType != pointerTypeList && ptrType != pointerTypeStruct {
+		return errors.New("unhandled pointer type case in StructBuilder.SetAnyPointer")
+	}
+
+	if sb.mb != v.mb {
+		// TODO: Copy data from v.mb?
+		return errors.New("v not in same messageBuilder as sb")
+	}
+
+	if sb.sid != v.sid {
+		// TODO: support pointing to other segments.
+		return errors.New("v not in the same segment as sb")
+	}
+
+	// Determine concrete pointer offset of ptrOff inside struct. This
+	// doesn't need overflow checks because the entire struct has been
+	// allocated, thus this pointer offset is known to be in bounds.
+	concretePtrOff := ptrOff + sb.off
+
+	// Create the new pointer, with the relative offset from sb's pointer
+	// field to the target AnyPointer offset.
+	//
+	// FIXME: needs overflow and bounds check?
+	ptr := v.ptr.withDataOffset(v.off - concretePtrOff - 1)
+
+	// Write the pointer field.
+	sb.urb.SetWord(ptrOff, Word(ptr))
+	return nil
+}
+
+func (sb *StructBuilder) NewStructListField(ptrIndex PointerFieldIndex, itemSize StructSize, listLen, listCap int) (res StructListBuilder, err error) {
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainPointerField(ptrIndex)
+		return
+	}
+
+	res, err = sb.mb.NewStructList(itemSize, listLen, listCap)
+	if err != nil {
+		return
+	}
+
+	if res.sid != sb.sid {
+		// TODO: add support.
+		err = errors.New("unhandled list in different segment")
+		return
+	}
+
+	// Offset of the pointer field inside sb. No need to check for overflow
+	// because the struct has been validated to contain this pointer.
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
+	// Determine concrete offset from structure start until ptrOff.
+	concretePtrOff := sb.off + ptrOff
+
+	// Build the final list pointer.
+	lsPtr := listPointer{
+		startOffset: res.off - concretePtrOff - 1,
+		elSize:      listElSizeComposite,
+		listSize:    listSize(listWordCount(listElSizeComposite, res.listLen)),
+	}
+
+	// Write the pointer field.
+	sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
 	return
 }
 
@@ -424,9 +639,10 @@ func (as *AllocState) putSingleSegHeaderInBuf() {
 }
 
 type MessageBuilder struct {
-	state   AllocState
-	alloc   Allocator
-	segsCap int
+	state       AllocState
+	alloc       Allocator
+	segsCap     int
+	readerArena Arena
 }
 
 func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
@@ -450,6 +666,23 @@ func (mb *MessageBuilder) Reset() error {
 	}
 	mb.segsCap = cap(mb.state.Segs)
 	return nil
+}
+
+// MessageReader returns a [Message] to read data already written to the
+// builder.
+//
+// NOTE: the returned message and its structures are only guaranteed to be valid
+// until the next modification of the message being built. It should be
+// discarded and re-read if any modifications are made, otherwise orphaned data
+// may be read.
+func (mb *MessageBuilder) MessageReader() Message {
+	mb.readerArena.notResetable = true
+	mb.readerArena.s.b = mb.state.FirstSeg
+	mb.readerArena.ReadLimiter().InitNoLimit()
+	if len(mb.state.Segs) > 0 {
+		panic("TODO: handle multiseg")
+	}
+	return Message{arena: &mb.readerArena, dl: maxDepthLimit}
 }
 
 // allocate allocates size words, preferably (but not necessarily) on the
@@ -609,6 +842,40 @@ func (mb *MessageBuilder) NewRootStruct(size StructSize) (sb StructBuilder, err 
 	if err == nil {
 		err = mb.SetRoot(&sb)
 	}
+	return
+}
+
+func (mb *MessageBuilder) NewStructList(itemSize StructSize, listLen, listCap int) (res StructListBuilder, err error) {
+	// Sanity checks.
+	if listCap < listLen {
+		err = errors.New("listCap cannot be < listLen")
+		return
+	}
+	if listCap > MaxListSize {
+		err = errors.New("list capacity cannot be larger than MaxListSize")
+		return
+	}
+	totalWordCount := uint64(itemSize.TotalSize())*uint64(listCap) + 1 // + 1 tag word
+	if totalWordCount > maxWordOffset {
+		err = fmt.Errorf("total struct size %d overflows max word offset %d", totalWordCount, maxWordOffset)
+		return
+	}
+
+	var b []byte
+
+	res.sid, b, res.off, err = mb.allocateValidSizeXXX(0, WordCount(totalWordCount))
+	if err != nil {
+		return
+	}
+
+	res.urb = UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[res.off*WordSize]))}
+	res.listCap = listSize(listCap)
+	res.listLen = listSize(listLen)
+	res.mb = mb
+	res.itemSize = itemSize
+
+	// Write the initial tag word.
+	res.writeTagWord()
 	return
 }
 

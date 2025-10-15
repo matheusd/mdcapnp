@@ -15,6 +15,7 @@ import (
 	"github.com/canastic/chantest"
 	"matheusd.com/depvendoredtestify/require"
 	types "matheusd.com/mdcapnp/capnprpc/types"
+	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/testctx"
 )
 
@@ -46,23 +47,15 @@ func TestBootstrapSendSide(t *testing.T) {
 
 	// Remote replies with a Return.
 	targetExportId := ExportId(666)
-	resMsg := message{
-		isReturn: true,
-		ret: rpcReturn{
-			aid:       AnswerId(bootQid),
-			isResults: true,
-			pay: payload{
-				content: anyPointer{
-					isCapPointer: true,
-					cp:           capPointer{index: 0},
-				},
-				capTable: []capDescriptor{
-					{senderHosted: targetExportId},
-				},
-			},
-		},
-	}
-	tc.fillNextReceiveWith(resMsg)
+	msg, mb := th.newRpcMsg()
+	ret, _ := msg.NewReturn()
+	ret.SetAnswerId(AnswerId(bootQid))
+	pay, _ := ret.NewResults()
+	pay.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
+	capTable, _ := pay.NewCapTable(1, 1)
+	capDesc := capTable.At(0)
+	capDesc.SetSenderHosted(targetExportId)
+	tc.fillNextReceiveWithSer(mb)
 
 	// Bootstrap() fulfilled.
 	require.Nil(t, chantest.Before(time.Second).AssertRecv(t, errChan))
@@ -85,9 +78,12 @@ func TestBootstrapReceiveSide(t *testing.T) {
 
 	// Vat sends the Bootstrap cap.
 	var bootQid QuestionId
-	tc.checkNextSent(func(m message) error {
-		ret := m.ret
-		bootQid = QuestionId(ret.aid)
+	tc.checkNextSentRpcMsg(func(m types.Message) error {
+		boot, err := m.AsBootstrap()
+		if err != nil {
+			return err
+		}
+		bootQid = boot.QuestionId()
 		return nil
 	})
 
@@ -189,6 +185,8 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	// Call isn't done yet (waiting on remote promise).
 	chantest.AssertNoRecv(t, getCapErrChan)
+	// t.Logf("XXXXXXX %v", <-getCapErrChan)
+	// t.FailNow()
 
 	// Resolve.
 	chantest.AssertSend(t, resolvePromiseChan, struct{}{})

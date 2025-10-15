@@ -4,7 +4,11 @@
 
 package capnprpctypes
 
+import "matheusd.com/mdcapnp/capnpser"
+
 type QuestionId uint32
 type AnswerId uint32
 type ExportId uint32
 type ImportId uint32
+
+type AnyPointer = capnpser.AnyPointer

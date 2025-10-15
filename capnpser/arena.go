@@ -107,6 +107,10 @@ type Arena struct {
 	segs *[]*Segment
 
 	rl ReadLimiter
+
+	// notResetable is true if this arena is not resettable from the public
+	// API (i.e. it is a readerArena in a MessageBuilder).
+	notResetable bool
 }
 
 func (arena *Arena) ReadLimiter() *ReadLimiter {
@@ -160,7 +164,13 @@ func (arena *Arena) RawDataCopy() (res [][]byte) {
 	return
 }
 
+// Reset the arena to the given single-segment buffer. This may panic if the
+// arena is not resettable.
 func (arena *Arena) Reset(b []byte) {
+	if arena.notResetable {
+		panic("arena is not resetable")
+	}
+
 	arena.s.b = b
 	arena.fb = nil
 	arena.rl.Reset()

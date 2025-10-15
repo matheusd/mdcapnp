@@ -8,6 +8,7 @@ import (
 	"unsafe"
 )
 
+// TODO: too unsafe to export??
 type UnsafeRawBuilder struct {
 	ptr unsafe.Pointer
 }
@@ -36,6 +37,10 @@ func (rb *UnsafeRawBuilder) SetStruct(ptrOff, structOff WordOffset, size StructS
 
 func (rb *UnsafeRawBuilder) AliasChild(offset WordOffset, child *UnsafeRawBuilder) {
 	child.ptr = unsafe.Add(rb.ptr, offset*WordSize)
+}
+
+func (rb *UnsafeRawBuilder) Child(offset WordOffset) UnsafeRawBuilder {
+	return UnsafeRawBuilder{ptr: unsafe.Add(rb.ptr, offset*WordSize)}
 }
 
 type RawBuilder struct {

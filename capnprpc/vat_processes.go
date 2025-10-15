@@ -15,39 +15,74 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
+// newReturnPayload is a hlper that initializes a Return message with a Result
+// payload.
+func (v *Vat) newReturnPayload(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, payBuilder types.PayloadBuilder, err error) {
+	rpcMsgBuilder, err = v.mbp.get()
+	if err != nil {
+		return
+	}
+
+	// Reply is a Return with a single cap.
+	reply, err := rpcMsgBuilder.mb.NewReturn()
+	if err != nil {
+		return
+	}
+	reply.SetAnswerId(aid)
+	payBuilder, err = reply.NewResults()
+	return
+}
+
+// newSingleCapReturn is a helper that initializes a Return message with a
+// single cap as the payload.
+func (v *Vat) newSingleCapReturn(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, capDesc types.CapDescriptorBuilder, err error) {
+	var payBuilder types.PayloadBuilder
+	rpcMsgBuilder, payBuilder, err = v.newReturnPayload(aid)
+	if err != nil {
+		return
+	}
+
+	// Reply is a Return with a single cap.
+	if err = payBuilder.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0)); err != nil {
+		return
+	}
+
+	var capTable capnpser.GenericStructListBuilder[types.CapDescriptorBuilder]
+	capTable, err = payBuilder.NewCapTable(1, 1)
+	if err != nil {
+		return
+	}
+	capDesc = capTable.At(0)
+	return
+}
+
 func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.Bootstrap) error {
 	bootQid := AnswerId(boot.QuestionId())
-	reply := &message{ // TODO: fetch from v.mp
-		isReturn: true,
-		ret: rpcReturn{
-			aid:       bootQid,
-			isResults: true,
-			pay: payload{
-				content: anyPointer{
-					isCapPointer: true,
-					cp:           capPointer{index: 0},
-				},
-				capTable: []capDescriptor{
-					{senderHosted: rc.bootExportId},
-				},
-			},
-		},
+
+	rpcMsgBuilder, capDesc, err := v.newSingleCapReturn(bootQid)
+	if err != nil {
+		return err
+	}
+	if err := capDesc.SetSenderHosted(rc.bootExportId); err != nil {
+		return err
 	}
 
 	// Modify answer table to track the bootrap export. bootExportId is set
 	// during conn setup automatically.
 	ans := answer{typ: answerTypeBootstrap, eid: rc.bootExportId}
-	rc.answers.set(bootQid, ans)
+	rc.answers.set(AnswerId(bootQid), ans)
 
 	rc.log.Debug().
 		Int("qid", int(bootQid)).
 		Int("eid", int(rc.bootExportId)).
 		Msg("Exported Bootstrap")
 
-	return rc.queue(ctx, singleMsgBatch(reply))
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
-func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn) error {
+func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Return) error {
 	qid := QuestionId(ret.AnswerId())
 	q, ok := rc.questions.get(qid)
 	if !ok {
@@ -55,14 +90,20 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	}
 
 	// TODO: support exception, cancel, etc
-	if !ret.IsResults() {
+	if ret.Which() != types.Return_Which_Results {
 		return fmt.Errorf("only results supported")
 	}
 
 	if q.typ == questionTypeProvide {
-		res := ret.AsResults()
-		content := res.Content()
-		if !content.IsVoid() {
+		res, err := ret.AsResults()
+		if err != nil {
+			return err
+		}
+		content, err := res.Content()
+		if err != nil {
+			return err
+		}
+		if !content.IsZeroStruct() {
 			return fmt.Errorf("received non-void return for provide")
 		}
 		rc.log.Debug().Int("qid", int(qid)).Msg("Received Return message for prior Provide")
@@ -83,19 +124,27 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	// exported by this call.
 	//
 	// TODO: only do this if the cap is referenced in the content?
-	payload := ret.AsResults()
-	capTable := payload.CapTable()
-	for _, entry := range capTable {
+	payload, err := ret.AsResults()
+	if err != nil {
+		return err
+	}
+	capTable, err := payload.CapTable()
+	if err != nil {
+		return fmt.Errorf("error extracting cap table: %v", err)
+	}
+	for i := range capTable.Len() {
+		entry := capTable.At(i)
 		var iid ImportId
 		var imp imprt
-		if entry.IsSenderHosted() {
+		switch entry.Which() {
+		case types.CapDescriptor_Which_SenderHosted:
 			iid = ImportId(entry.AsSenderHosted())
 			imp = imprt{typ: importTypeSenderHosted}
-		} else if entry.IsSenderPromise() {
+		case types.CapDescriptor_Which_SenderPromise:
 			iid = ImportId(entry.AsSenderPromise())
 			imp = imprt{typ: importTypeRemotePromise, step: weak.Make(step)}
-		} else {
-			return fmt.Errorf("unsupported capability type")
+		default:
+			return fmt.Errorf("unsupported capability type %d", entry.Which())
 		}
 
 		rc.imports.set(iid, imp)
@@ -111,36 +160,40 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret rpcReturn)
 	var stepResultPromise ExportId
 	var stepResultType string
 	var stepImportId ImportId
-	content := payload.Content()
+	content, err := payload.Content()
+	if err != nil {
+		return err
+	}
 	if content.IsCapPointer() {
 		// NOT GOOD. Must have a new type to pass along instead of
 		// parsing like this (maybe). Think about embedded caps.
 		cp := content.AsCapPointer()
 		capIndex := cp.Index()
-		if int(capIndex) >= len(capTable) {
+		if int(capIndex) >= capTable.Len() {
 			return fmt.Errorf("capability referenced index outside cap table")
 		}
-		capEntry := capTable[capIndex]
-		if capEntry.IsSenderHosted() {
+		capEntry := capTable.At(int(capIndex))
+		switch capEntry.Which() {
+		case types.CapDescriptor_Which_SenderHosted:
 			stepImportId = ImportId(capEntry.AsSenderHosted())
 			stepResult = capability{eid: ExportId(stepImportId)}
 			stepResultType = "senderHostedCap"
-		} else if capEntry.IsSenderPromise() {
+		case types.CapDescriptor_Which_SenderPromise:
 			stepImportId = ImportId(capEntry.AsSenderPromise())
 			stepResultPromise = ExportId(stepImportId)
 			stepResultType = "senderPromise"
-		} else {
+		default:
 			return errors.New("unknown cap entry type")
 		}
-
+	} else if content.IsZeroStruct() {
+		stepResult = struct{}{}
+		stepResultType = "void"
 	} else if content.IsStruct() {
 		// TODO: copy if its a struct? Or release serialized message if
 		// content is just a cap (because it's not needed anymore)?
-		stepResult = content.AsStruct()
-		stepResultType = "struct"
-	} else if content.IsVoid() {
+		// stepResult = content.AsStruct()
 		stepResult = struct{}{}
-		stepResultType = "void"
+		stepResultType = "struct"
 	} else {
 		return errors.New("unknown/unimplemented content type")
 	}
@@ -252,7 +305,6 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 
 	exp, ok := rc.exports.get(eid)
 	if !ok {
-		logEvent.Msg("Booooo")
 		return fmt.Errorf("call message target determined to be unset export %d", eid)
 	}
 
@@ -271,8 +323,22 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	}
 
 	// Start preparing reply.
-	var reply *message
+	rpcMsgBuilder, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
+	if err != nil {
+		return err
+	}
+	reply, err := rpcMsgBuilder.mb.NewReturn()
+	if err != nil {
+		return err
+	}
+	reply.SetAnswerId(AnswerId(qid))
+
 	crb := &rc.crb // Ok to reuse (rc is locked).
+	crb.pb, err = reply.NewResults()
+	crb.serMb = rpcMsgBuilder.serMb
+	if err != nil {
+		return err
+	}
 	crb.payload = payload{content: anyPointer{
 		isVoid: true, // Void result by default on non-error.
 	}}
@@ -281,40 +347,60 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	logEvent.Msg("Locally handling call")
 	err = exp.handler.Call(rc.ctx, callArgs, crb)
 	if ex, ok := err.(callExceptionError); ok {
+		// When an exception that will be sent remotely is detected,
+		// re-create the reply. This ensures anything written to the
+		// payload inside the handler's Call() method will *NOT* be
+		// sent as an orphan object inside the reply.
+		if err := rpcMsgBuilder.serMb.Reset(); err != nil {
+			return err
+		}
+
 		// Turn the error into a returned exception.
-		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of exception
-		reply.isReturn = true
-		reply.ret.aid = AnswerId(qid)
-		reply.ret.isException = true
-		reply.ret.exc = ex.ToException()
+		reply, err = rpcMsgBuilder.mb.NewReturn()
+		if err != nil {
+			return err
+		}
+		reply.SetAnswerId(AnswerId(qid))
+
+		exc, err := reply.NewException()
+		if err != nil {
+			return err
+		}
+		exc.SetReason(err.Error()) // TODO: send more details.
+		_ = ex
+
+		/*
+			reply.isReturn = true
+			reply.ret.aid = AnswerId(qid)
+			reply.ret.isException = true
+			reply.ret.exc = ex.ToException()
+		*/
 
 		rc.log.Debug().
 			Int("qid", int(qid)).
 			Int("eid", int(eid)).
-			Dict("ex", zerolog.Dict().
-				Int("type", reply.ret.exc.typ).
-				Str("reason", reply.ret.exc.reason)).
+			//Dict("ex", zerolog.Dict().
+			//Int("type", reply.ret.exc.typ).
+			//Str("reason", reply.ret.exc.reason)).
 			Msg("Processed call into exception")
 
 	} else if err != nil {
 		// Fatal connection error.
 		return err
 	} else {
-		reply = v.mp.getForPayloadSize(0) // TODO: estimate size of return struct
-		reply.isReturn = true
-		reply.ret.aid = AnswerId(qid)
-		reply.ret.isResults = true
-		reply.ret.pay = crb.payload
-
 		// No finish is needed if the call promised no pipelining or
 		// the result has no capabilities (i.e. the result is not
 		// callable).
-		noFinishNeeded := c.NoPromisePipelining() || len(crb.payload.capTable) == 0
-		reply.ret.noFinishNeeded = noFinishNeeded
+		//
+		// TODO: Maybe track caps added to reply instead of reading from
+		// message?
+		capTable := crb.readReturnCapTable()
+		noFinishNeeded := c.NoPromisePipelining() || capTable.Len() == 0
 
 		if !noFinishNeeded {
-			// If the result is a capability, the answer is pipelinable, so
-			// track where the corresponding export will be.
+			// If the result is a capability, the answer is
+			// pipelinable, so track where the corresponding export
+			// will be.
 			var rootCapIndex int = -1
 			var rootCapExportId ExportId
 			if crb.payload.content.IsCapPointer() {
@@ -322,16 +408,26 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			}
 
 			// Track all exported caps.
-			for i, cp := range crb.payload.capTable {
-				if !cp.hasExportId() {
-					continue
+			for i := range capTable.Len() {
+				cp := capTable.At(i)
+
+				var capEid ExportId
+				var isSenderPromise bool
+				switch cp.Which() {
+				case types.CapDescriptor_Which_SenderHosted:
+					capEid = cp.AsSenderHosted()
+				case types.CapDescriptor_Which_SenderPromise:
+					capEid = cp.AsSenderPromise()
+					isSenderPromise = true
+				default:
+					return fmt.Errorf("unsupported cap type in processReturn: %v", cp.Which())
 				}
-				capEid := cp.exportId()
+
 				if capExp, ok := rc.exports.get(capEid); ok {
 					// TODO: take a pointer instead?
 					capExp.refCount++
 					rc.exports.set(capEid, capExp)
-				} else if cp.IsSenderPromise() { // here sender == local vat.
+				} else if isSenderPromise { // here sender == local vat.
 					capExp = export{typ: exportTypePromise, refCount: 1}
 					rc.exports.set(capEid, capExp)
 
@@ -353,6 +449,8 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			// Save the answer in the answers table.
 			ans := answer{typ: answerTypeCall, eid: rootCapExportId}
 			rc.answers.set(AnswerId(qid), ans)
+		} else {
+			reply.SetNoFinishNeeded(noFinishNeeded)
 		}
 
 		rc.log.Debug().
@@ -361,7 +459,9 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			Msg("Processed call into payload result")
 	}
 
-	return rc.queue(ctx, singleMsgBatch(reply))
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
 func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin finish) error {
@@ -720,29 +820,32 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	// Send the Return that corresponds to the Accept to the newly
 	// introduced conn. This is the picked up capability (previously
 	// exported in srcConn).
-	retAccept := &message{isReturn: true, ret: rpcReturn{ // TODO: fetch from v.mp
-		aid:       aid,
-		isResults: true,
-		pay: payload{
-			content:  anyPointer{isCapPointer: true, cp: capPointer{index: 0}},
-			capTable: []capDescriptor{{senderHosted: eid}},
-		},
-	}}
-	if err := rc.queue(ctx, singleMsgBatch(retAccept)); err != nil {
+	rpcMsgBuilder, capDesc, err := v.newSingleCapReturn(aid)
+	if err != nil {
+		return err
+	}
+	if err := capDesc.SetSenderHosted(eid); err != nil {
+		return err
+	}
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	if err := rc.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
 		return err
 	}
 
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	retProvide := &message{isReturn: true, ret: rpcReturn{ // TODO: fetch from v.mp
-		aid:       provideAid,
-		isResults: true,
-		pay: payload{
-			content: anyPointer{isVoid: true},
-		},
-	}}
-	return srcConn.queue(ctx, singleMsgBatch(retProvide))
+	rpcMsgBuilder, payBuilder, err := v.newReturnPayload(provideAid)
+	if err != nil {
+		return err
+	}
+	if err := payBuilder.SetContent(capnpser.ZeroStructAsPointerBuilder()); err != nil {
+		return err
+	}
+	rpcMsg = v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
 func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis disembargo) error {
@@ -830,6 +933,13 @@ func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg type
 			err = v.processCall(ctx, rc, call)
 		}
 
+	case types.Message_Which_Return:
+		var ret types.Return
+		ret, err = msg.AsReturn()
+		if err == nil {
+			err = v.processReturn(ctx, rc, ret)
+		}
+
 	default:
 		err = fmt.Errorf("unknown Message type %d", which)
 	}
@@ -860,8 +970,6 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 
 	var err error
 	switch {
-	case msg.IsReturn():
-		err = v.processReturn(ctx, rc, msg.AsReturn())
 	case msg.IsFinish():
 		err = v.processFinish(ctx, rc, msg.AsFinish())
 	case msg.IsResolve():

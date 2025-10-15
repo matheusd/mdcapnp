@@ -5,6 +5,8 @@
 package capnpser
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"unsafe"
 )
@@ -35,12 +37,23 @@ func (i DataFieldIndex) uncheckedWordOffset(base WordOffset) WordOffset {
 	return base + WordOffset(i)
 }
 
+type StructType = struct {
+	seg   *Segment
+	arena *Arena
+	dl    depthLimit
+	ptr   structPointer
+}
+
+type Struct StructType
+
+/*
 type Struct struct {
 	seg   *Segment
 	arena *Arena
 	dl    depthLimit
 	ptr   structPointer
 }
+*/
 
 // HasData returns true if the specified word in the data section is set in this
 // struct.
@@ -197,6 +210,12 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	var pointerOffset WordOffset
 	seg, ptrType, ptr, listDL, pointerOffset, err = s.readFieldPtr(ptrIndex)
 
+	if ptr.isNullPointer() {
+		// A null pointer is an either an empty list or the default
+		// value list for a field.
+		return
+	}
+
 	// Check if the final pointer (after potential deref) is a list pointer.
 	if ptrType != pointerTypeList /*!ptr.isListPointer() */ {
 		err = errNotListPointer
@@ -238,8 +257,67 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 
 	// All good.
 	ls.seg = seg
+	ls.arena = s.arena
 	ls.ptr = lp
 	ls.dl = listDL
+	return nil
+}
+
+func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) error {
+	seg, lp, listDL, err := s.readListPtr(ptrIndex)
+	if err != nil {
+		return err
+	}
+
+	if lp.elSize != listElSizeComposite {
+		// A null pointer means this is an empty list or the default
+		// field value.
+		if lp.toPointer().isNullPointer() {
+			*sls = StructList{
+				l: List{
+					seg: seg,
+					ptr: lp,
+					dl:  listDL,
+				},
+				itemSize: StructSize{},
+				listLen:  0,
+			}
+			return nil
+		}
+
+		// TODO: support re-interpreting native lists as composite.
+		return errors.New("not a composite list")
+	}
+
+	// Read the tag word, which contains the per-item information. The list
+	// has already been verified to be entirely in-bounds (by word count),
+	// therefore the tag word is in-bounds.
+	tagWord := s.seg.uncheckedGetWordAsPointer(lp.startOffset)
+	if !tagWord.isStructPointer() {
+		return errors.New("composite list tag word is not a struct pointer")
+	}
+	listLen := listSize(tagWord.dataOffset())
+	itemSize := StructSize{DataSectionSize: tagWord.dataSectionSize(), PointerSectionSize: tagWord.pointerSectionSize()}
+
+	// Double check the total list word count size is correct, when
+	// calculated as itemSize * len (readListPtr verified by by total word
+	// count only).
+	gotListWordCount := uint64(itemSize.TotalSize())*uint64(listLen) + 1 // +1 tag word
+	if gotListWordCount != uint64(listWordCount(lp.elSize, lp.listSize)) {
+		return fmt.Errorf("incongruent list sizes: in list pointer %d, in tag word: %d",
+			listWordCount(lp.elSize, lp.listSize), gotListWordCount)
+	}
+
+	*sls = StructList{
+		l: List{
+			seg: seg,
+			ptr: lp,
+			dl:  listDL,
+		},
+		itemSize: itemSize,
+		listLen:  listLen,
+	}
+
 	return nil
 }
 
@@ -311,5 +389,20 @@ func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error)
 		ptr:   sp,
 	}
 	return
+}
 
+func (s *Struct) ReadAnyPointer(ptrIndex PointerFieldIndex, res *AnyPointer) (err error) {
+	seg, _, ptr, dl, pointerOffset, err := s.readFieldPtr(ptrIndex)
+	if err == nil {
+		*res = AnyPointer{
+			seg:           seg,
+			arena:         s.arena,
+			dl:            dl,
+			ptr:           ptr,
+			pointerOffset: pointerOffset,
+			parentOffset:  s.ptr.dataOffset,
+		}
+	}
+
+	return
 }

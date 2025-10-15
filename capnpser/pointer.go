@@ -13,12 +13,20 @@ const (
 	pointerTypeList       pointerType = 0x01
 	pointerTypeFarPointer pointerType = 0x02
 	pointerTypeOther      pointerType = 0x03
+
+	zeroStructPointer pointer = 0x00000000fffffffc
 )
 
 type pointer Word
 
 func (ptr pointer) dataOffset() WordOffset {
 	return WordOffset(ptr&0xfffffffc) >> 2
+}
+
+// withDataOffset returns a new pointer with the given data offset (for lists
+// and structs).
+func (ptr pointer) withDataOffset(off WordOffset) pointer {
+	return pointer(ptr&0xfffffffc | pointer(off<<2))
 }
 
 func (ptr pointer) dataSectionSize() wordCount16 {
@@ -65,6 +73,12 @@ func (ptr pointer) pointerType() pointerType {
 // zeros (except for the first two bits which may denote the type of pointer).
 func (ptr pointer) isNullPointer() bool {
 	return (ptr & 0xfffffffffffffffc) == 0
+}
+
+// isZeroStruct returns true if this is a zero-struct pointer. A zero-struct
+// pointer has zero size and offset == -1.
+func (ptr pointer) isZeroStruct() bool {
+	return ptr == 0x00000000fffffffc
 }
 
 func (ptr pointer) toStructPointer() (sp structPointer) {
@@ -140,11 +154,24 @@ func (cp *CapPointer) Index() uint32 {
 	return cp.index
 }
 
+func buildRawCapPointer(index uint32) pointer {
+	return pointer(pointerTypeOther) |
+		pointer(index)<<32
+}
+
 type AnyPointer struct {
-	seg   *Segment
-	arena *Arena
-	dl    depthLimit
-	ptr   pointer
+	seg           *Segment
+	arena         *Arena
+	dl            depthLimit
+	ptr           pointer
+	pointerOffset WordOffset
+	parentOffset  WordOffset
+}
+
+// IsZeroStruct returns true if the pointer represents a zero-struct (a struct
+// with zero size).
+func (ap *AnyPointer) IsZeroStruct() bool {
+	return ap.ptr.isZeroStruct()
 }
 
 func (ap *AnyPointer) IsStruct() bool {

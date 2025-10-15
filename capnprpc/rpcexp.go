@@ -202,7 +202,7 @@ func (mw message_which) String() string {
 
 type message struct { // RPC message type
 	//isBootstrap  bool
-	isReturn bool
+	// isReturn bool
 	//isCall       bool
 	isFinish     bool
 	isResolve    bool
@@ -211,7 +211,7 @@ type message struct { // RPC message type
 	isProvide    bool
 
 	//boot       bootstrap
-	ret rpcReturn
+	// ret rpcReturn
 	//call       call
 	finish     finish
 	resolve    resolve
@@ -230,8 +230,8 @@ func (m *message) Which() message_which {
 	switch {
 	//case m.isBootstrap:
 	//	return message_which_bootstrap
-	case m.isReturn:
-		return message_which_return
+	// case m.isReturn:
+	//	return message_which_return
 	//case m.isCall:
 	//	return message_which_call
 	case m.isFinish:
@@ -256,8 +256,8 @@ func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
 
 // func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
 // func (m *message) AsBootstrap() bootstrap                   { return m.boot }
-func (m *message) IsReturn() bool      { return m.isReturn }
-func (m *message) AsReturn() rpcReturn { return m.ret }
+// func (m *message) IsReturn() bool      { return m.isReturn }
+// func (m *message) AsReturn() rpcReturn { return m.ret }
 
 // func (m *message) IsCall() bool                             { return m.isCall }
 // func (m *message) AsCall() call             { return m.call }
@@ -542,6 +542,25 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability
 type callReturnBuilder struct {
 	rc      *runningConn
 	payload payload
+	pb      types.PayloadBuilder
+	serMb   *capnpser.MessageBuilder // Root reply message builder
+}
+
+// readReturnCapTable returns the capTable from the payload.
+//
+// NOTE: this assumes the message being built is a Return with Results and cap
+// table list.
+func (crb *callReturnBuilder) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
+	var rpcMsg types.Message
+
+	// Errors don't need checking, because this is assumed to be called
+	// during return building, where the structures were allocated.
+	serMsg := crb.serMb.MessageReader()
+	rpcMsg.ReadFromRoot(&serMsg)
+	ret, _ := rpcMsg.AsReturn()
+	res, _ := ret.AsResults()
+	capTable, _ := res.CapTable()
+	return capTable
 }
 
 func (crb *callReturnBuilder) setContent(content anyPointer) {
@@ -559,9 +578,15 @@ func (crb *callReturnBuilder) respondAsPromise() (answerPromise, error) {
 		return answerPromise{}, errors.New("no more exports allowed")
 	}
 
-	// TODO: find a zero alloc way of representing this kind of return.
-	crb.payload.capTable = []capDescriptor{{senderPromise: eid}}
-	crb.payload.content = anyPointer{isCapPointer: true, cp: capPointer{index: 0}}
+	// TODO: Track caps somewhere else? See corresponding in processCall.
+	capTable, err := crb.pb.NewCapTable(1, 1)
+	if err != nil {
+		return answerPromise{}, err
+	}
+	capDesc := capTable.At(0)
+	capDesc.SetSenderPromise(eid)
+
+	crb.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
 
 	return answerPromise{rc: crb.rc, eid: eid}, nil
 }
