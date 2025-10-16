@@ -140,3 +140,9 @@ func (msg *Message) ReadRoot(s *Struct) error {
 	}
 	return nil
 }
+
+// GetRoot returns the root struct of the message.
+func (msg *Message) GetRoot() (res Struct, err error) {
+	err = msg.ReadRoot(&res)
+	return
+}

@@ -512,6 +512,11 @@ func (sb *SegmentBuilder) GetWord(offset WordOffset) Word {
 	// return *(*Word)(unsafe.Add(sb.ptr, offset*WordSize))
 }
 
+func (sb *SegmentBuilder) copyWordsFrom(other *[]byte, otherOff WordOffset, off WordOffset, wc WordCount) {
+	offb := int(off) * WordSize
+	copy((*sb.b)[offb:offb+int(wc)*WordSize], (*other)[otherOff*WordSize:])
+}
+
 /*
 // uncheckedSegSlice slices part of a segment (aligned to a word) without
 // checking for valid bounds.
@@ -796,6 +801,35 @@ func (mb *MessageBuilder) allocateValidSizeXXX(preferred SegmentID, size WordCou
 	// All good.
 	return
 }
+
+// NonStdSetRoot sets the root of this message to the given pointer.
+//
+// WARNING: This is a non-standard operation; message roots are supposted to be
+// structs, not any arbitrary objects. This should only be invoked if you know
+// what you're doing (building a partial, potentially-orphaned object).
+func (mb *MessageBuilder) NonStdSetRoot(anyp *AnyPointerBuilder) error {
+	// NewMessageBuilder() ensures the allocator returns at least one
+	// segment with at least enough room for the root pointer.
+	if mb == nil || mb.state.FirstSeg == nil || len(mb.state.FirstSeg) < WordSize {
+		return errAllocStateNoRootWord
+	}
+	// if sb.seg.mb != mb {
+	if anyp.mb != mb {
+		return fmt.Errorf("sb.mb vs mb: %w", errDifferentMsgBuilders)
+	}
+
+	// TODO: handle inter-segment pointer.
+	// if sb.seg.id != 0 {
+	if anyp.sid != 0 {
+		panic("needs handling")
+	}
+
+	// The wire offset is relative to the end of first word.
+	ptr := anyp.ptr.withDataOffset(anyp.off - 1)
+	binary.LittleEndian.PutUint64(mb.state.FirstSeg, uint64(ptr))
+	return nil
+}
+
 func (mb *MessageBuilder) SetRoot(sb *StructBuilder) error {
 	// NewMessageBuilder() ensures the allocator returns at least one
 	// segment with at least enough room for the root pointer.

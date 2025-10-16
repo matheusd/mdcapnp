@@ -54,8 +54,21 @@ type List struct {
 	dl    depthLimit
 }
 
+func (ls *List) lenWords() WordCount {
+	return listWordCount(ls.ptr.elSize, ls.ptr.listSize)
+}
+
 func (ls *List) LenBytes() ByteCount {
 	return listByteCount(ls.ptr.elSize, ls.ptr.listSize)
+}
+
+func (ls *List) AsAnyPointer() AnyPointer {
+	return AnyPointer{
+		seg:   ls.seg,
+		arena: ls.arena,
+		dl:    ls.dl,
+		ptr:   ls.ptr.toPointer(),
+	}
 }
 
 // Read this list into a slice. Only valid for one-byte-per-element lists.

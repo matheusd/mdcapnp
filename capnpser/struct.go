@@ -55,6 +55,21 @@ type Struct struct {
 }
 */
 
+// structSize returns the (shallow) size of this object. Guaranteed to be a
+// valid count.
+func (s *Struct) structSize() WordCount {
+	return WordCount(s.ptr.dataSectionSize) + WordCount(s.ptr.pointerSectionSize)
+}
+
+func (s *Struct) AsAnyPointer() AnyPointer {
+	return AnyPointer{
+		seg:   s.seg,
+		arena: s.arena,
+		dl:    s.dl,
+		ptr:   s.ptr.toPointer(),
+	}
+}
+
 // HasData returns true if the specified word in the data section is set in this
 // struct.
 func (s *Struct) HasData(dataIndex DataFieldIndex) bool {
@@ -393,14 +408,15 @@ func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error)
 
 func (s *Struct) ReadAnyPointer(ptrIndex PointerFieldIndex, res *AnyPointer) (err error) {
 	seg, _, ptr, dl, pointerOffset, err := s.readFieldPtr(ptrIndex)
+	_ = pointerOffset
 	if err == nil {
 		*res = AnyPointer{
-			seg:           seg,
-			arena:         s.arena,
-			dl:            dl,
-			ptr:           ptr,
-			pointerOffset: pointerOffset,
-			parentOffset:  s.ptr.dataOffset,
+			seg:   seg,
+			arena: s.arena,
+			dl:    dl,
+			ptr:   ptr,
+			//pointerOffset: pointerOffset,
+			//parentOffset:  s.ptr.dataOffset,
 		}
 	}
 

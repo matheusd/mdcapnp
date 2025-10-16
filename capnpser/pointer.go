@@ -26,7 +26,7 @@ func (ptr pointer) dataOffset() WordOffset {
 // withDataOffset returns a new pointer with the given data offset (for lists
 // and structs).
 func (ptr pointer) withDataOffset(off WordOffset) pointer {
-	return pointer(ptr&0xfffffffc | pointer(off<<2))
+	return pointer(ptr&^0xfffffffc | pointer(off<<2))
 }
 
 func (ptr pointer) dataSectionSize() wordCount16 {
@@ -59,6 +59,10 @@ func (ptr pointer) isListPointer() bool {
 
 func (ptr pointer) isFarPointer() bool {
 	return (ptr & 0x03) == 2
+}
+
+func (ptr pointer) isOtherPointer() bool {
+	return (ptr & 0x03) == 3
 }
 
 func (ptr pointer) isCapPointer() bool {
@@ -106,6 +110,10 @@ func (sp structPointer) toPointer() pointer {
 		pointer(uint32(sp.dataOffset<<2)) |
 		pointer(sp.dataSectionSize)<<32 |
 		pointer(sp.pointerSectionSize)<<48
+}
+
+func (sp structPointer) structSize() StructSize {
+	return StructSize{DataSectionSize: sp.dataSectionSize, PointerSectionSize: sp.pointerSectionSize}
 }
 
 func buildRawStructPointer(off WordOffset, sz StructSize) pointer {
@@ -160,12 +168,13 @@ func buildRawCapPointer(index uint32) pointer {
 }
 
 type AnyPointer struct {
-	seg           *Segment
-	arena         *Arena
-	dl            depthLimit
-	ptr           pointer
-	pointerOffset WordOffset
-	parentOffset  WordOffset
+	seg   *Segment
+	arena *Arena
+	dl    depthLimit
+	ptr   pointer
+
+	//pointerOffset WordOffset
+	//parentOffset  WordOffset
 }
 
 // IsZeroStruct returns true if the pointer represents a zero-struct (a struct
@@ -176,6 +185,10 @@ func (ap *AnyPointer) IsZeroStruct() bool {
 
 func (ap *AnyPointer) IsStruct() bool {
 	return ap.ptr.isStructPointer()
+}
+
+func (ap *AnyPointer) IsList() bool {
+	return ap.ptr.isListPointer()
 }
 
 func (ap *AnyPointer) IsCapPointer() bool {
@@ -191,6 +204,14 @@ func (ap *AnyPointer) AsStruct() Struct {
 	}
 }
 
+func (ap *AnyPointer) AsList() List {
+	return List{
+		seg:   ap.seg,
+		arena: ap.arena,
+		dl:    ap.dl,
+		ptr:   ap.ptr.toListPointer(),
+	}
+}
 func (ap *AnyPointer) AsCapPointer() CapPointer {
 	return CapPointer{
 		index: ap.ptr.capPointerIndex(),

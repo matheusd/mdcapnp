@@ -23,6 +23,11 @@ func appendWords(b []byte, words ...Word) []byte {
 	return b
 }
 
+// newSegmentData creates a raw segment data with little-endian encoded words.
+func newSegmentData(words ...Word) []byte {
+	return appendWords([]byte(nil), words...)
+}
+
 // TestValidWordCounts tests validity of various word counts.
 func TestValidWordCounts(t *testing.T) {
 	tests := []struct {
