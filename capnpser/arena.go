@@ -117,6 +117,17 @@ func (arena *Arena) ReadLimiter() *ReadLimiter {
 	return &arena.rl
 }
 
+// segment returns the given segment without bounds check.
+func (arena *Arena) segment(id SegmentID) *Segment {
+	if id == 0 {
+		return &arena.s
+	}
+
+	index := int(id - 1)
+	segs := *arena.segs
+	return segs[index]
+}
+
 func (arena *Arena) Segment(id SegmentID) (*Segment, error) {
 	if arena == nil {
 		return nil, errArenaNotInitialized

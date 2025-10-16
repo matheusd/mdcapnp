@@ -20,6 +20,18 @@ type AnyPointerBuilder struct {
 	sid SegmentID
 }
 
+// AsAnyPointer provices access to this pointer as a readable AnyPointer. The
+// contents of this object are only guaranteed to be valid until the next
+// modification of the message.
+func (ap *AnyPointerBuilder) AsAnyPointer() AnyPointer {
+	return AnyPointer{
+		arena: ap.mb.updateReaderArena(),
+		seg:   ap.mb.readerArena.segment(ap.sid),
+		dl:    noDepthLimit,
+		ptr:   ap.ptr, // FIXME: need to adjust offset?
+	}
+}
+
 func CapPointerAsAnyPointerBuilder(index uint32) AnyPointerBuilder {
 	return AnyPointerBuilder{
 		ptr: buildRawCapPointer(index),
@@ -668,6 +680,8 @@ func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
 		return nil, err
 	}
 	mb.segsCap = cap(mb.state.Segs)
+	mb.readerArena.ReadLimiter().InitNoLimit()
+	mb.readerArena.notResetable = true
 	return mb, nil
 }
 
@@ -682,6 +696,16 @@ func (mb *MessageBuilder) Reset() error {
 	return nil
 }
 
+// updateReaderArena updates the internal readerArena to allow access to the
+// current state of the message builder.
+func (mb *MessageBuilder) updateReaderArena() *Arena {
+	mb.readerArena.s.b = mb.state.FirstSeg
+	if len(mb.state.Segs) > 0 {
+		panic("TODO: handle multiseg")
+	}
+	return &mb.readerArena
+}
+
 // MessageReader returns a [Message] to read data already written to the
 // builder.
 //
@@ -690,13 +714,7 @@ func (mb *MessageBuilder) Reset() error {
 // discarded and re-read if any modifications are made, otherwise orphaned data
 // may be read.
 func (mb *MessageBuilder) MessageReader() Message {
-	mb.readerArena.notResetable = true
-	mb.readerArena.s.b = mb.state.FirstSeg
-	mb.readerArena.ReadLimiter().InitNoLimit()
-	if len(mb.state.Segs) > 0 {
-		panic("TODO: handle multiseg")
-	}
-	return Message{arena: &mb.readerArena, dl: maxDepthLimit}
+	return Message{arena: mb.updateReaderArena(), dl: maxDepthLimit}
 }
 
 // allocate allocates size words, preferably (but not necessarily) on the
