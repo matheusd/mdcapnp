@@ -444,10 +444,35 @@ func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin types.Fini
 	return err
 }
 
-func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineStep,
-	srcConn *runningConn, tphCapDesc thirdPartyCapDescriptor) error {
+// recvdThirdPartyCapDesc is a copy of a received thirdPartyCapDescriptor.
+type recvdThirdPartyCapDesc struct {
+	mb          *capnpser.MessageBuilder
+	tpToContact capnpser.AnyPointer
+}
 
-	rc, provId, err := v.connectToIntroduced3rdParty(ctx, srcConn, tphCapDesc)
+// copyThirdPartyCapDesc copies a thirdPartyCapDescriptor received in a message
+// into a temp buffer.
+func (v *Vat) copyThirdPartyCapDesc(tpcd types.ThirdPartyCapDescriptor) (recvdThirdPartyCapDesc, error) {
+	mb := v.mbp.getRawMessageBuilder()
+	err := capnpser.DeepCopyAndSetRoot(capnpser.StructToAnyPointer(tpcd), mb)
+	if err != nil {
+		v.mbp.put(mb)
+		return recvdThirdPartyCapDesc{}, err
+	}
+
+	msg := mb.MessageReader()
+	root, err := msg.NonStdRootAsAnyPointer()
+	if err != nil {
+		v.mbp.put(mb)
+		return recvdThirdPartyCapDesc{}, err
+	}
+	return recvdThirdPartyCapDesc{mb: mb, tpToContact: root}, nil
+}
+
+func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineStep,
+	srcConn *runningConn, recvTphCapDesc recvdThirdPartyCapDesc) error {
+
+	rc, provId, err := v.connectToIntroduced3rdParty(ctx, srcConn, recvTphCapDesc.tpToContact)
 	if err != nil {
 		return err
 	}
@@ -637,6 +662,18 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res types.Res
 		resolveId = ImportId(resolvePromise)
 		resImport = imprt{typ: importTypeRemotePromise, step: imp.step}
 	case types.CapDescriptor_Which_ThirdPartyHosted:
+		// Make a local copy of the third party cap desc received,
+		// because we'll launch a goroutine to handle the 3PH
+		// resolution.
+		recvTphCapDesc, err := capEntry.AsThirdPartyHosted()
+		if err != nil {
+			return err
+		}
+		tphCapDescCopy, err := v.copyThirdPartyCapDesc(recvTphCapDesc)
+		if err != nil {
+			return fmt.Errorf("unable to copy received ThirdPartyHosted cap desc: %v", err)
+		}
+
 		// Start the 3PH resolution process. This will involve
 		// connecting to the third party (if we haven't already) and
 		// then sending the Accept with the provision id.
@@ -644,7 +681,7 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res types.Res
 		// TODO: If this is only level 1, use vineId instead and proxy
 		// requests.
 		go func() {
-			err := v.resolveThirdPartyCapForStep(ctx, step, rc, capEntry.AsThirdPartyHosted())
+			err := v.resolveThirdPartyCapForStep(ctx, step, rc, tphCapDescCopy)
 			if err != nil {
 				rc.log.Err(err).Msg("resolveThirdPartyCapForStep failed")
 			} else {
@@ -1104,26 +1141,35 @@ func (v *Vat) queueFinish(ctx context.Context, rc *runningConn, qid QuestionId) 
 }
 
 func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
-	msg := &message{ // TODO: fetch from v.mp
-		isResolve: true,
-		resolve:   resolve{pid: eid},
+	rpcMsgBuilder, res, err := v.newResolve(eid)
+	if err != nil {
+		return err
+	}
+
+	capDesc, err := res.NewCap()
+	if err != nil {
+		return err
 	}
 
 	switch resolution.typ {
 	case exportTypePromise:
-		msg.resolve.cap.senderPromise = exp.resolvedToExport
+		err = capDesc.SetSenderPromise(exp.resolvedToExport)
 	case exportTypeLocallyHosted:
-		msg.resolve.cap.senderHosted = exp.resolvedToExport
+		err = capDesc.SetSenderHosted(exp.resolvedToExport)
 	case exportTypeThirdPartyExport:
-		msg.resolve.cap.thirdPartyHosted = thirdPartyCapDescriptor{
-			id:     resolution.thirdPartyCapDescId,
-			vineId: resolution.thirdPartyVineId,
+		var tpcd types.ThirdPartyCapDescriptorBuilder
+		tpcd, err = capDesc.NewThirdPartyHosted()
+		if err == nil {
+			tpcd.SetVineId(resolution.thirdPartyVineId)
+			// err = tpcd.SetId(resolution.thirdPartyCapDescId,)
 		}
 	default:
 		return fmt.Errorf("unknown resolution type %s", resolution.typ)
 	}
 
-	return rc.queue(ctx, singleMsgBatch(msg))
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
 func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error {

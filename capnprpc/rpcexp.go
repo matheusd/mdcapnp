@@ -51,8 +51,9 @@ type provisionId anyPointer
 type recipientId anyPointer
 
 type introductionInfo struct {
-	sendToRecipient thirdPartyCapId
-	sendToTarget    recipientId
+	sendToRecipientAlt capnpser.AnyPointer
+	sendToRecipient    thirdPartyCapId
+	sendToTarget       recipientId
 }
 
 type thirdPartyCapDescriptor struct {
@@ -310,10 +311,13 @@ type messageBuilderPool struct {
 	p     *sync.Pool
 }
 
+func (mp *messageBuilderPool) getRawMessageBuilder() *capnpser.MessageBuilder {
+	return mp.p.Get().(*capnpser.MessageBuilder)
+}
+
 func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize int) (rpcMsgBuilder, error) {
-	// TODO: reuse allocator.
 	// TODO: calculate the size hint.
-	serMb := mp.p.Get().(*capnpser.MessageBuilder)
+	serMb := mp.getRawMessageBuilder()
 	mb, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
 		return rpcMsgBuilder{}, err
@@ -512,7 +516,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 		exp.thirdPartyRC = tpRc
 		exp.thirdPartyIid = tpIid
 		exp.thirdPartyVineId = vineEid
-		exp.thirdPartyCapDescId = iinfo.sendToRecipient
+		exp.thirdPartyCapDescId = iinfo.sendToRecipient // <-----
 		exp.thirdPartyProvideQid = provide.qid
 		exp.typ = exportTypeThirdPartyExport
 		ap.rc.exports.set(ap.eid, exp)

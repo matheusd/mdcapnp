@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"matheusd.com/mdcapnp/capnpser"
 )
 
 type VatNetworkUniqueID [32]byte
@@ -19,7 +21,7 @@ func (id VatNetworkUniqueID) toString() string {
 
 type VatNetwork interface {
 	introduce(src, target conn) (introductionInfo, error)
-	connectToIntroduced(ctx context.Context, localVat *Vat, introducer conn, tcpd thirdPartyCapDescriptor) (conn, provisionId, error)
+	connectToIntroduced(ctx context.Context, localVat *Vat, introducer conn, tcpd capnpser.AnyPointer) (conn, provisionId, error)
 	recipientIdUniqueKey(recipientId) VatNetworkUniqueID
 	provisionIdUniqueKey(provisionId) VatNetworkUniqueID
 }
@@ -42,7 +44,7 @@ func (v *Vat) getNetworkIntroduction(src, target *runningConn) (introductionInfo
 // (eventually) send an Accept. This runs on Alice, after receiving an
 // introduction from Bob and is meant to connect to Carol.
 func (v *Vat) connectToIntroduced3rdParty(ctx context.Context, introducer *runningConn,
-	tpcd thirdPartyCapDescriptor) (*runningConn, provisionId, error) {
+	tpcd capnpser.AnyPointer) (*runningConn, provisionId, error) {
 
 	if v.cfg.net == nil {
 		return nil, provisionId{}, err3PHWithoutVatNetwork

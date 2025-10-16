@@ -9,7 +9,7 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-// newReturnPayload is a hlper that initializes a Return message with a Result
+// newReturnPayload is a helper that initializes a Return message with a Result
 // payload.
 func (v *Vat) newReturnPayload(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, payBuilder types.PayloadBuilder, err error) {
 	rpcMsgBuilder, err = v.mbp.get()
@@ -62,5 +62,20 @@ func (v *Vat) newFinish(qid QuestionId) (rpcMsgBuilder rpcMsgBuilder, fin types.
 	}
 
 	err = fin.SetQuestionId(qid)
+	return
+}
+
+func (v *Vat) newResolve(promiseId ExportId) (rpcMsgBuilder rpcMsgBuilder, res types.ResolveBuilder, err error) {
+	rpcMsgBuilder, err = v.mbp.get()
+	if err != nil {
+		return
+	}
+
+	res, err = rpcMsgBuilder.mb.NewResolve()
+	if err != nil {
+		return
+	}
+
+	err = res.SetPromiseId(promiseId)
 	return
 }

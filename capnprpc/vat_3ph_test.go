@@ -14,6 +14,7 @@ import (
 
 	"github.com/canastic/chantest"
 	"matheusd.com/depvendoredtestify/require"
+	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/testctx"
 )
 
@@ -51,6 +52,21 @@ func testProvisionIdFromBytes(raw []byte) (res testProvisionId) {
 	return
 }
 
+func testProvisionIdFromAnyPointerBytes(ptr capnpser.AnyPointer) (res testProvisionId, err error) {
+	if !ptr.IsList() {
+		err = fmt.Errorf("testProvisionIdFromAnyPointerBytes: ptr is not a list")
+		return
+	}
+	var rawTcpd []byte
+	tcpdLs := ptr.AsList()
+	rawTcpd, err = tcpdLs.Bytes()
+	if err != nil {
+		return
+	}
+	res = testProvisionIdFromBytes(rawTcpd)
+	return
+}
+
 type testVatNetwork struct {
 	th             *testHarness
 	vatIdToTestVat map[testVatId]*testVat
@@ -72,17 +88,33 @@ func (t *testVatNetwork) introduce(src conn, target conn) (introductionInfo, err
 	nonce := newTestProvisionIdNonce()
 	toRecProvId := nonce.encodeProvisionFor(targetIndex)
 	toTargetProvId := nonce.encodeProvisionFor(srcIndex)
+
+	// mb to use to store both the recipient and target
+	// thirdPartyContactInfo.
+	mb, err := capnpser.NewMessageBuilder(capnpser.DefaultSimpleSingleAllocator)
+	if err != nil {
+		return introductionInfo{}, err
+	}
+	sendToRec, err := mb.CopyToNewByteList(toRecProvId)
+	if err != nil {
+		return introductionInfo{}, err
+	}
+
 	return introductionInfo{
-		sendToRecipient: thirdPartyCapId{isStruct: true, st: serStruct{rawData: toRecProvId}},
-		sendToTarget:    recipientId{isStruct: true, st: serStruct{rawData: toTargetProvId}},
+		// sendToRecipient: thirdPartyCapId{isStruct: true, st: serStruct{rawData: toRecProvId}},
+		sendToRecipientAlt: sendToRec,
+		sendToTarget:       recipientId{isStruct: true, st: serStruct{rawData: toTargetProvId}},
 	}, nil
 }
 
 func (t *testVatNetwork) connectToIntroduced(ctx context.Context, localVat *Vat,
-	introducer conn, tcpd thirdPartyCapDescriptor) (conn, provisionId, error) {
+	introducer conn, tcpd capnpser.AnyPointer) (conn, provisionId, error) {
 
 	// ProvisionId that Bob sent to Alice.
-	provId := testProvisionIdFromBytes(tcpd.id.st.rawData)
+	provId, err := testProvisionIdFromAnyPointerBytes(tcpd) // testProvisionIdFromBytes(tcpd.id.st.rawData)
+	if err != nil {
+		return nil, provisionId{}, err
+	}
 	remoteVat, ok := t.vatIdToTestVat[provId.remoteId]
 	if !ok {
 		return nil, provisionId{}, fmt.Errorf("could not find vat with remoteId %d", provId.remoteId)
