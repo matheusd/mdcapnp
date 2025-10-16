@@ -422,3 +422,13 @@ func (s *Struct) ReadAnyPointer(ptrIndex PointerFieldIndex, res *AnyPointer) (er
 
 	return
 }
+
+func StructToAnyPointer[T ~StructType](v T) AnyPointer {
+	s := Struct(v)
+	return AnyPointer{
+		seg:   s.seg,
+		arena: s.arena,
+		dl:    s.dl,
+		ptr:   s.ptr.toPointer(),
+	}
+}

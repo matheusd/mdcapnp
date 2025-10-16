@@ -125,6 +125,8 @@ var errDifferentMsgBuilders = errors.New("different message builders")
 
 var errCannotChangeSegsCap = errors.New("cannot change capacity of segments during Allocate")
 
+var errByteListTooLarge = errors.New("byte list is too large")
+
 var errStringTooLarge = errors.New("string is too large")
 
 var errAllocatedTooLargeSeg = errors.New("allocator allocated a segment larger than max allowed")

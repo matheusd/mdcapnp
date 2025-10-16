@@ -928,6 +928,34 @@ func (mb *MessageBuilder) NewStructList(itemSize StructSize, listLen, listCap in
 	return
 }
 
+// CopyToNewByteList creates a new byte list and copies the content of the slice
+// to it.
+func (mb *MessageBuilder) CopyToNewByteList(b []byte) (res AnyPointerBuilder, err error) {
+	dataLen := uint(len(b))
+	if dataLen > MaxListSize {
+		err = errByteListTooLarge
+		return
+	}
+
+	var segb SegmentBuilder
+	var off WordOffset
+
+	words := WordCount(uintBytesToWordAligned(dataLen))
+	segb, off, err = mb.allocateValidSize(0, words)
+	if err != nil {
+		return
+	}
+	copy(b[off*WordSize:], b)
+
+	res = AnyPointerBuilder{
+		mb:  mb,
+		off: off,
+		ptr: buildRawListPointer(off, listElSizeByte, listSize(dataLen)),
+		sid: segb.id,
+	}
+	return
+}
+
 // newText allocates and places s as a new text in the meesage. The text is
 // preferably (but not necessarily) put into segment preferSeg.
 func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) ( /*segb SegmentBuilder, ptr listPointer*/ sid SegmentID, ptr listPointer, err error) {

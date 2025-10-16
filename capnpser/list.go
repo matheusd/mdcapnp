@@ -88,6 +88,20 @@ func (ls *List) String() string {
 	return string(buf)
 }
 
+// Bytes returns the list as bytes. Prefer using [Read] to avoid allocating the
+// byte slice.
+func (ls *List) Bytes() ([]byte, error) {
+	if ls.ptr.elSize != listElSizeByte {
+		return nil, errNotOneByteElList
+	}
+	res := make([]byte, ls.LenBytes())
+	n, err := ls.seg.Read(ls.ptr.startOffset, res)
+	if err != nil {
+		return nil, err
+	}
+	return res[:n], nil
+}
+
 // CheckCanGetUnsafeString returns nil if a subsequent call to [UnsafeString]
 // will work correctly. This is only valid for as long as the underlying arena
 // is not modified or invalidated.

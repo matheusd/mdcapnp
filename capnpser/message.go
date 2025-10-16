@@ -4,7 +4,10 @@
 
 package capnpser
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type Message struct {
 	arena *Arena
@@ -50,38 +53,50 @@ func (msg *Message) RemoveDepthLimit() {
 	msg.dl = noDepthLimit
 }
 
+func (msg *Message) readRootPtr() (seg *Segment, ptr pointer, ptrType pointerType, newDL depthLimit, segWordLen WordCount, err error) {
+	var ok bool
+	newDL, ok = msg.dl.dec()
+	if !ok {
+		err = errDepthLimitExceeded
+		return
+	}
+
+	seg, err = msg.arena.Segment(0)
+	if err != nil {
+		return
+	}
+
+	segWordLen = seg.wordLen()
+	if segWordLen < 1 {
+		err = errNoRootPointer
+		return
+	}
+	ptr = seg.uncheckedGetWordAsPointer(0)
+
+	// De-ref far pointers into the concrete list segment and near pointer.
+	ptrType = ptr.pointerType()
+	if ptrType == pointerTypeFarPointer {
+		seg, ptr, newDL, err = derefFarPointer(msg.arena, newDL, ptr)
+		if err != nil {
+			return
+		}
+		ptrType = ptr.pointerType()
+		segWordLen = seg.wordLen()
+	}
+	return
+}
+
 func (msg *Message) ReadRoot(s *Struct) error {
+	var ok bool
+
 	// TODO: abstract this function to extract struct fields from a struct.
 	//
 	// This implementation has been extensively reviewed to yield the
 	// best performance for extracting the root struct, so when
 	// generalizing, be mindful not to downgrade it.
-
-	structDL, ok := msg.dl.dec()
-	if !ok {
-		return errDepthLimitExceeded
-	}
-
-	seg, err := msg.arena.Segment(0)
+	seg, ptr, ptrType, newDL, segWordLen, err := msg.readRootPtr()
 	if err != nil {
 		return err
-	}
-
-	segWordLen := seg.wordLen()
-	if segWordLen < 1 {
-		return errNoRootPointer
-	}
-	ptr := seg.uncheckedGetWordAsPointer(0)
-
-	// De-ref far pointers into the concrete list segment and near pointer.
-	ptrType := ptr.pointerType()
-	if ptrType == pointerTypeFarPointer {
-		seg, ptr, structDL, err = derefFarPointer(s.arena, structDL, ptr)
-		if err != nil {
-			return err
-		}
-		ptrType = ptr.pointerType()
-		segWordLen = seg.wordLen()
 	}
 
 	// The resulting pointer (after de-ref) MUST be a struct pointer.
@@ -136,7 +151,7 @@ func (msg *Message) ReadRoot(s *Struct) error {
 		seg:   seg,
 		arena: msg.arena,
 		ptr:   sp,
-		dl:    structDL,
+		dl:    newDL,
 	}
 	return nil
 }
@@ -145,4 +160,76 @@ func (msg *Message) ReadRoot(s *Struct) error {
 func (msg *Message) GetRoot() (res Struct, err error) {
 	err = msg.ReadRoot(&res)
 	return
+}
+
+// NonStdRootAsAnyPointer returns the root of the message as an [AnyPointer],
+// independently of whether it is a struct.
+//
+// This is a non-standard usage of a message, which is supposed to have a
+// struct as root.
+//
+// Note: This de-refs any indirections in the actual root pointer, to get the
+// first concrete object (list, struct or capPointer).
+func (msg *Message) NonStdRootAsAnyPointer() (res AnyPointer, err error) {
+	var ok bool
+
+	seg, ptr, _, newDL, segWordLen, err := msg.readRootPtr()
+	if err != nil {
+		return AnyPointer{}, err
+	}
+
+	var totalWordSize WordCount
+	var dataOffset WordOffset
+	switch {
+	case ptr.isOtherPointer() || ptr.isNullPointer() || ptr.isZeroStruct():
+		// totalWordCount is zero (only pointer).
+
+	case ptr.isFarPointer():
+		// Shouldn't happen because readRootPtr de-refs.
+		return AnyPointer{}, errors.New("unhandled far pointer case in NonStdRootAsAnyPointer()")
+
+	case ptr.isStructPointer():
+		sp := ptr.toStructPointer()
+		dataOffset = sp.dataOffset
+		totalWordSize = sp.structSize().TotalSize()
+
+	case ptr.isListPointer():
+		lp := ptr.toListPointer()
+		dataOffset = lp.startOffset
+		totalWordSize = listWordCount(lp.elSize, lp.listSize)
+
+	default:
+		return AnyPointer{}, errors.New("unhandled case in NonStdRootAsAnyPointer()")
+	}
+
+	// The only negative value allowed as an offset is -1, to denote a
+	// zero-sized struct.
+	if dataOffset < -1 {
+		return AnyPointer{}, errInvalidNegativeStructOffset
+	}
+
+	// Bounds check that the entire object is readable.
+	//
+	// Concrete offset is always one more than the encoded start offset.
+	if dataOffset, ok = addWordOffsets(dataOffset, 1); !ok {
+		return AnyPointer{}, errWordOffsetSumOverflows{dataOffset, 1}
+	}
+
+	// The end offset must be valid word offset and must come before the end
+	// of the segment.
+	if endOffset, ok := addWordOffsets(dataOffset, WordOffset(totalWordSize)); !ok || endOffset > WordOffset(segWordLen) {
+		return AnyPointer{}, ErrObjectOutOfBounds{Offset: dataOffset, Size: totalWordSize, WordLen: segWordLen}
+	}
+
+	// Safety check that the caller allows us to read this many words.
+	if err := msg.arena.ReadLimiter().CanRead(totalWordSize); err != nil {
+		return AnyPointer{}, err
+	}
+
+	return AnyPointer{
+		seg:   seg,
+		arena: msg.arena,
+		dl:    newDL,
+		ptr:   ptr,
+	}, nil
 }
