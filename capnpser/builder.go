@@ -20,10 +20,10 @@ type AnyPointerBuilder struct {
 	sid SegmentID
 }
 
-// AsAnyPointer provices access to this pointer as a readable AnyPointer. The
+// Reader provides access to this pointer as a readable AnyPointer. The
 // contents of this object are only guaranteed to be valid until the next
 // modification of the message.
-func (ap *AnyPointerBuilder) AsAnyPointer() AnyPointer {
+func (ap *AnyPointerBuilder) Reader() AnyPointer {
 	return AnyPointer{
 		arena: ap.mb.updateReaderArena(),
 		seg:   ap.mb.readerArena.segment(ap.sid),
@@ -164,6 +164,24 @@ type StructBuilderType = struct {
 	sid SegmentID
 }
 type StructBuilder StructBuilderType
+
+// Reader provides access to this pointer as a readable AnyPointer. The
+// contents of this object are only guaranteed to be valid until the next
+// modification of the message.
+func (sb *StructBuilder) Reader() Struct {
+	sp := structPointer{dataOffset: sb.off, dataSectionSize: sb.sz.DataSectionSize, pointerSectionSize: sb.sz.PointerSectionSize}
+	return Struct{
+		arena: sb.mb.updateReaderArena(),
+		seg:   sb.mb.readerArena.segment(sb.sid),
+		dl:    noDepthLimit,
+		ptr:   sp,
+	}
+}
+
+func ReaderOfStructBuilder[B ~StructBuilderType, T ~StructType](b B) T {
+	sb := StructBuilder(b)
+	return T(sb.Reader())
+}
 
 func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
 	return dataIndex < DataFieldIndex(sb.sz.DataSectionSize)
@@ -357,6 +375,14 @@ func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructS
 	return
 }
 
+func NewStructField[B ~StructBuilderType, T ~StructBuilderType](b B, ptrIndex PointerFieldIndex, size StructSize) (res T, err error) {
+	var nsb StructBuilder
+	sb := (StructBuilder)(b)
+	nsb, err = sb.NewStructField(ptrIndex, size)
+	res = T(nsb)
+	return
+}
+
 func (sb *StructBuilder) NewStructAsUnionValue(ptrIndex PointerFieldIndex,
 	size StructSize, unionField DataFieldIndex, unionFieldShift Uint16DataFieldShift,
 	unionFieldValue uint16) (nsb StructBuilder, err error) {
@@ -367,6 +393,17 @@ func (sb *StructBuilder) NewStructAsUnionValue(ptrIndex PointerFieldIndex,
 	}
 
 	err = sb.SetUint16(unionField, unionFieldShift, unionFieldValue)
+	return
+}
+
+func NewStructAsUnionValueField[B ~StructBuilderType, T ~StructBuilderType](b B, ptrIndex PointerFieldIndex,
+	size StructSize, unionField DataFieldIndex, unionFieldShift Uint16DataFieldShift,
+	unionFieldValue uint16) (res T, err error) {
+
+	var nsb StructBuilder
+	sb := (StructBuilder)(b)
+	nsb, err = sb.NewStructAsUnionValue(ptrIndex, size, unionField, unionFieldShift, unionFieldValue)
+	res = T(nsb)
 	return
 }
 
@@ -822,7 +859,7 @@ func (mb *MessageBuilder) allocateValidSizeXXX(preferred SegmentID, size WordCou
 
 // NonStdSetRoot sets the root of this message to the given pointer.
 //
-// WARNING: This is a non-standard operation; message roots are supposted to be
+// WARNING: This is a non-standard operation; message roots are supposed to be
 // structs, not any arbitrary objects. This should only be invoked if you know
 // what you're doing (building a partial, potentially-orphaned object).
 func (mb *MessageBuilder) NonStdSetRoot(anyp *AnyPointerBuilder) error {
@@ -963,7 +1000,7 @@ func (mb *MessageBuilder) CopyToNewByteList(b []byte) (res AnyPointerBuilder, er
 	if err != nil {
 		return
 	}
-	copy(b[off*WordSize:], b)
+	copy((*segb.b)[off*WordSize:], b)
 
 	res = AnyPointerBuilder{
 		mb:  mb,

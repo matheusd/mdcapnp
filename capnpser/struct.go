@@ -190,7 +190,7 @@ func (s *Struct) readFieldPtr(ptrIndex PointerFieldIndex) (seg *Segment, ptrType
 	if ptrIndex >= PointerFieldIndex(s.ptr.pointerSectionSize) {
 		// TODO: return default if it exists? Or handle this at a higher
 		// level?
-		err = errStructBuilderDoesNotContainPointerField(s.ptr.pointerSectionSize)
+		err = errStructDoesNotContainPointerField(ptrIndex)
 		return
 	}
 
@@ -407,8 +407,18 @@ func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error)
 }
 
 func (s *Struct) ReadAnyPointer(ptrIndex PointerFieldIndex, res *AnyPointer) (err error) {
-	seg, _, ptr, dl, pointerOffset, err := s.readFieldPtr(ptrIndex)
-	_ = pointerOffset
+	seg, ptrType, ptr, dl, pointerOffset, err := s.readFieldPtr(ptrIndex)
+
+	// Determine concrete offset into segment of where the object actually
+	// starts.
+	if ptrType == pointerTypeList || ptrType == pointerTypeStruct {
+		dataOffset, ok := addWordOffsetsWithCarry(pointerOffset, ptr.dataOffset(), 1)
+		if !ok {
+			return errWordOffsetSumOverflows{ptr.dataOffset(), pointerOffset}
+		}
+		ptr = ptr.withDataOffset(dataOffset)
+	}
+
 	if err == nil {
 		*res = AnyPointer{
 			seg:   seg,

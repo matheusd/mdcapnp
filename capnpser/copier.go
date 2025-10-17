@@ -71,32 +71,9 @@ func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
 				return AnyPointerBuilder{}, err
 			}
 
-			/*
-				// Determine the concrete offset of the sub list in
-				// source.
-				srcPtrOffset := src.ptr.dataOffset + WordOffset(src.ptr.dataSectionSize) + WordOffset(i)
-				if sub.ptr.startOffset, ok = addWordOffsetsWithCarry(srcPtrOffset, sub.ptr.startOffset, 1); !ok {
-					return AnyPointerBuilder{}, errWordOffsetSumOverflows{srcPtrOffset, sub.ptr.startOffset}
-				}
-			*/
-
 			// Recurse into list.
 			subDst, err = copyList(sub, dst)
 		} else if ptr.isStructPointer() {
-			/*
-				sub := Struct{
-					seg:   src.seg,
-					arena: src.arena,
-					dl:    subDl,
-					ptr:   ptr.toStructPointer(),
-				}
-
-				// Determine the concrete offset of the sub structure.
-				sub.ptr.dataOffset, ok = addWordOffsets(sub.ptr.dataOffset, src.ptr.dataOffset)
-				if !ok {
-					return AnyPointerBuilder{}, errWordOffsetSumOverflows{sub.ptr.dataOffset, src.ptr.dataOffset}
-				}
-			*/
 			var sub Struct
 			if err := src.ReadStruct(PointerFieldIndex(i), &sub); err != nil {
 				return AnyPointerBuilder{}, err
@@ -119,12 +96,15 @@ func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
 			return AnyPointerBuilder{}, errors.New("point to far segments not supported in copyStruct")
 		}
 
+		// Determine the new offset to this pointer field in dst.
+		dstSubPtrOff := off + WordOffset(src.ptr.dataSectionSize) + WordOffset(i)
+
 		// Modify the data offset of the current pointer to
 		// point to the newly allocated child in dest.
-		newPtr := ptr.withDataOffset(subDst.off - srcSubPtrOff - 1)
+		newPtr := ptr.withDataOffset(subDst.off - dstSubPtrOff - 1)
 
 		// Finally, rewrite the pointer.
-		seg.SetWord(srcSubPtrOff, Word(newPtr))
+		seg.SetWord(dstSubPtrOff, Word(newPtr))
 	}
 
 	// Build the final object.
@@ -168,6 +148,7 @@ func DeepCopy(src AnyPointer, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		return copyStruct(src.AsStruct(), dst)
 
 	case src.IsList():
+		fmt.Printf("XXXXXXXXX copying list %d \n", src.ptr.dataOffset())
 		return copyList(src.AsList(), dst)
 
 	default:

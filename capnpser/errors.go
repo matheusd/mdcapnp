@@ -150,3 +150,9 @@ type errStructBuilderDoesNotContainPointerField uint16
 func (err errStructBuilderDoesNotContainPointerField) Error() string {
 	return fmt.Sprintf("struct builder did not allocate space for pointer %d", int(err))
 }
+
+type errStructDoesNotContainPointerField uint16
+
+func (err errStructDoesNotContainPointerField) Error() string {
+	return fmt.Sprintf("struct did does not contain pointer %d", int(err))
+}
