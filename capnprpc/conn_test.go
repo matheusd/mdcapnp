@@ -6,40 +6,33 @@ package capnprpc
 
 import (
 	"context"
+	"io"
 
 	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-type testConnBatch struct {
-	b   msgBatch
-	res chan error
-}
-
 type testConnReceiver struct {
-	f func() (message, error)
+	f func() (capnpser.Message, error)
 }
 
 type testConn struct {
 	th          *testHarness
-	sent        chan message
+	sent        chan *capnpser.MessageBuilder
 	sentResult  chan error
 	fillReceive chan testConnReceiver
 }
 
 // checkNextSentRpcMsg is called by test code to check the next message sent.
 func (tc *testConn) checkNextSentRpcMsg(f func(types.Message) error) {
-	var m message
+	var m *capnpser.MessageBuilder
 	select {
 	case m = <-tc.sent:
 	case <-tc.th.ctx.Done():
 		tc.th.t.Fatalf("No message sent before context done")
 	}
 
-	if m.rawSerMb == nil {
-		tc.th.t.Fatalf("Did not receive expected rawSerMb")
-	}
-	serBytes, err := m.rawSerMb.Serialize()
+	serBytes, err := m.Serialize()
 	if err != nil {
 		tc.th.t.Fatal(err)
 	}
@@ -61,44 +54,23 @@ func (tc *testConn) checkNextSentRpcMsg(f func(types.Message) error) {
 	}
 }
 
-// checkNextSent is called by test code to check the next message sent.
-func (tc *testConn) checkNextSent(f func(message) error) {
-	var m message
-	select {
-	case m = <-tc.sent:
-	case <-tc.th.ctx.Done():
-		tc.th.t.Fatalf("No message sent before context done")
-	}
-	select {
-	case tc.sentResult <- f(m):
-	case <-tc.th.ctx.Done():
-		tc.th.t.Fatalf("No message sent before context done")
-	}
-}
-
-func (tc *testConn) fillNextReceiveWith(target message) {
-	tc.fillNextReceive(func() (message, error) {
-		return target, nil
-	})
-}
-
 func (tc *testConn) fillNextReceiveWithSer(mb *capnpser.MessageBuilder) {
-	tc.fillNextReceive(func() (message, error) {
+	tc.fillNextReceive(func() (capnpser.Message, error) {
 		bytes, err := mb.Serialize()
 		if err != nil {
-			return message{}, err
+			return capnpser.Message{}, err
 		}
 		arena, err := capnpser.DecodeArena(bytes)
 		if err != nil {
-			return message{}, err
+			return capnpser.Message{}, err
 		}
 		arena.ReadLimiter().InitNoLimit()
 		serMsg := capnpser.MakeMsg(arena)
-		return message{rawSerMsg: &serMsg}, nil
+		return serMsg, nil
 	})
 }
 
-func (tc *testConn) fillNextReceive(f func() (message, error)) {
+func (tc *testConn) fillNextReceive(f func() (capnpser.Message, error)) {
 	select {
 	case tc.fillReceive <- testConnReceiver{f: f}:
 	case <-tc.th.ctx.Done():
@@ -108,11 +80,11 @@ func (tc *testConn) fillNextReceive(f func() (message, error)) {
 
 // send is called by the vat end of this test conn. It waits until test code had
 // a chance to decide what to do with the message.
-func (tc *testConn) send(ctx context.Context, m message, _ int) error {
+func (tc *testConn) send(ctx context.Context, m OutMsg) error {
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case tc.sent <- m:
+	case tc.sent <- m.Msg:
 	}
 
 	select {
@@ -125,12 +97,13 @@ func (tc *testConn) send(ctx context.Context, m message, _ int) error {
 
 // receive is called by the vat end of this test conn. It allows test code to
 // set the next message to be received.
-func (tc *testConn) receive(ctx context.Context) (message, error) {
+func (tc *testConn) receive(ctx context.Context) (InMsg, error) {
 	select {
 	case <-ctx.Done():
-		return message{}, context.Cause(ctx)
+		return InMsg{}, context.Cause(ctx)
 	case tcr := <-tc.fillReceive:
-		return tcr.f()
+		msg, err := tcr.f()
+		return InMsg{Msg: msg}, err
 	}
 }
 
@@ -142,69 +115,39 @@ type testPipeConn struct {
 	remName  string
 	remIndex int
 
-	nextOut   chan *message
-	wroteOut  chan struct{}
-	nextIn    chan *message
-	inWritten chan struct{}
+	w     io.Writer
+	r     io.Reader
+	inBuf []byte
 
 	recvArena  capnpser.Arena
-	recvMsg    message
 	recvSerMsg capnpser.Message
 }
 
-func (tpc *testPipeConn) send(ctx context.Context, m message, _ int) error {
-	select {
-	case nextMsg := <-tpc.nextOut:
-
-		// Adapt sending raw bytes.
-		if m.rawSerMb != nil {
-			serBytes, err := m.rawSerMb.Serialize()
-			if err != nil {
-				return err
-			}
-			nextMsg.rawSerBytes = append(nextMsg.rawSerBytes[:0], serBytes...)
-		} else {
-			*nextMsg = m
-		}
-		select {
-		case tpc.wroteOut <- struct{}{}:
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		}
-	case <-ctx.Done():
-		return context.Cause(ctx)
+func (tpc *testPipeConn) send(ctx context.Context, m OutMsg) error {
+	// Adapt sending raw bytes.
+	serBytes, err := m.Msg.Serialize()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	_, err = tpc.w.Write(serBytes)
+	return err
 }
 
-func (tpc *testPipeConn) receive(ctx context.Context) (message, error) {
-	select {
-	case tpc.nextIn <- &tpc.recvMsg:
-	case <-ctx.Done():
-		return message{}, context.Cause(ctx)
+func (tpc *testPipeConn) receive(ctx context.Context) (InMsg, error) {
+	n, err := tpc.r.Read(tpc.inBuf)
+	if err != nil {
+		return InMsg{}, err
 	}
 
-	select {
-	case <-tpc.inWritten:
-		// Adapt receiving raw bytes.
-		if tpc.recvMsg.rawSerBytes != nil {
-			tpc.recvArena.ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
-			err := tpc.recvArena.DecodeSingleSegment(tpc.recvMsg.rawSerBytes)
-			if err != nil {
-				return message{}, err
-			}
-			tpc.recvMsg.rawSerBytes = tpc.recvMsg.rawSerBytes[:0]
-			tpc.recvSerMsg = capnpser.MakeMsg(&tpc.recvArena)
-			tpc.recvMsg.rawSerMsg = &tpc.recvSerMsg
-		} else {
-			tpc.recvMsg.rawSerMsg = nil
-		}
-	case <-ctx.Done():
-		return message{}, context.Cause(ctx)
+	tpc.recvArena.ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
+	err = tpc.recvArena.DecodeSingleSegment(tpc.inBuf[:n])
+	if err != nil {
+		return InMsg{}, err
 	}
+	tpc.recvSerMsg = capnpser.MakeMsg(&tpc.recvArena)
 
-	return tpc.recvMsg, nil
+	return InMsg{Msg: tpc.recvSerMsg}, nil
 }
 
 func (tpc *testPipeConn) remoteName() string {

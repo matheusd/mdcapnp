@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
@@ -102,8 +103,8 @@ func castCallResult[T any](callResult any) (res T, err error) {
 
 	// Not an error, and not type T, so must be an AnyPointer with the
 	// Content field of a Payload result.
-	var resAnyPointer anyPointer
-	if resAnyPointer, ok = callResult.(anyPointer); !ok {
+	var resAnyPointer capnpser.AnyPointer
+	if resAnyPointer, ok = callResult.(capnpser.AnyPointer); !ok {
 		err = fmt.Errorf("future expected AnyPointer but got %T", callResult)
 		return
 	}

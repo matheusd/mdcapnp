@@ -30,7 +30,6 @@ type Vat struct {
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
-	mp  *messagePool
 	mbp *messageBuilderPool
 
 	newConn    chan *runningConn
@@ -46,7 +45,6 @@ func NewVat(opts ...VatOption) *Vat {
 	v := &Vat{
 		cfg:        cfg,
 		log:        cfg.vatLogger(),
-		mp:         newMessagePool(),
 		mbp:        newMessageBuilderPool(),
 		newConn:    make(chan *runningConn),
 		connDone:   make(chan connDone),
@@ -135,11 +133,11 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 	}
 
 	// Prepare the RPC message for this single step
-	rpcMsgBuilder, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
+	outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
 	if err != nil {
 		return err
 	}
-	cmb := rpcCallMsgBuilder{rpcMsgBuilder: rpcMsgBuilder, isBootstrap: step.parent == nil}
+	cmb := rpcCallMsgBuilder{outMsg: outMsg, isBootstrap: step.parent == nil}
 	if cmb.isBootstrap {
 		bb, err := cmb.mb.NewBoostrap()
 		if err != nil {
@@ -262,12 +260,7 @@ func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningCon
 		return err
 	}
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = cmb.serMb
-	err = conn.queue(ctx, outMsg{
-		msg:              rpcMsg,
-		remainingInBatch: 0,
-	})
+	err = conn.queue(ctx, cmb.outMsg)
 	if err != nil {
 		return err
 	}

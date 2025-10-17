@@ -18,7 +18,7 @@ import (
 func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.Bootstrap) error {
 	bootQid := AnswerId(boot.QuestionId())
 
-	rpcMsgBuilder, capDesc, err := v.newSingleCapReturn(bootQid)
+	outMsg, capDesc, err := v.newSingleCapReturn(bootQid)
 	if err != nil {
 		return err
 	}
@@ -36,9 +36,7 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.
 		Int("eid", int(rc.bootExportId)).
 		Msg("Exported Bootstrap")
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	return rc.queue(ctx, singleMsgBatch(rpcMsg))
+	return rc.queue(ctx, outMsg)
 }
 
 func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Return) error {
@@ -282,11 +280,11 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	}
 
 	// Start preparing reply.
-	rpcMsgBuilder, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
+	outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
 	if err != nil {
 		return err
 	}
-	reply, err := rpcMsgBuilder.mb.NewReturn()
+	reply, err := outMsg.mb.NewReturn()
 	if err != nil {
 		return err
 	}
@@ -294,13 +292,10 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 
 	crb := &rc.crb // Ok to reuse (rc is locked).
 	crb.pb, err = reply.NewResults()
-	crb.serMb = rpcMsgBuilder.serMb
+	crb.serMb = outMsg.serMsg
 	if err != nil {
 		return err
 	}
-	crb.payload = payload{content: anyPointer{
-		isVoid: true, // Void result by default on non-error.
-	}}
 
 	// Make the call!
 	logEvent.Msg("Locally handling call")
@@ -310,12 +305,12 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 		// re-create the reply. This ensures anything written to the
 		// payload inside the handler's Call() method will *NOT* be
 		// sent as an orphan object inside the reply.
-		if err := rpcMsgBuilder.serMb.Reset(); err != nil {
+		if err := outMsg.serMsg.Reset(); err != nil {
 			return err
 		}
 
 		// Turn the error into a returned exception.
-		reply, err = rpcMsgBuilder.mb.NewReturn()
+		reply, err = outMsg.mb.NewReturn()
 		if err != nil {
 			return err
 		}
@@ -362,8 +357,15 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			// will be.
 			var rootCapIndex int = -1
 			var rootCapExportId ExportId
-			if crb.payload.content.IsCapPointer() {
-				rootCapIndex = int(crb.payload.content.AsCapPointer().index)
+			pbReader := crb.pb.AsReader()
+			content, err := pbReader.Content()
+			if err != nil {
+				return err
+			}
+
+			if content.IsCapPointer() {
+				cp := content.AsCapPointer()
+				rootCapIndex = int(cp.Index())
 			}
 
 			// Track all exported caps.
@@ -418,9 +420,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			Msg("Processed call into payload result")
 	}
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	return rc.queue(ctx, singleMsgBatch(rpcMsg))
+	return rc.queue(ctx, outMsg)
 }
 
 func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin types.Finish) error {
@@ -620,9 +620,7 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 			target:   disembargoTarget,
 		}}
 	*/
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = disRpc.serMb
-	if err := srcConn.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
+	if err := srcConn.queue(ctx, disRpc); err != nil {
 		return err
 	}
 
@@ -863,32 +861,28 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac types.Accep
 	// Send the Return that corresponds to the Accept to the newly
 	// introduced conn. This is the picked up capability (previously
 	// exported in srcConn).
-	rpcMsgBuilder, capDesc, err := v.newSingleCapReturn(aid)
+	outMsg, capDesc, err := v.newSingleCapReturn(aid)
 	if err != nil {
 		return err
 	}
 	if err := capDesc.SetSenderHosted(eid); err != nil {
 		return err
 	}
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	if err := rc.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
+	if err := rc.queue(ctx, outMsg); err != nil {
 		return err
 	}
 
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	rpcMsgBuilder, payBuilder, err := v.newReturnPayload(provideAid)
+	outMsg, payBuilder, err := v.newReturnPayload(provideAid)
 	if err != nil {
 		return err
 	}
 	if err := payBuilder.SetContent(capnpser.ZeroStructAsPointerBuilder()); err != nil {
 		return err
 	}
-	rpcMsg = v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	return rc.queue(ctx, singleMsgBatch(rpcMsg))
+	return rc.queue(ctx, outMsg)
 }
 
 func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis types.Disembargo) error {
@@ -913,19 +907,17 @@ func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis 
 	}
 
 	// Forward disembargo to third party.
-	rpcMsgBuilder, err := v.mbp.get()
+	outMsg, err := v.mbp.get()
 	if err != nil {
 		return err
 	}
-	fwdDis, err := rpcMsgBuilder.mb.NewDisembargo()
+	fwdDis, err := outMsg.mb.NewDisembargo()
 	if err != nil {
 		return err
 	}
 	fwdDis.SetProvide(types.Disembargo_EmbargoId(exp.thirdPartyProvideQid))
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	if err := exp.thirdPartyRC.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
+	if err := exp.thirdPartyRC.queue(ctx, outMsg); err != nil {
 		return err
 	}
 
@@ -969,7 +961,7 @@ func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis types.
 	}
 }
 
-func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg types.Message, rawMsg *capnpser.Message) error {
+func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.Message, rawMsg capnpser.Message) error {
 
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -1054,37 +1046,6 @@ func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg type
 	}
 
 	return nil
-}
-
-// processInMessage processes an incoming message from a remote Vat.
-func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message) error {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-
-	rc.log.Trace().Str("which", msg.Which().String()).Msg("Starting to process inbound msg (OLD)")
-
-	var err error
-	switch {
-	case msg.testEcho != 0:
-		echo := v.mp.get()
-		*echo = msg
-		rc.queue(ctx, singleMsgBatch(echo))
-	default:
-		err = errors.New("unknown Message type")
-	}
-
-	if err != nil && !errors.Is(err, context.Canceled) {
-		logEvent := rc.log.Err(err).Str("which", msg.Which().String())
-		if err, ok := err.(extraDataError); ok {
-			err.addExtraDataToLog(logEvent)
-		}
-		// if rc.log.GetLevel() < zerolog.InfoLevel {
-		//	logEvent.Any("msg", msg)
-		//}
-		logEvent.Msg("Error while processing inbound message")
-	}
-
-	return err
 }
 
 var errTooManyOpenQuestions = errors.New("too many open questions")
@@ -1199,18 +1160,16 @@ func (v *Vat) queueFinish(ctx context.Context, rc *runningConn, qid QuestionId) 
 	rc.questions.del(qid)
 	rc.mu.Unlock()
 
-	rpcMsgBuilder, _, err := v.newFinish(qid)
+	outMsg, _, err := v.newFinish(qid)
 	if err != nil {
 		return err
 	}
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	return rc.queue(ctx, singleMsgBatch(rpcMsg))
+	return rc.queue(ctx, outMsg)
 }
 
 func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, exp export, resolution export) error {
-	rpcMsgBuilder, res, err := v.newResolve(eid)
+	outMsg, res, err := v.newResolve(eid)
 	if err != nil {
 		return err
 	}
@@ -1238,7 +1197,7 @@ func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, e
 
 		// Copy the thirdPartyDesc to the outbound resolve
 		// message.
-		thirdPartyCapObj, err := capnpser.DeepCopy(resolution.thirdPartyCapDescIdAlt, rpcMsgBuilder.serMb)
+		thirdPartyCapObj, err := capnpser.DeepCopy(resolution.thirdPartyCapDescIdAlt, outMsg.serMsg)
 		if err != nil {
 			return err
 		}
@@ -1250,12 +1209,10 @@ func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, e
 		return fmt.Errorf("unknown resolution type %s", resolution.typ)
 	}
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	return rc.queue(ctx, singleMsgBatch(rpcMsg))
+	return rc.queue(ctx, outMsg)
 }
 
-func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, rpcMsgBuilder rpcMsgBuilder, prov types.ProvideBuilder) error {
+func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, outMsg outMsg, prov types.ProvideBuilder) error {
 	// Track the provider qid and target.
 	var impCap types.ImportId
 	var pansQid types.QuestionId
@@ -1281,11 +1238,7 @@ func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, rpcMsgBuilder rp
 		return errors.New("unhandled case in sendProvide")
 	}
 
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
-	outMsg := singleMsgBatch(rpcMsg)
 	outMsg.wantSentAck()
-
 	if err := rc.queue(ctx, outMsg); err != nil {
 		return err
 	}
@@ -1313,13 +1266,10 @@ func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, rpcMsgBuilder rp
 	return nil
 }
 
-func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept rpcMsgBuilder) error {
-	rpcMsg := v.mp.get()
-	rpcMsg.rawSerMb = accept.serMb
-	outMsg := singleMsgBatch(rpcMsg)
-	outMsg.wantSentAck()
+func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept outMsg) error {
+	accept.wantSentAck()
 
-	if err := rc.queue(ctx, outMsg); err != nil {
+	if err := rc.queue(ctx, accept); err != nil {
 		return err
 	}
 
@@ -1328,5 +1278,5 @@ func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept rpcMsgBuil
 	// reach the remote end of the new conn BEFORE a Disembargo is proxied
 	// through srcConn, otherwise ordering is not guaranteed. In the mean
 	// time, any pipelined calls continue to be proxied through srcConn.
-	return outMsg.waitSentAck(ctx)
+	return accept.waitSentAck(ctx)
 }

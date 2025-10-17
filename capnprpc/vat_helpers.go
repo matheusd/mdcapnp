@@ -13,14 +13,14 @@ import (
 
 // newReturnPayload is a helper that initializes a Return message with a Result
 // payload.
-func (v *Vat) newReturnPayload(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, payBuilder types.PayloadBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newReturnPayload(aid AnswerId) (outMsg outMsg, payBuilder types.PayloadBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
 	// Reply is a Return with a single cap.
-	reply, err := rpcMsgBuilder.mb.NewReturn()
+	reply, err := outMsg.mb.NewReturn()
 	if err != nil {
 		return
 	}
@@ -31,9 +31,9 @@ func (v *Vat) newReturnPayload(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, payBu
 
 // newSingleCapReturn is a helper that initializes a Return message with a
 // single cap as the payload.
-func (v *Vat) newSingleCapReturn(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, capDesc types.CapDescriptorBuilder, err error) {
+func (v *Vat) newSingleCapReturn(aid AnswerId) (outMsg outMsg, capDesc types.CapDescriptorBuilder, err error) {
 	var payBuilder types.PayloadBuilder
-	rpcMsgBuilder, payBuilder, err = v.newReturnPayload(aid)
+	outMsg, payBuilder, err = v.newReturnPayload(aid)
 	if err != nil {
 		return
 	}
@@ -52,13 +52,13 @@ func (v *Vat) newSingleCapReturn(aid AnswerId) (rpcMsgBuilder rpcMsgBuilder, cap
 	return
 }
 
-func (v *Vat) newFinish(qid QuestionId) (rpcMsgBuilder rpcMsgBuilder, fin types.FinishBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newFinish(qid QuestionId) (outMsg outMsg, fin types.FinishBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	fin, err = rpcMsgBuilder.mb.NewFinish()
+	fin, err = outMsg.mb.NewFinish()
 	if err != nil {
 		return
 	}
@@ -67,13 +67,13 @@ func (v *Vat) newFinish(qid QuestionId) (rpcMsgBuilder rpcMsgBuilder, fin types.
 	return
 }
 
-func (v *Vat) newResolve(promiseId ExportId) (rpcMsgBuilder rpcMsgBuilder, res types.ResolveBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newResolve(promiseId ExportId) (outMsg outMsg, res types.ResolveBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	res, err = rpcMsgBuilder.mb.NewResolve()
+	res, err = outMsg.mb.NewResolve()
 	if err != nil {
 		return
 	}
@@ -82,19 +82,19 @@ func (v *Vat) newResolve(promiseId ExportId) (rpcMsgBuilder rpcMsgBuilder, res t
 	return
 }
 
-func (v *Vat) newProvide(recIdToCopy capnpser.AnyPointer) (rpcMsgBuilder rpcMsgBuilder, res types.ProvideBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newProvide(recIdToCopy capnpser.AnyPointer) (outMsg outMsg, res types.ProvideBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	res, err = rpcMsgBuilder.mb.NewProvide()
+	res, err = outMsg.mb.NewProvide()
 	if err != nil {
 		return
 	}
 
 	var recData capnpser.AnyPointerBuilder
-	recData, err = capnpser.DeepCopy(recIdToCopy, rpcMsgBuilder.serMb)
+	recData, err = capnpser.DeepCopy(recIdToCopy, outMsg.serMsg)
 	if err != nil {
 		return
 	}
@@ -105,13 +105,13 @@ func (v *Vat) newProvide(recIdToCopy capnpser.AnyPointer) (rpcMsgBuilder rpcMsgB
 	return
 }
 
-func (v *Vat) newAccept(acceptQid QuestionId, provId capnpser.AnyPointer, embargo bool) (rpcMsgBuilder rpcMsgBuilder, acc types.AcceptBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newAccept(acceptQid QuestionId, provId capnpser.AnyPointer, embargo bool) (outMsg outMsg, acc types.AcceptBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	acc, err = rpcMsgBuilder.mb.NewAccept()
+	acc, err = outMsg.mb.NewAccept()
 	if err != nil {
 		return
 	}
@@ -122,7 +122,7 @@ func (v *Vat) newAccept(acceptQid QuestionId, provId capnpser.AnyPointer, embarg
 	if err = acc.SetEmbargo(embargo); err != nil {
 		return
 	}
-	provIdCopy, err := capnpser.DeepCopy(provId, rpcMsgBuilder.serMb)
+	provIdCopy, err := capnpser.DeepCopy(provId, outMsg.serMsg)
 	if err != nil {
 		return
 	}
@@ -130,13 +130,13 @@ func (v *Vat) newAccept(acceptQid QuestionId, provId capnpser.AnyPointer, embarg
 	return
 }
 
-func (v *Vat) newDisembargo(target messageTarget) (rpcMsgBuilder rpcMsgBuilder, dis types.DisembargoBuilder, err error) {
-	rpcMsgBuilder, err = v.mbp.get()
+func (v *Vat) newDisembargo(target messageTarget) (outMsg outMsg, dis types.DisembargoBuilder, err error) {
+	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	dis, err = rpcMsgBuilder.mb.NewDisembargo()
+	dis, err = outMsg.mb.NewDisembargo()
 	if err != nil {
 		return
 	}

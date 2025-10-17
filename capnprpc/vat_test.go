@@ -203,6 +203,8 @@ func TestRemotePromiseWithCap(t *testing.T) {
 	require.True(t, callHandled.Load())
 }
 
+/*
+
 // BenchmarkVatRunOverhead benchmarks the overhead of a step in Run().
 func BenchmarkVatRunOverhead(b *testing.B) {
 	b.Run("single", func(b *testing.B) {
@@ -296,8 +298,8 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 			}
 			b.Fatalf("Final sent len: %d", len(tc.sent))
 		})
-	*/
 }
+*/
 
 // BenchmarkVoidCall benchmarks a basic void call under various circumstances.
 func BenchmarkVoidCall(b *testing.B) {

@@ -7,6 +7,8 @@ package capnprpc
 import (
 	"context"
 	"fmt"
+
+	types "matheusd.com/mdcapnp/capnprpc/types"
 )
 
 type futureString callFuture
@@ -56,7 +58,7 @@ func (api testAPI) GetUser(id string) testUser {
 		callSetup{
 			interfaceId: testAPI_InterfaceID,
 			methodId:    testAPI_GetUser_CallID,
-			paramsBuilder: func(*msgBuilder) error {
+			paramsBuilder: func(types.MessageBuilder) error {
 				_ = id
 				return nil
 			},
@@ -86,7 +88,7 @@ func (usr testUser) GetProfile() testUserProfile {
 		callSetup{
 			interfaceId: 1000,
 			methodId:    11,
-			paramsBuilder: func(*msgBuilder) error {
+			paramsBuilder: func(types.MessageBuilder) error {
 				return nil
 			},
 		},

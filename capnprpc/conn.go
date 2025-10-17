@@ -11,18 +11,19 @@ import (
 
 	"github.com/rs/zerolog"
 	types "matheusd.com/mdcapnp/capnprpc/types"
+	"matheusd.com/mdcapnp/capnpser"
 )
 
-type msgBatch struct {
-	isSingle bool
-	single   message
-	msgs     []message
+type outMsg struct {
+	serMsg   *capnpser.MessageBuilder
+	mb       types.MessageBuilder
+	sentChan chan struct{}
 }
 
-type outMsg struct {
-	msg              *message
-	remainingInBatch int
-	sentChan         chan struct{}
+func (om *outMsg) ackSent() {
+	if om.sentChan != nil {
+		close(om.sentChan)
+	}
 }
 
 func (om *outMsg) wantSentAck() *outMsg {
@@ -39,43 +40,22 @@ func (om *outMsg) waitSentAck(ctx context.Context) error {
 	}
 }
 
-func singleMsgBatch(msg *message) outMsg {
-	return outMsg{msg: msg, remainingInBatch: 0}
+type OutMsg struct {
+	Msg *capnpser.MessageBuilder
+}
+
+type InMsg struct {
+	Msg capnpser.Message
 }
 
 type conn interface {
-	send(context.Context, message, int) error
-	receive(context.Context) (message, error) // Ok because message goes to stack.
+	send(context.Context, OutMsg) error
+	receive(context.Context) (InMsg, error) // Ok because message goes to stack.
 	remoteName() string
 
 	// TODO: Allow conn-owned buffer (io_uring)?
 	// usesReceiverBuffer() bool
 	// receiveMsg(context.Context) (*message, error)
-}
-
-type ConnectionAndProvisionId struct {
-	connection *runningConn
-	provision  provisionId
-}
-
-type connAndProvisionPromise struct {
-	capId thirdPartyCapDescriptor
-}
-
-func (cpp *connAndProvisionPromise) isWaiting() bool {
-	return cpp.capId.vineId > 0 // FIXME: not a great way to track this.
-}
-
-func (cpp *connAndProvisionPromise) Wait(ctx context.Context) (ConnectionAndProvisionId, error) {
-	panic("todo")
-}
-
-func (cpp *connAndProvisionPromise) Fail(err error) {
-	panic("todo")
-}
-
-func (cpp *connAndProvisionPromise) Fulfill(rc *runningConn, provId provisionId) {
-	panic("todo")
 }
 
 var errConnDone = errors.New("conn is done")
@@ -123,14 +103,14 @@ func (rc *runningConn) String() string {
 }
 
 func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
+	mr := m.mb.AsReader()
+	which := mr.Which().String()
+
 	/*
 		rc.log.Trace().
-			Int("remInBatch", m.remainingInBatch).
-			Str("which", m.msg.Which().String()).
+			Str("which", which.String()).
 			Msg("Queueing outgoing message")
 	*/
-
-	which := m.msg.Which()
 
 	select {
 	case <-ctx.Done():
@@ -138,8 +118,7 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 
 	case rc.outQueue <- m:
 		rc.log.Trace().
-			Int("remInBatch", m.remainingInBatch).
-			Str("which", which.String()).
+			Str("which", which).
 			Msg("Queued outgoing message")
 		return nil
 
@@ -177,23 +156,20 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 			return err
 		}
 
-		if msg.rawSerMsg != nil {
-			/*
-				logEvent := rc.log.Debug()
-				msgRawData := msg.rawSerMsg.Arena().RawDataCopy()
-				for i, data := range msgRawData {
-					logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
-				}
-				logEvent.Msg("debug processIn")
-			*/
-
-			var rpcMsg types.Message
-			err = rpcMsg.ReadFromRoot(msg.rawSerMsg)
-			if err == nil {
-				err = v.processInMessageAlt(ctx, rc, rpcMsg, msg.rawSerMsg)
+		// Debug.
+		/*
+			logEvent := rc.log.Debug()
+			msgRawData := msg.rawSerMsg.Arena().RawDataCopy()
+			for i, data := range msgRawData {
+				logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
 			}
-		} else {
-			err = v.processInMessage(ctx, rc, msg)
+			logEvent.Msg("debug processIn")
+		*/
+
+		var rpcMsg types.Message
+		err = rpcMsg.ReadFromRoot(&msg.Msg)
+		if err == nil {
+			err = v.processInMessage(ctx, rc, rpcMsg, msg.Msg)
 		}
 
 		// Process input msg.
@@ -219,18 +195,13 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 				}
 			*/
 
-			err := c.send(ctx, *outMsg.msg, outMsg.remainingInBatch)
+			err := c.send(ctx, OutMsg{Msg: outMsg.serMsg})
+			outMsg.ackSent()
 			if err != nil {
 				return err
 			}
-			if outMsg.sentChan != nil {
-				close(outMsg.sentChan)
-			}
 
-			if outMsg.msg.rawSerMb != nil {
-				v.mbp.put(outMsg.msg.rawSerMb)
-				v.mp.put(outMsg.msg) // Transitional code
-			}
+			v.mbp.put(outMsg.serMsg)
 
 		case <-ctx.Done():
 			return context.Cause(ctx)

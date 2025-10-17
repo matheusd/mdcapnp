@@ -118,9 +118,7 @@ func (t *testVatNetwork) introduce(src conn, target conn) (introductionInfo, err
 	}
 
 	return introductionInfo{
-		// sendToRecipient: thirdPartyCapId{isStruct: true, st: serStruct{rawData: toRecProvId}},
 		sendToRecipientAlt: sendToRec.Reader(),
-		sendToTarget:       recipientId{isStruct: true, st: serStruct{rawData: toTargetProvId}},
 		sendToTargetAlt:    sendToTarget.Reader(),
 	}, nil
 }

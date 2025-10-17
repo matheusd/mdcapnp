@@ -265,6 +265,10 @@ func (s *Payload) CapTable() (res capnpser.GenericStructList[CapDescriptor], err
 
 type PayloadBuilder capnpser.StructBuilder
 
+func (b *PayloadBuilder) AsReader() Payload {
+	return Payload((*capnpser.StructBuilder)(b).Reader())
+}
+
 func (b *PayloadBuilder) SetContent(v capnpser.AnyPointerBuilder) error {
 	return (*capnpser.StructBuilder)(b).SetAnyPointer(payload_content_ptrField, v)
 }
@@ -641,7 +645,7 @@ func (w Message_Which) String() string {
 	case Message_Which_Accept:
 		return "accept"
 	case Message_Which_Disembargo:
-		return "accept"
+		return "disembargo"
 	default:
 		return fmt.Sprintf("unknown which %d", w)
 	}
@@ -704,6 +708,10 @@ func (s *Message) AsDisembargo() (res Disembargo, err error) {
 }
 
 type MessageBuilder capnpser.StructBuilder
+
+func (b *MessageBuilder) AsReader() Message {
+	return Message((*capnpser.StructBuilder)(b).Reader())
+}
 
 func (b *MessageBuilder) NewBoostrap() (sb BootstrapBuilder, err error) {
 	var structSize = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}

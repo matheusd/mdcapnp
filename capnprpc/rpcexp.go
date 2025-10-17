@@ -16,99 +16,6 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-type msgBuilder struct{} // Alias to a serializer MessageBuilder
-
-type capability struct { // Right type?
-	eid ExportId
-}
-
-type capPointer struct { // Alias to capnpser.CapPointer
-	index uint32
-}
-
-func (cp *capPointer) Index() uint32 { return cp.index }
-
-type serStruct struct { // Alias to capnpser.Struct
-	rawData []byte
-}
-
-type anyPointer struct { // Alias to capnpser.AnyPointer
-	isStruct     bool
-	st           serStruct
-	isCapPointer bool
-	cp           capPointer
-	isVoid       bool
-}
-
-func (ap *anyPointer) IsStruct() bool           { return ap.isStruct }
-func (ap *anyPointer) AsStruct() serStruct      { return ap.st }
-func (ap *anyPointer) IsCapPointer() bool       { return ap.isCapPointer }
-func (ap *anyPointer) AsCapPointer() capPointer { return ap.cp }
-func (ap *anyPointer) IsVoid() bool             { return ap.isVoid }
-
-type thirdPartyCapId anyPointer
-type provisionId anyPointer
-type recipientId anyPointer
-
-type introductionInfo struct {
-	sendToRecipientAlt capnpser.AnyPointer
-	// sendToRecipient    thirdPartyCapId
-	sendToTargetAlt capnpser.AnyPointer
-	sendToTarget    recipientId
-}
-
-type thirdPartyCapDescriptor struct {
-	id     thirdPartyCapId
-	vineId ExportId
-}
-
-type capDescriptor struct {
-	senderHosted     ExportId
-	senderPromise    ExportId
-	thirdPartyHosted thirdPartyCapDescriptor
-}
-
-func (cp *capDescriptor) IsSenderHosted() bool                        { return cp.senderHosted > 0 }
-func (cp *capDescriptor) AsSenderHosted() ExportId                    { return cp.senderHosted }
-func (cp *capDescriptor) IsSenderPromise() bool                       { return cp.senderPromise > 0 }
-func (cp *capDescriptor) AsSenderPromise() ExportId                   { return cp.senderPromise }
-func (cp *capDescriptor) hasExportId() bool                           { return cp.IsSenderHosted() || cp.IsSenderPromise() }
-func (cp *capDescriptor) exportId() ExportId                          { return cp.senderHosted + cp.senderPromise } // Only one will be set.
-func (cp *capDescriptor) IsThirdPartyHosted() bool                    { return cp.thirdPartyHosted.vineId > 0 }     // Asumes it is always set in this case.
-func (cp *capDescriptor) AsThirdPartyHosted() thirdPartyCapDescriptor { return cp.thirdPartyHosted }
-
-type payload struct {
-	content  anyPointer
-	capTable []capDescriptor
-}
-
-func (p *payload) Content() anyPointer       { return p.content }
-func (p *payload) CapTable() []capDescriptor { return p.capTable }
-
-type exception struct {
-	reason string
-	typ    int
-}
-
-type rpcReturn struct {
-	aid            AnswerId
-	isResults      bool
-	pay            payload
-	isException    bool
-	exc            exception
-	noFinishNeeded bool
-}
-
-func (r *rpcReturn) AnswerId() AnswerId   { return r.aid }
-func (r *rpcReturn) IsResults() bool      { return r.isResults }
-func (r *rpcReturn) AsResults() payload   { return r.pay }
-func (r *rpcReturn) NoFinishNeeded() bool { return r.noFinishNeeded }
-
-type promisedAnswer struct {
-	qid QuestionId
-	// transform
-}
-
 type messageTarget struct {
 	impCap  ImportId
 	pansQid QuestionId
@@ -117,196 +24,13 @@ type messageTarget struct {
 	isPromisedAnswer bool
 }
 
-type call struct {
-	qid                 QuestionId
-	target              messageTarget
-	iid                 uint64
-	mid                 uint16
-	params              payload
-	noPromisePipelining bool
+type capability struct { // Right type?
+	eid ExportId
 }
 
-func (c *call) NoPromisePipelining() bool { return c.noPromisePipelining }
-
-type bootstrap struct {
-	qid QuestionId
-}
-
-func (bt *bootstrap) QuestionId() QuestionId { return bt.qid }
-
-type finish struct {
-	qid QuestionId
-}
-
-func (f *finish) QuestionId() QuestionId { return f.qid }
-
-type resolve struct {
-	pid ExportId
-	cap capDescriptor
-}
-
-type disembargo struct {
-	target    messageTarget
-	isAccept  bool
-	isProvide bool
-	provide   QuestionId
-}
-
-type accept struct {
-	qid       QuestionId
-	provision provisionId
-	embargo   bool
-}
-
-type provide struct {
-	qid       QuestionId
-	target    messageTarget
-	recipient recipientId
-}
-
-type message_which int
-
-const (
-	message_which_bootstrap message_which = iota
-	message_which_return
-	message_which_call
-	message_which_finish
-	message_which_resolve
-	message_which_disembargo
-	message_which_accept
-	message_which_provide
-
-	message_which_rawRmb   message_which = 999998
-	message_which_testecho message_which = 999999
-)
-
-func (mw message_which) String() string {
-	switch mw {
-	case message_which_bootstrap:
-		return "bootstrap"
-	case message_which_return:
-		return "return"
-	case message_which_call:
-		return "call"
-	case message_which_finish:
-		return "finish"
-	case message_which_resolve:
-		return "resolve"
-	case message_which_disembargo:
-		return "disembargo"
-	case message_which_accept:
-		return "accept"
-	case message_which_provide:
-		return "provide"
-	default:
-		return "unknown"
-	}
-}
-
-type message struct { // RPC message type
-	//isBootstrap  bool
-	// isReturn bool
-	//isCall       bool
-	//isFinish     bool
-	//isResolve    bool
-	isDisembargo bool
-	isAccept     bool
-	isProvide    bool
-
-	//boot       bootstrap
-	// ret rpcReturn
-	//call       call
-	// finish     finish
-	//resolve    resolve
-	disembargo disembargo
-	accept     accept
-	// provide    provide
-
-	testEcho uint64 // Special test message.
-
-	rawSerBytes []byte
-	rawSerMb    *capnpser.MessageBuilder
-	rawSerMsg   *capnpser.Message
-}
-
-func (m *message) Which() message_which {
-	switch {
-	//case m.isBootstrap:
-	//	return message_which_bootstrap
-	// case m.isReturn:
-	//	return message_which_return
-	//case m.isCall:
-	//	return message_which_call
-	//case m.isFinish:
-	//	return message_which_finish
-	//case m.isResolve:
-	//	return message_which_resolve
-	case m.isDisembargo:
-		return message_which_disembargo
-	case m.isAccept:
-		return message_which_accept
-	case m.isProvide:
-		return message_which_provide
-	case m.testEcho > 0:
-		return message_which_testecho
-	case m.rawSerMb != nil:
-		return message_which_rawRmb
-	default:
-		panic("unknown message which")
-	}
-}
-func (m *message) ReadFromRoot(msg *capnpser.Message) error { return nil }
-
-// func (m *message) IsBootstrap() bool                        { return m.isBootstrap }
-// func (m *message) AsBootstrap() bootstrap                   { return m.boot }
-// func (m *message) IsReturn() bool      { return m.isReturn }
-// func (m *message) AsReturn() rpcReturn { return m.ret }
-
-// func (m *message) IsCall() bool                             { return m.isCall }
-// func (m *message) AsCall() call             { return m.call }
-// func (m *message) IsFinish() bool           { return m.isFinish }
-// func (m *message) AsFinish() finish         { return m.finish }
-// func (m *message) IsResolve() bool          { return m.isResolve }
-// func (m *message) AsResolve() resolve       { return m.resolve }
-func (m *message) IsDisembargo() bool       { return m.isDisembargo }
-func (m *message) AsDisembargo() disembargo { return m.disembargo }
-func (m *message) IsAccept() bool           { return m.isAccept }
-func (m *message) AsAccept() accept         { return m.accept }
-
-// func (m *message) IsProvide() bool          { return m.isProvide }
-// func (m *message) AsProvide() provide       { return m.provide }
-
-type messagePool struct {
-	p *sync.Pool
-}
-
-func (mp *messagePool) getForPayloadSize(extraPayloadSize int) *message {
-	// TODO: size the message based on the size of call args.
-	return mp.p.Get().(*message)
-}
-
-func (mp *messagePool) get() *message {
-	return mp.p.Get().(*message)
-}
-
-func (mp *messagePool) put(m *message) {
-	*m = message{}
-	mp.p.Put(m)
-}
-
-func newMessagePool() *messagePool {
-	return &messagePool{
-		p: &sync.Pool{
-			New: func() any {
-				return &message{}
-			},
-		},
-	}
-}
-
-type rpcMsgBuilder struct {
-	serMb *capnpser.MessageBuilder
-	mb    types.MessageBuilder
+type introductionInfo struct {
+	sendToRecipientAlt capnpser.AnyPointer
+	sendToTargetAlt    capnpser.AnyPointer
 }
 
 type messageBuilderPool struct {
@@ -318,17 +42,17 @@ func (mp *messageBuilderPool) getRawMessageBuilder() *capnpser.MessageBuilder {
 	return mp.p.Get().(*capnpser.MessageBuilder)
 }
 
-func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize int) (rpcMsgBuilder, error) {
+func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize int) (outMsg, error) {
 	// TODO: calculate the size hint.
 	serMb := mp.getRawMessageBuilder()
 	mb, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
-		return rpcMsgBuilder{}, err
+		return outMsg{}, err
 	}
-	return rpcMsgBuilder{serMb: serMb, mb: mb}, nil
+	return outMsg{serMsg: serMb, mb: mb}, nil
 }
 
-func (mp *messageBuilderPool) get() (rpcMsgBuilder, error) {
+func (mp *messageBuilderPool) get() (outMsg, error) {
 	return mp.getForPayloadSize(0)
 }
 
@@ -358,7 +82,7 @@ func newMessageBuilderPool() *messageBuilderPool {
 }
 
 type rpcCallMsgBuilder struct {
-	rpcMsgBuilder
+	outMsg
 	builder     capnpser.StructBuilder
 	isBootstrap bool
 }
@@ -562,10 +286,9 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability
 }
 
 type callReturnBuilder struct {
-	rc      *runningConn
-	payload payload
-	pb      types.PayloadBuilder
-	serMb   *capnpser.MessageBuilder // Root reply message builder
+	rc    *runningConn
+	pb    types.PayloadBuilder
+	serMb *capnpser.MessageBuilder // Root reply message builder
 }
 
 // readReturnCapTable returns the capTable from the payload.
@@ -583,10 +306,6 @@ func (crb *callReturnBuilder) readReturnCapTable() capnpser.GenericStructList[ty
 	res, _ := ret.AsResults()
 	capTable, _ := res.CapTable()
 	return capTable
-}
-
-func (crb *callReturnBuilder) setContent(content anyPointer) {
-	crb.payload.content = content
 }
 
 // TODO: Add crb.respondAsStruct()
@@ -613,6 +332,11 @@ func (crb *callReturnBuilder) respondAsPromise() (answerPromise, error) {
 	return answerPromise{rc: crb.rc, eid: eid}, nil
 }
 
+type exception struct { // TODO: improve.
+	typ    int
+	reason string
+}
+
 type callExceptionError interface {
 	ToException() exception
 }
@@ -631,10 +355,9 @@ func (err errUnimplemented) ToException() exception {
 }
 
 type callHandlerArgs struct {
-	iid    interfaceId
-	mid    methodId
-	params payload
-	rc     *runningConn
+	iid interfaceId
+	mid methodId
+	rc  *runningConn
 }
 
 // callHandler is the lowest handler for calls (including bootstrap).
@@ -659,11 +382,11 @@ type callable struct {
 	// pipelinable
 }
 
-type callParamsBuilder func(*msgBuilder) error
+type callParamsBuilder func(types.MessageBuilder) error
 
 type inMsg struct {
 	rc  *runningConn
-	msg message
+	msg *capnpser.Message
 }
 
 // To be generated from rpc.capnp
@@ -767,7 +490,6 @@ type export struct {
 	// Set when this is resolved to a third party imported cap.
 	thirdPartyRC           *runningConn
 	thirdPartyIid          ImportId
-	thirdPartyCapDescId    thirdPartyCapId
 	thirdPartyCapDescIdAlt capnpser.AnyPointer
 	thirdPartyVineId       ExportId
 	thirdPartyProvideQid   QuestionId

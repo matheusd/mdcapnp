@@ -1122,6 +1122,10 @@ func (mb *MessageBuilder) AllocateUnsafeRootRawBuilder(size WordCount) (rb Unsaf
 	return
 }
 
+// Serialize returns a serialized copy of the message.
+//
+// NOTE: this may be aliased into the message builder, meaning the contents of
+// this byte slice are only valid until the next modification of the message.
 func (mb *MessageBuilder) Serialize() ([]byte, error) {
 	if len(mb.state.FirstSeg) == 0 {
 		return nil, errMsgBuilderNoSegData

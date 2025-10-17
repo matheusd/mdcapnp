@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -62,30 +63,29 @@ func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
 func (th *testHarness) newTestConn() *testConn {
 	return &testConn{
 		th:          th,
-		sent:        make(chan message, 5),
+		sent:        make(chan *capnpser.MessageBuilder, 5),
 		sentResult:  make(chan error, 5),
 		fillReceive: make(chan testConnReceiver),
 	}
 }
 
 func (th *testHarness) twoVatsPipe(v1, v2 *testVat) (c1, c2 *testPipeConn) {
+	p1r, p1w := io.Pipe()
+	p2r, p2w := io.Pipe()
+
 	c1 = &testPipeConn{
-		remName:   v2.name,
-		remIndex:  v2.index,
-		nextOut:   make(chan *message, 1),
-		wroteOut:  make(chan struct{}, 1),
-		nextIn:    make(chan *message, 1),
-		inWritten: make(chan struct{}, 1),
-		recvMsg:   message{rawSerBytes: make([]byte, 0, 512)},
+		remName:  v2.name,
+		remIndex: v2.index,
+		w:        p1w,
+		r:        p2r,
+		inBuf:    make([]byte, 2048),
 	}
 	c2 = &testPipeConn{
-		remName:   v1.name,
-		remIndex:  v1.index,
-		nextIn:    c1.nextOut,
-		wroteOut:  c1.inWritten,
-		nextOut:   c1.nextIn,
-		inWritten: c1.wroteOut,
-		recvMsg:   message{rawSerBytes: make([]byte, 0, 512)},
+		remName:  v1.name,
+		remIndex: v1.index,
+		w:        p2w,
+		r:        p1r,
+		inBuf:    make([]byte, 2048),
 	}
 	return
 }
