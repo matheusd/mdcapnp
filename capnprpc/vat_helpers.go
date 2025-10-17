@@ -5,6 +5,8 @@
 package capnprpc
 
 import (
+	"errors"
+
 	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
 )
@@ -77,5 +79,85 @@ func (v *Vat) newResolve(promiseId ExportId) (rpcMsgBuilder rpcMsgBuilder, res t
 	}
 
 	err = res.SetPromiseId(promiseId)
+	return
+}
+
+func (v *Vat) newProvide(recIdToCopy capnpser.AnyPointer) (rpcMsgBuilder rpcMsgBuilder, res types.ProvideBuilder, err error) {
+	rpcMsgBuilder, err = v.mbp.get()
+	if err != nil {
+		return
+	}
+
+	res, err = rpcMsgBuilder.mb.NewProvide()
+	if err != nil {
+		return
+	}
+
+	var recData capnpser.AnyPointerBuilder
+	recData, err = capnpser.DeepCopy(recIdToCopy, rpcMsgBuilder.serMb)
+	if err != nil {
+		return
+	}
+	if err = res.SetRecipient(recData); err != nil {
+		return
+	}
+
+	return
+}
+
+func (v *Vat) newAccept(acceptQid QuestionId, provId capnpser.AnyPointer, embargo bool) (rpcMsgBuilder rpcMsgBuilder, acc types.AcceptBuilder, err error) {
+	rpcMsgBuilder, err = v.mbp.get()
+	if err != nil {
+		return
+	}
+
+	acc, err = rpcMsgBuilder.mb.NewAccept()
+	if err != nil {
+		return
+	}
+
+	if err = acc.SetQuestionId(acceptQid); err != nil {
+		return
+	}
+	if err = acc.SetEmbargo(embargo); err != nil {
+		return
+	}
+	provIdCopy, err := capnpser.DeepCopy(provId, rpcMsgBuilder.serMb)
+	if err != nil {
+		return
+	}
+	err = acc.SetProvision(provIdCopy)
+	return
+}
+
+func (v *Vat) newDisembargo(target messageTarget) (rpcMsgBuilder rpcMsgBuilder, dis types.DisembargoBuilder, err error) {
+	rpcMsgBuilder, err = v.mbp.get()
+	if err != nil {
+		return
+	}
+
+	dis, err = rpcMsgBuilder.mb.NewDisembargo()
+	if err != nil {
+		return
+	}
+
+	var tgt types.MessageTargetBuilder
+	tgt, err = dis.NewTarget()
+	if err != nil {
+		return
+	}
+
+	switch {
+	case target.isImportedCap:
+		err = tgt.SetImportedCap(target.impCap)
+	case target.isPromisedAnswer:
+		var pans types.PromisedAnswerBuilder
+		pans, err = tgt.NewPromisedAnswer()
+		if err == nil {
+			err = pans.SetQuestionId(target.pansQid)
+		}
+	default:
+		err = errors.New("unhandled case in newDisembargo")
+	}
 	return
 }

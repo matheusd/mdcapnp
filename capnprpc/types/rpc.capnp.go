@@ -56,6 +56,10 @@ const (
 	messageTarget_union_ptrField             = 0
 )
 
+var (
+	messageTarget_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+)
+
 type MessageTarget capnpser.Struct
 
 func (s *MessageTarget) Which() MessageTarget_Which {
@@ -143,7 +147,7 @@ func (b *CallBuilder) SetMethodId(v uint16) error {
 }
 
 func (b *CallBuilder) NewTarget() (sb MessageTargetBuilder, err error) {
-	var structSize = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+	var structSize = messageTarget_size
 	const ptrFieldIndex = 0
 
 	var nsb capnpser.StructBuilder
@@ -437,14 +441,187 @@ func (b *ResolveBuilder) NewException() (sb ExceptionBuilder, err error) {
 	return
 }
 
+const (
+	provide_questionId_dataField      = 0
+	provide_questionId_dataFieldShift = capnpser.Uint32FieldLo
+	provide_target_ptrField           = 0
+	provide_recipient_ptrField        = 1
+)
+
+var (
+	provide_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 2}
+)
+
+type Provide capnpser.Struct
+
+func (s *Provide) QuestionId() QuestionId {
+	return QuestionId((*capnpser.Struct)(s).Uint32(provide_questionId_dataField, provide_questionId_dataFieldShift))
+}
+
+func (s *Provide) Target() (res MessageTarget, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(provide_target_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Provide) Recipient() (res AnyPointer, err error) {
+	err = (*capnpser.Struct)(s).ReadAnyPointer(provide_recipient_ptrField, &res)
+	return
+}
+
+type ProvideBuilder capnpser.StructBuilder
+
+func (s *ProvideBuilder) AsReader() Provide {
+	return Provide((*capnpser.StructBuilder)(s).Reader())
+}
+
+func (b *ProvideBuilder) SetQuestionId(v QuestionId) error {
+	return (*capnpser.StructBuilder)(b).SetUint32(provide_questionId_dataField, provide_questionId_dataFieldShift, uint32(v))
+}
+
+func (b *ProvideBuilder) NewTarget() (sb MessageTargetBuilder, err error) {
+	var structSize = messageTarget_size
+	return capnpser.NewStructField[ProvideBuilder, MessageTargetBuilder](*b, provide_target_ptrField, structSize)
+}
+
+func (b *ProvideBuilder) SetRecipient(v capnpser.AnyPointerBuilder) (err error) {
+	return (*capnpser.StructBuilder)(b).SetAnyPointer(provide_recipient_ptrField, v)
+}
+
+const (
+	accept_questionId_dataField      = 0
+	accept_questionId_dataFieldShift = capnpser.Uint32FieldLo
+	accept_provisionId_ptrField      = 0 // 1 in v2
+	accept_embargo_dataField         = 0
+	accept_embargo_bit               = 33
+)
+
+var (
+	accept_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1 /* 2 in v2*/}
+)
+
+type Accept capnpser.Struct
+
+func (s *Accept) QuestionId() QuestionId {
+	return QuestionId((*capnpser.Struct)(s).Uint32(accept_questionId_dataField, accept_questionId_dataFieldShift))
+}
+
+func (s *Accept) Provision() (res AnyPointer, err error) {
+	err = (*capnpser.Struct)(s).ReadAnyPointer(accept_provisionId_ptrField, &res)
+	return
+}
+
+func (s *Accept) Embargo() bool {
+	return (*capnpser.Struct)(s).Bool(accept_embargo_dataField, accept_embargo_bit)
+}
+
+type AcceptBuilder capnpser.StructBuilder
+
+func (b *AcceptBuilder) SetQuestionId(v QuestionId) error {
+	return (*capnpser.StructBuilder)(b).SetUint32(accept_questionId_dataField, accept_questionId_dataFieldShift, uint32(v))
+}
+
+func (b *AcceptBuilder) SetProvision(v capnpser.AnyPointerBuilder) (err error) {
+	return (*capnpser.StructBuilder)(b).SetAnyPointer(accept_provisionId_ptrField, v)
+}
+
+func (b *AcceptBuilder) SetEmbargo(v bool) error {
+	return (*capnpser.StructBuilder)(b).SetBool(accept_embargo_dataField, accept_embargo_bit, v)
+}
+
+type Disembargo_EmbargoId uint32
+
+type Disembargo_Which int
+
+const (
+	Disembargo_Which_SenderLoopback   Disembargo_Which = 1
+	Disembargo_Which_ReceiverLoopback Disembargo_Which = 2
+	Disembargo_Which_Accept           Disembargo_Which = 3
+	Disembargo_Which_Provide          Disembargo_Which = 4
+
+	disembargo_target_ptrField        = 0
+	disembargo_union_dataField        = 0
+	disembargo_union_dataShift        = capnpser.Uint16FieldShift0
+	disembargo_unionContent_dataShift = capnpser.Uint32FieldHi
+)
+
+var (
+	disembargo_size = capnpser.StructSize{DataSectionSize: 1, PointerSectionSize: 1}
+)
+
+type Disembargo capnpser.Struct
+
+func (s *Disembargo) Target() (res MessageTarget, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(disembargo_target_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Disembargo) Which() Disembargo_Which {
+	return Disembargo_Which((*capnpser.Struct)(s).Uint16(disembargo_union_dataField, disembargo_union_dataShift))
+}
+
+func (s *Disembargo) AsSenderLoopback() Disembargo_EmbargoId {
+	return Disembargo_EmbargoId((*capnpser.Struct)(s).Uint32(disembargo_union_dataField, disembargo_unionContent_dataShift))
+}
+
+func (s *Disembargo) AsReceiverLoopback() Disembargo_EmbargoId {
+	return Disembargo_EmbargoId((*capnpser.Struct)(s).Uint32(disembargo_union_dataField, disembargo_unionContent_dataShift))
+}
+
+func (s *Disembargo) AsProvide() Disembargo_EmbargoId {
+	return Disembargo_EmbargoId((*capnpser.Struct)(s).Uint32(disembargo_union_dataField, disembargo_unionContent_dataShift))
+}
+
+type DisembargoBuilder capnpser.StructBuilder
+
+func (b *DisembargoBuilder) NewTarget() (res MessageTargetBuilder, err error) {
+	var structSize = messageTarget_size
+	return capnpser.NewStructField[DisembargoBuilder, MessageTargetBuilder](*b, disembargo_target_ptrField, structSize)
+}
+
+func (b *DisembargoBuilder) SetSenderLoopback(v Disembargo_EmbargoId) (err error) {
+	const unionValue = uint16(Disembargo_Which_SenderLoopback)
+	err = (*capnpser.StructBuilder)(b).SetUint32(disembargo_union_dataField, disembargo_unionContent_dataShift, uint32(v))
+	if err == nil {
+		err = (*capnpser.StructBuilder)(b).SetUint16(disembargo_union_dataField, disembargo_union_dataShift, unionValue)
+	}
+	return
+}
+
+func (b *DisembargoBuilder) SetReceiverLoopback(v Disembargo_EmbargoId) (err error) {
+	const unionValue = uint16(Disembargo_Which_ReceiverLoopback)
+	err = (*capnpser.StructBuilder)(b).SetUint32(disembargo_union_dataField, disembargo_unionContent_dataShift, uint32(v))
+	if err == nil {
+		err = (*capnpser.StructBuilder)(b).SetUint16(disembargo_union_dataField, disembargo_union_dataShift, unionValue)
+	}
+	return
+}
+
+func (b *DisembargoBuilder) SetAccept() (err error) {
+	const unionValue = uint16(Disembargo_Which_Accept)
+	err = (*capnpser.StructBuilder)(b).SetUint16(disembargo_union_dataField, disembargo_union_dataShift, unionValue)
+	return
+}
+
+func (b *DisembargoBuilder) SetProvide(v Disembargo_EmbargoId) (err error) {
+	const unionValue = uint16(Disembargo_Which_Provide)
+	err = (*capnpser.StructBuilder)(b).SetUint32(disembargo_union_dataField, disembargo_unionContent_dataShift, uint32(v))
+	if err == nil {
+		err = (*capnpser.StructBuilder)(b).SetUint16(disembargo_union_dataField, disembargo_union_dataShift, unionValue)
+	}
+	return
+}
+
 type Message_Which int
 
 const (
-	Message_Which_Call      Message_Which = 2
-	Message_Which_Return    Message_Which = 3
-	Message_Which_Finish    Message_Which = 4
-	Message_Which_Resolve   Message_Which = 5
-	Message_Which_Bootstrap Message_Which = 8
+	Message_Which_Call       Message_Which = 2
+	Message_Which_Return     Message_Which = 3
+	Message_Which_Finish     Message_Which = 4
+	Message_Which_Resolve    Message_Which = 5
+	Message_Which_Bootstrap  Message_Which = 8
+	Message_Which_Provide    Message_Which = 10
+	Message_Which_Accept     Message_Which = 11
+	Message_Which_Disembargo Message_Which = 13
 )
 
 func (w Message_Which) String() string {
@@ -459,6 +636,12 @@ func (w Message_Which) String() string {
 		return "resolve"
 	case Message_Which_Bootstrap:
 		return "bootstrap"
+	case Message_Which_Provide:
+		return "provide"
+	case Message_Which_Accept:
+		return "accept"
+	case Message_Which_Disembargo:
+		return "accept"
 	default:
 		return fmt.Sprintf("unknown which %d", w)
 	}
@@ -481,27 +664,42 @@ func (s *Message) ReadFromRoot(msg *capnpser.Message) error {
 }
 
 func (s *Message) AsBootstrap() (res Bootstrap, err error) {
-	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
 	return
 }
 
 func (s *Message) AsCall() (res Call, err error) {
-	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
 	return
 }
 
 func (s *Message) AsFinish() (res Finish, err error) {
-	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
 	return
 }
 
 func (s *Message) AsReturn() (res Return, err error) {
-	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
 	return
 }
 
 func (s *Message) AsResolve() (res Resolve, err error) {
-	err = (*capnpser.Struct)(s).ReadStruct(messageTarget_union_ptrField, (*capnpser.Struct)(&res))
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Message) AsProvide() (res Provide, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Message) AsAccept() (res Accept, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
+	return
+}
+
+func (s *Message) AsDisembargo() (res Disembargo, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(message_union_ptrField, (*capnpser.Struct)(&res))
 	return
 }
 
@@ -555,6 +753,27 @@ func (b *MessageBuilder) NewResolve() (sb ResolveBuilder, err error) {
 	nsb, err = (*capnpser.StructBuilder)(b).NewStructAsUnionValue(messageTarget_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
 	sb = ResolveBuilder(nsb)
 	return
+}
+
+func (b *MessageBuilder) NewProvide() (sb ProvideBuilder, err error) {
+	var structSize = provide_size
+	const unionValue = uint16(Message_Which_Provide)
+
+	return capnpser.NewStructAsUnionValueField[MessageBuilder, ProvideBuilder](*b, message_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
+}
+
+func (b *MessageBuilder) NewAccept() (sb AcceptBuilder, err error) {
+	var structSize = accept_size
+	const unionValue = uint16(Message_Which_Accept)
+
+	return capnpser.NewStructAsUnionValueField[MessageBuilder, AcceptBuilder](*b, message_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
+}
+
+func (b *MessageBuilder) NewDisembargo() (sb DisembargoBuilder, err error) {
+	var structSize = accept_size
+	const unionValue = uint16(Message_Which_Disembargo)
+
+	return capnpser.NewStructAsUnionValueField[MessageBuilder, DisembargoBuilder](*b, message_union_ptrField, structSize, message_union_dataField, message_union_dataFieldShift, unionValue)
 }
 
 func NewRootMessageBuilder(mb *capnpser.MessageBuilder) (MessageBuilder, error) {

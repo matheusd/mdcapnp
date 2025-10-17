@@ -453,20 +453,18 @@ type recvdThirdPartyCapDesc struct {
 // copyThirdPartyCapDesc copies a thirdPartyCapDescriptor received in a message
 // into a temp buffer.
 func (v *Vat) copyThirdPartyCapDesc(tpcd types.ThirdPartyCapDescriptor) (recvdThirdPartyCapDesc, error) {
+	tpcdId, err := tpcd.Id()
+	if err != nil {
+		return recvdThirdPartyCapDesc{}, err
+	}
 	mb := v.mbp.getRawMessageBuilder()
-	err := capnpser.DeepCopyAndSetRoot(capnpser.StructToAnyPointer(tpcd), mb)
+	tpcdCopy, err := capnpser.DeepCopy(tpcdId, mb)
 	if err != nil {
 		v.mbp.put(mb)
 		return recvdThirdPartyCapDesc{}, err
 	}
 
-	msg := mb.MessageReader()
-	root, err := msg.NonStdRootAsAnyPointer()
-	if err != nil {
-		v.mbp.put(mb)
-		return recvdThirdPartyCapDesc{}, err
-	}
-	return recvdThirdPartyCapDesc{mb: mb, tpToContact: root}, nil
+	return recvdThirdPartyCapDesc{mb: mb, tpToContact: tpcdCopy.Reader()}, nil
 }
 
 func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineStep,
@@ -511,18 +509,21 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 		return errTooManyOpenQuestions
 	}
 
+	// In the future, this could be dynamically determined, because
+	// the local vat can know whether there are pending pipelined
+	// calls or not.
+	embargo := true
+
 	// TODO: finalizer???
 	q := question{weakStep: weak.Make(step)}
 	rc.questions.set(acceptQid, q)
-	accept := accept{
-		qid:       acceptQid,
-		provision: provId,
-
-		// In the future, this could be dynamically determined, because
-		// the local vat can know whether there are pending pipelined
-		// calls or not.
-		embargo: true,
-	}
+	rpcAccept, _, err := v.newAccept(acceptQid, provId, embargo)
+	/*
+		accept := accept{
+			qid:       acceptQid,
+			provision: provId,
+		}
+	*/
 
 	rc.log.Debug().
 		Int("qid", int(acceptQid)).
@@ -542,7 +543,7 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 	// performance for conns, because the conns to both Bob and Carol are
 	// locked here. We assume 3PH is rare enough that this won't be
 	// significant.
-	if err := v.sendAccept(ctx, rc, accept); err != nil {
+	if err := v.sendAccept(ctx, rc, rpcAccept); err != nil {
 		return err
 	}
 
@@ -563,7 +564,7 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 			// the Return was for a remote promise and that remote
 			// promise has now resolved to a third party.
 			disembargoTarget.isImportedCap = true
-			disembargoTarget.impcap = ov.iid
+			disembargoTarget.impCap = ov.iid
 			v.log.Info().
 				Int("iid", int(ov.iid)).
 				Str("src", srcConn.String()).
@@ -574,7 +575,7 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 			// The Return (for a promised answer) already signalled
 			// that the returned cap is in a third party.
 			disembargoTarget.isPromisedAnswer = true
-			disembargoTarget.pans.qid = ov.qid
+			disembargoTarget.pansQid = ov.qid
 			v.log.Info().
 				Int("srcQid", int(ov.qid)).
 				Str("src", srcConn.String()).
@@ -598,7 +599,7 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 
 	// If accept did not signal existence of embargoed pipelined calls,
 	// Disembargo isn't needed.
-	if !accept.embargo {
+	if !embargo {
 		return nil
 	}
 
@@ -606,11 +607,22 @@ func (v *Vat) resolveThirdPartyCapForStep(ctx context.Context, step *pipelineSte
 	// all the way to the third party. This will make the third party
 	// process the calls sent directly from the local vat (as opposed to
 	// those proxied by the original conn).
-	dis := &message{isDisembargo: true, disembargo: disembargo{ // TODO: fetch from v.mp
-		isAccept: true,
-		target:   disembargoTarget,
-	}}
-	if err := srcConn.queue(ctx, singleMsgBatch(dis)); err != nil {
+	disRpc, dis, err := v.newDisembargo(disembargoTarget)
+	if err != nil {
+		return err
+	}
+	if err := dis.SetAccept(); err != nil {
+		return err
+	}
+	/*
+		dis := &message{isDisembargo: true, disembargo: disembargo{ // TODO: fetch from v.mp
+			isAccept: true,
+			target:   disembargoTarget,
+		}}
+	*/
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = disRpc.serMb
+	if err := srcConn.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
 		return err
 	}
 
@@ -725,14 +737,15 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res types.Res
 	})
 }
 
-func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide) error {
-	aid := AnswerId(prov.qid)
-	if rc.answers.has(aid) {
-		return fmt.Errorf("remote already asked question %d", aid)
-	}
-
+func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov types.Provide) error {
 	if v.cfg.net == nil {
 		return err3PHWithoutVatNetwork
+	}
+
+	provQid := prov.QuestionId()
+	aid := AnswerId(provQid)
+	if rc.answers.has(aid) {
+		return fmt.Errorf("remote already asked question %d", aid)
 	}
 
 	// Build value that will hold the shared cap data.
@@ -743,32 +756,53 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 
 	logMsg := rc.log.Debug()
 
+	target, err := prov.Target()
+	if err != nil {
+		return err
+	}
+
 	// Check if the target exists exported to the caller.
-	if prov.target.isImportedCap {
-		capExp, ok := rc.exports.get(ExportId(prov.target.impcap))
+	switch target.Which() {
+	case types.MessageTarget_Which_ImportedCap:
+		impCap := target.AsImportedCap()
+		capExp, ok := rc.exports.get(ExportId(impCap))
 		if !ok {
-			return fmt.Errorf("export not found %d", prov.target.impcap)
+			return fmt.Errorf("export not found %d", impCap)
 		}
 
 		expAc.handler = capExp.handler
-		logMsg = logMsg.Str("typ", "importedCap").Int("iid", int(prov.target.impcap))
-	} else if prov.target.isPromisedAnswer {
-		if !rc.answers.has(AnswerId(prov.target.pans.qid)) {
-			return fmt.Errorf("answer not found %d", prov.target.pans.qid)
+		logMsg = logMsg.Str("typ", "importedCap").Int("iid", int(impCap))
+
+	case types.MessageTarget_Which_PromisedAnswer:
+		pans, err := target.AsPromisedAnswer()
+		if err != nil {
+			return err
+		}
+		pansQid := pans.QuestionId()
+
+		if !rc.answers.has(AnswerId(pansQid)) {
+			return fmt.Errorf("answer not found %d", pansQid)
 		}
 
-		logMsg = logMsg.Str("typ", "promisedAnswer").Int("iid", int(prov.target.pans.qid))
+		logMsg = logMsg.Str("typ", "promisedAnswer").Int("iid", int(pansQid))
 
 		// TODO: support
 		return fmt.Errorf("unsupported Provide for promised answer")
-	} else {
+
+	default:
 		return errors.New("unknown message target")
 	}
 
 	// TODO: Ask client code if it wants to modify the capability somehow
 	// for this accept (e.g. impose limits, change handler, etc)?
 
-	expAc.id = v.cfg.net.recipientIdUniqueKey(prov.recipient)
+	// Get a unique id for this recipient (will be used to match the
+	// Accept).
+	provRec, err := prov.Recipient()
+	if err != nil {
+		return err
+	}
+	expAc.id = v.cfg.net.recipientIdUniqueKey(provRec)
 
 	rc.answers.set(aid, answer{typ: answerTypeProvide})
 
@@ -786,13 +820,17 @@ func (v *Vat) processProvide(ctx context.Context, rc *runningConn, prov provide)
 	return nil
 }
 
-func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) error {
-	aid := AnswerId(ac.qid)
+func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac types.Accept) error {
+	aid := AnswerId(ac.QuestionId())
 	if rc.answers.has(aid) {
 		return fmt.Errorf("remote already asked question %d", aid)
 	}
 
-	acResult, err := v.wasExpectingAccept(ctx, ac.provision)
+	provId, err := ac.Provision()
+	if err != nil {
+		return fmt.Errorf("error reading Accept.Provision: %v", err)
+	}
+	acResult, err := v.wasExpectingAccept(ctx, provId)
 	if err != nil {
 		return fmt.Errorf("received unexpected accept: %v", err)
 	}
@@ -818,7 +856,7 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	rc.log.Debug().
 		Hex("provisionId", acResult.id[:]).
 		Int("eid", int(eid)).
-		Int("qid", int(ac.qid)).
+		Int("qid", int(aid)).
 		Str("src", srcConn.String()).
 		Msg("Providing shared cap to conn")
 
@@ -853,41 +891,56 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac accept) err
 	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
-func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis disembargo) error {
-	if !dis.target.isImportedCap {
+func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis types.Disembargo) error {
+	target, err := dis.Target()
+	if err != nil {
+		return err
+	}
+
+	if target.Which() != types.MessageTarget_Which_ImportedCap {
 		return fmt.Errorf("only disembargos of exports supported for now") // FIXME
 	}
 
-	// rc.log.Warn().Any("xx", fmt.Sprintf("%#v", rc.exports)).Int("bbb", int(dis.target.impcap)).Msgf("XXXXXX %x", dis.target.impcap)
-	exp, hasExp := rc.exports.get(ExportId(dis.target.impcap))
+	impCap := target.AsImportedCap()
+
+	exp, hasExp := rc.exports.get(ExportId(impCap))
 	if !hasExp {
-		return errDisembargoAcceptUnknownExport(dis.target.impcap)
+		return errDisembargoAcceptUnknownExport(impCap)
 	}
 	if exp.typ != exportTypeThirdPartyExport {
 		return fmt.Errorf("received for disembargo on export %d that is not a third party export",
-			dis.target.impcap)
+			impCap)
 	}
 
 	// Forward disembargo to third party.
-	disProvide := &message{isDisembargo: true, disembargo: disembargo{ // TODO: fetch from v.mp
-		isProvide: true,
-		provide:   exp.thirdPartyProvideQid,
-	}}
-	if err := exp.thirdPartyRC.queue(ctx, singleMsgBatch(disProvide)); err != nil {
+	rpcMsgBuilder, err := v.mbp.get()
+	if err != nil {
+		return err
+	}
+	fwdDis, err := rpcMsgBuilder.mb.NewDisembargo()
+	if err != nil {
+		return err
+	}
+	fwdDis.SetProvide(types.Disembargo_EmbargoId(exp.thirdPartyProvideQid))
+
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	if err := exp.thirdPartyRC.queue(ctx, singleMsgBatch(rpcMsg)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (v *Vat) processDisembargoProvide(ctx context.Context, rc *runningConn, dis disembargo) error {
-	ans, ok := rc.answers.get(AnswerId(dis.provide))
+func (v *Vat) processDisembargoProvide(ctx context.Context, rc *runningConn, dis types.Disembargo) error {
+	ansId := AnswerId(dis.AsProvide())
+	ans, ok := rc.answers.get(ansId)
 	if !ok {
-		return fmt.Errorf("received disembargo.provide for unknown question id %d", dis.provide)
+		return fmt.Errorf("received disembargo.provide for unknown question id %d", ansId)
 	}
 
 	if ans.typ != answerTypeProvide {
-		return fmt.Errorf("received disembargo.provide for answer %d that is not provide", dis.provide)
+		return fmt.Errorf("received disembargo.provide for answer %d that is not provide", ansId)
 	}
 
 	// TODO: answer has to track the resulting conn and export id of the
@@ -905,12 +958,13 @@ func (v *Vat) processDisembargoProvide(ctx context.Context, rc *runningConn, dis
 	return nil
 }
 
-func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis disembargo) error {
-	if dis.isAccept {
+func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis types.Disembargo) error {
+	switch dis.Which() {
+	case types.Disembargo_Which_Accept:
 		return v.processDisembargoAccept(ctx, rc, dis)
-	} else if dis.isProvide {
+	case types.Disembargo_Which_Provide:
 		return v.processDisembargoProvide(ctx, rc, dis)
-	} else {
+	default:
 		return errors.New("unknown disembargo action")
 	}
 }
@@ -960,6 +1014,27 @@ func (v *Vat) processInMessageAlt(ctx context.Context, rc *runningConn, msg type
 			err = v.processResolve(ctx, rc, res)
 		}
 
+	case types.Message_Which_Provide:
+		var res types.Provide
+		res, err = msg.AsProvide()
+		if err == nil {
+			err = v.processProvide(ctx, rc, res)
+		}
+
+	case types.Message_Which_Accept:
+		var res types.Accept
+		res, err = msg.AsAccept()
+		if err == nil {
+			err = v.processAccept(ctx, rc, res)
+		}
+
+	case types.Message_Which_Disembargo:
+		var res types.Disembargo
+		res, err = msg.AsDisembargo()
+		if err == nil {
+			err = v.processDisembargo(ctx, rc, res)
+		}
+
 	default:
 		err = fmt.Errorf("unknown Message type %d", which)
 	}
@@ -990,12 +1065,6 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg message
 
 	var err error
 	switch {
-	case msg.IsProvide():
-		err = v.processProvide(ctx, rc, msg.AsProvide())
-	case msg.IsAccept():
-		err = v.processAccept(ctx, rc, msg.AsAccept())
-	case msg.IsDisembargo():
-		err = v.processDisembargo(ctx, rc, msg.AsDisembargo())
 	case msg.testEcho != 0:
 		echo := v.mp.get()
 		*echo = msg
@@ -1153,16 +1222,30 @@ func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, e
 
 	switch resolution.typ {
 	case exportTypePromise:
-		err = capDesc.SetSenderPromise(exp.resolvedToExport)
+		if err := capDesc.SetSenderPromise(exp.resolvedToExport); err != nil {
+			return err
+		}
 	case exportTypeLocallyHosted:
-		err = capDesc.SetSenderHosted(exp.resolvedToExport)
+		if err := capDesc.SetSenderHosted(exp.resolvedToExport); err != nil {
+			return err
+		}
 	case exportTypeThirdPartyExport:
 		var tpcd types.ThirdPartyCapDescriptorBuilder
-		tpcd, err = capDesc.NewThirdPartyHosted()
-		if err == nil {
-			tpcd.SetVineId(resolution.thirdPartyVineId)
-			// err = tpcd.SetId(resolution.thirdPartyCapDescId,)
+		if tpcd, err = capDesc.NewThirdPartyHosted(); err != nil {
+			return err
 		}
+		tpcd.SetVineId(resolution.thirdPartyVineId)
+
+		// Copy the thirdPartyDesc to the outbound resolve
+		// message.
+		thirdPartyCapObj, err := capnpser.DeepCopy(resolution.thirdPartyCapDescIdAlt, rpcMsgBuilder.serMb)
+		if err != nil {
+			return err
+		}
+		if err := tpcd.SetId(thirdPartyCapObj); err != nil {
+			return err
+		}
+		// err = tpcd.SetId(resolution.thirdPartyCapDescId,)
 	default:
 		return fmt.Errorf("unknown resolution type %s", resolution.typ)
 	}
@@ -1172,12 +1255,35 @@ func (v *Vat) queueResolve(ctx context.Context, rc *runningConn, eid ExportId, e
 	return rc.queue(ctx, singleMsgBatch(rpcMsg))
 }
 
-func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error {
-	msg := &message{ // TODO: fetch from v.mp
-		isProvide: true,
-		provide:   p,
+func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, rpcMsgBuilder rpcMsgBuilder, prov types.ProvideBuilder) error {
+	// Track the provider qid and target.
+	var impCap types.ImportId
+	var pansQid types.QuestionId
+	var isImpCap bool
+
+	pr := prov.AsReader()
+	target, err := pr.Target()
+	if err != nil {
+		return err
 	}
-	outMsg := singleMsgBatch(msg)
+	qid := pr.QuestionId()
+	switch target.Which() {
+	case types.MessageTarget_Which_ImportedCap:
+		impCap = target.AsImportedCap()
+		isImpCap = true
+	case types.MessageTarget_Which_PromisedAnswer:
+		pans, err := target.AsPromisedAnswer()
+		if err != nil {
+			return err
+		}
+		pansQid = pans.QuestionId()
+	default:
+		return errors.New("unhandled case in sendProvide")
+	}
+
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = rpcMsgBuilder.serMb
+	outMsg := singleMsgBatch(rpcMsg)
 	outMsg.wantSentAck()
 
 	if err := rc.queue(ctx, outMsg); err != nil {
@@ -1192,24 +1298,25 @@ func (v *Vat) sendProvide(ctx context.Context, rc *runningConn, p provide) error
 		return err
 	}
 
-	if p.target.isImportedCap {
+	if isImpCap {
 		rc.log.Debug().
-			Int("qid", int(p.qid)).
-			Int("iid", int(p.target.impcap)).
+			Int("qid", int(qid)).
+			Int("iid", int(impCap)).
 			Msg("Sent provide for imported cap")
 	} else {
 		rc.log.Debug().
-			Int("qid", int(p.qid)).
-			Int("pans", int(p.target.pans.qid)).
+			Int("qid", int(qid)).
+			Int("pans", int(pansQid)).
 			Msg("Sent provide for promised answer")
 	}
 
 	return nil
 }
 
-func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept accept) error {
-	msg := &message{isAccept: true, accept: accept} // TODO: fetch from v.mp
-	outMsg := singleMsgBatch(msg)
+func (v *Vat) sendAccept(ctx context.Context, rc *runningConn, accept rpcMsgBuilder) error {
+	rpcMsg := v.mp.get()
+	rpcMsg.rawSerMb = accept.serMb
+	outMsg := singleMsgBatch(rpcMsg)
 	outMsg.wantSentAck()
 
 	if err := rc.queue(ctx, outMsg); err != nil {

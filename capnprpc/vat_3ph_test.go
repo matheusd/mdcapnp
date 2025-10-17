@@ -33,6 +33,19 @@ func (nonce testProvisionIdNonce) encodeProvisionFor(remoteId testVatId) []byte 
 	return res
 }
 
+func (nonce testProvisionIdNonce) encodeProvisionAsAnyPtr(remoteId testVatId) capnpser.AnyPointer {
+	bytes := nonce.encodeProvisionFor(remoteId)
+	mb, err := capnpser.NewMessageBuilder(capnpser.DefaultSimpleSingleAllocator)
+	if err != nil {
+		panic(err)
+	}
+	res, err := mb.CopyToNewByteList(bytes)
+	if err != nil {
+		panic(err)
+	}
+	return res.Reader()
+}
+
 func newTestProvisionIdNonce() testProvisionIdNonce {
 	return testProvisionIdNonce(rand.Uint64())
 }
@@ -99,35 +112,40 @@ func (t *testVatNetwork) introduce(src conn, target conn) (introductionInfo, err
 	if err != nil {
 		return introductionInfo{}, err
 	}
+	sendToTarget, err := mb.CopyToNewByteList(toTargetProvId)
+	if err != nil {
+		return introductionInfo{}, err
+	}
 
 	return introductionInfo{
 		// sendToRecipient: thirdPartyCapId{isStruct: true, st: serStruct{rawData: toRecProvId}},
-		sendToRecipientAlt: sendToRec,
+		sendToRecipientAlt: sendToRec.Reader(),
 		sendToTarget:       recipientId{isStruct: true, st: serStruct{rawData: toTargetProvId}},
+		sendToTargetAlt:    sendToTarget.Reader(),
 	}, nil
 }
 
 func (t *testVatNetwork) connectToIntroduced(ctx context.Context, localVat *Vat,
-	introducer conn, tcpd capnpser.AnyPointer) (conn, provisionId, error) {
+	introducer conn, tcpd capnpser.AnyPointer) (conn, capnpser.AnyPointer, error) {
 
 	// ProvisionId that Bob sent to Alice.
 	provId, err := testProvisionIdFromAnyPointerBytes(tcpd) // testProvisionIdFromBytes(tcpd.id.st.rawData)
 	if err != nil {
-		return nil, provisionId{}, err
+		return nil, capnpser.AnyPointer{}, fmt.Errorf("connectToIntroduced invalid provisionId: %v", err)
 	}
 	remoteVat, ok := t.vatIdToTestVat[provId.remoteId]
 	if !ok {
-		return nil, provisionId{}, fmt.Errorf("could not find vat with remoteId %d", provId.remoteId)
+		return nil, capnpser.AnyPointer{}, fmt.Errorf("could not find vat with remoteId %d", provId.remoteId)
 	}
 
 	localTestVat, ok := t.vatToTestVat[localVat]
 	if !ok { // Should not happen.
-		return nil, provisionId{}, fmt.Errorf("bug: could not find local vat in network")
+		return nil, capnpser.AnyPointer{}, fmt.Errorf("bug: could not find local vat in network")
 	}
 
 	// ProvisionId that Alice sends to Carol. Replace with Alice's Id so
 	// that it matches what Bob sent to Carol.
-	remoteProvId := provisionId{isStruct: true, st: serStruct{rawData: provId.nonce.encodeProvisionFor(testVatId(localTestVat.index))}}
+	remoteProvId := provId.nonce.encodeProvisionAsAnyPtr(testVatId(localTestVat.index))
 
 	// Connect vats.
 	localConn, remoteConn := t.th.twoVatsPipe(localTestVat, remoteVat)
@@ -135,13 +153,29 @@ func (t *testVatNetwork) connectToIntroduced(ctx context.Context, localVat *Vat,
 	return localConn, remoteProvId, nil
 }
 
-func (t *testVatNetwork) recipientIdUniqueKey(rid recipientId) (res VatNetworkUniqueID) {
-	copy(res[:], rid.st.rawData)
+func (t *testVatNetwork) recipientIdUniqueKey(rid capnpser.AnyPointer) (res VatNetworkUniqueID) {
+	if !rid.IsList() {
+		panic("rid is not a List")
+	}
+	ls := rid.AsList()
+	bytes, err := ls.Bytes()
+	if err != nil {
+		panic(err)
+	}
+	copy(res[:], bytes)
 	return
 }
 
-func (t *testVatNetwork) provisionIdUniqueKey(pid provisionId) (res VatNetworkUniqueID) {
-	copy(res[:], pid.st.rawData)
+func (t *testVatNetwork) provisionIdUniqueKey(pid capnpser.AnyPointer) (res VatNetworkUniqueID) {
+	if !pid.IsList() {
+		panic("rid is not a List")
+	}
+	ls := pid.AsList()
+	bytes, err := ls.Bytes()
+	if err != nil {
+		panic(err)
+	}
+	copy(res[:], bytes)
 	return
 }
 

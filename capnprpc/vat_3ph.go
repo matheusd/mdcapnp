@@ -21,9 +21,9 @@ func (id VatNetworkUniqueID) toString() string {
 
 type VatNetwork interface {
 	introduce(src, target conn) (introductionInfo, error)
-	connectToIntroduced(ctx context.Context, localVat *Vat, introducer conn, tcpd capnpser.AnyPointer) (conn, provisionId, error)
-	recipientIdUniqueKey(recipientId) VatNetworkUniqueID
-	provisionIdUniqueKey(provisionId) VatNetworkUniqueID
+	connectToIntroduced(ctx context.Context, localVat *Vat, introducer conn, tcpd capnpser.AnyPointer) (conn, capnpser.AnyPointer, error)
+	recipientIdUniqueKey(capnpser.AnyPointer) VatNetworkUniqueID
+	provisionIdUniqueKey(capnpser.AnyPointer) VatNetworkUniqueID
 }
 
 var err3PHWithoutVatNetwork = errors.New("3PH introductions not supported without VatNetwork")
@@ -44,10 +44,10 @@ func (v *Vat) getNetworkIntroduction(src, target *runningConn) (introductionInfo
 // (eventually) send an Accept. This runs on Alice, after receiving an
 // introduction from Bob and is meant to connect to Carol.
 func (v *Vat) connectToIntroduced3rdParty(ctx context.Context, introducer *runningConn,
-	tpcd capnpser.AnyPointer) (*runningConn, provisionId, error) {
+	tpcd capnpser.AnyPointer) (*runningConn, capnpser.AnyPointer, error) {
 
 	if v.cfg.net == nil {
-		return nil, provisionId{}, err3PHWithoutVatNetwork
+		return nil, capnpser.AnyPointer{}, err3PHWithoutVatNetwork
 	}
 
 	// TODO: check if already connected or already trying to connect to the
@@ -55,7 +55,7 @@ func (v *Vat) connectToIntroduced3rdParty(ctx context.Context, introducer *runni
 
 	c, provId, err := v.cfg.net.connectToIntroduced(ctx, v, introducer.c, tpcd)
 	if err != nil {
-		return nil, provisionId{}, err
+		return nil, capnpser.AnyPointer{}, err
 	}
 
 	rc := v.RunConn(c)
@@ -101,7 +101,7 @@ type acceptedConnAndCap struct {
 // valid, and if so, what capability it refers to. This runs on Carol while
 // processing an Accept received from Alice (rc), and so verifies if Bob
 // previously sent a corresponding Provide.
-func (v *Vat) wasExpectingAccept(ctx context.Context, provId provisionId) (expectedAccept, error) {
+func (v *Vat) wasExpectingAccept(ctx context.Context, provId capnpser.AnyPointer) (expectedAccept, error) {
 	if v.cfg.net == nil {
 		return expectedAccept{}, err3PHWithoutVatNetwork
 	}

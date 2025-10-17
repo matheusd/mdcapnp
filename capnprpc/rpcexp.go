@@ -52,8 +52,9 @@ type recipientId anyPointer
 
 type introductionInfo struct {
 	sendToRecipientAlt capnpser.AnyPointer
-	sendToRecipient    thirdPartyCapId
-	sendToTarget       recipientId
+	// sendToRecipient    thirdPartyCapId
+	sendToTargetAlt capnpser.AnyPointer
+	sendToTarget    recipientId
 }
 
 type thirdPartyCapDescriptor struct {
@@ -109,10 +110,11 @@ type promisedAnswer struct {
 }
 
 type messageTarget struct {
+	impCap  ImportId
+	pansQid QuestionId
+
 	isImportedCap    bool
-	impcap           ImportId
 	isPromisedAnswer bool
-	pans             promisedAnswer
 }
 
 type call struct {
@@ -218,7 +220,7 @@ type message struct { // RPC message type
 	//resolve    resolve
 	disembargo disembargo
 	accept     accept
-	provide    provide
+	// provide    provide
 
 	testEcho uint64 // Special test message.
 
@@ -270,8 +272,9 @@ func (m *message) IsDisembargo() bool       { return m.isDisembargo }
 func (m *message) AsDisembargo() disembargo { return m.disembargo }
 func (m *message) IsAccept() bool           { return m.isAccept }
 func (m *message) AsAccept() accept         { return m.accept }
-func (m *message) IsProvide() bool          { return m.isProvide }
-func (m *message) AsProvide() provide       { return m.provide }
+
+// func (m *message) IsProvide() bool          { return m.isProvide }
+// func (m *message) AsProvide() provide       { return m.provide }
 
 type messagePool struct {
 	p *sync.Pool
@@ -429,6 +432,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 		Int("eid", int(ap.eid)).
 		Str("src", ap.rc.String()).
 		Str("target", tpRc.String()).
+		Int("targetIid", int(tpIid)).
 		Msg("Resolving promised answer to third party")
 
 	vat := ap.rc.vat
@@ -444,18 +448,32 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 	}
 
 	// Send Provide to remote.
-	provide := provide{
-		target:    messageTarget{isImportedCap: true, impcap: tpIid},
-		recipient: iinfo.sendToTarget,
+	rpcProv, prov, err := vat.newProvide(iinfo.sendToTargetAlt)
+	if err != nil {
+		return err
 	}
+	target, err := prov.NewTarget()
+	if err != nil {
+		return err
+	}
+
+	if err := target.SetImportedCap(tpIid); err != nil {
+		return err
+	}
+
+	var ok bool
+	var provideQid QuestionId
 	tpRc.mu.Lock()
 	if !tpRc.imports.has(tpIid) {
 		err = fmt.Errorf("third party %s does not have import %d", tpRc, tpIid)
-	} else if qid, ok := tpRc.questions.nextID(); !ok {
+	} else if provideQid, ok = tpRc.questions.nextID(); !ok {
 		err = fmt.Errorf("could not generate new question id for %s", tpRc)
 	} else {
-		provide.qid = qid
-		tpRc.questions.set(qid, question{typ: questionTypeProvide})
+		// provide.qid = qid
+		if err := prov.SetQuestionId(provideQid); err != nil {
+			return err
+		}
+		tpRc.questions.set(provideQid, question{typ: questionTypeProvide})
 	}
 	tpRc.mu.Unlock()
 	if err != nil {
@@ -463,7 +481,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 	}
 
 	// CHECK: ok to do here, outside tpRc.mu.Lock()?
-	if err := tpRc.vat.sendProvide(tpRc.ctx, tpRc, provide); err != nil {
+	if err := tpRc.vat.sendProvide(tpRc.ctx, tpRc, rpcProv, prov); err != nil {
 		return err
 	}
 
@@ -516,8 +534,8 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 		exp.thirdPartyRC = tpRc
 		exp.thirdPartyIid = tpIid
 		exp.thirdPartyVineId = vineEid
-		exp.thirdPartyCapDescId = iinfo.sendToRecipient // <-----
-		exp.thirdPartyProvideQid = provide.qid
+		exp.thirdPartyCapDescIdAlt = iinfo.sendToRecipientAlt
+		exp.thirdPartyProvideQid = provideQid
 		exp.typ = exportTypeThirdPartyExport
 		ap.rc.exports.set(ap.eid, exp)
 		ap.rc.exports.set(vineEid, vine)
@@ -747,11 +765,12 @@ type export struct {
 	rc               *runningConn
 
 	// Set when this is resolved to a third party imported cap.
-	thirdPartyRC         *runningConn
-	thirdPartyIid        ImportId
-	thirdPartyCapDescId  thirdPartyCapId
-	thirdPartyVineId     ExportId
-	thirdPartyProvideQid QuestionId
+	thirdPartyRC           *runningConn
+	thirdPartyIid          ImportId
+	thirdPartyCapDescId    thirdPartyCapId
+	thirdPartyCapDescIdAlt capnpser.AnyPointer
+	thirdPartyVineId       ExportId
+	thirdPartyProvideQid   QuestionId
 
 	// Track calls that must be fulfilled once this is fulfilled.
 
