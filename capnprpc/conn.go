@@ -97,6 +97,8 @@ type runningConn struct {
 	imports   table[ImportId, imprt]
 	exports   table[ExportId, export]
 
+	inBuf []byte
+
 	ctx    context.Context
 	cancel func(error) // Closes runningConn.
 }
@@ -135,6 +137,46 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 	}
 }
 
+func (rc *runningConn) send(ctx context.Context, outMsg outMsg) error {
+	err := rc.c.send(ctx, OutMsg{Msg: outMsg.serMsg})
+	outMsg.ackSent()
+	if err != nil {
+		return fmt.Errorf("send errored: %w", err)
+	}
+
+	rc.vat.mbp.put(outMsg.serMsg)
+	return nil
+}
+
+type InboundReturn struct {
+	SerMsg capnpser.Message
+	Msg    types.Message
+	Ret    types.Return
+}
+
+func (rc *runningConn) nextReturn(ctx context.Context, inRet *InboundReturn) error {
+	msg, err := rc.c.receive(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = inRet.Msg.ReadFromRoot(&msg.Msg)
+	if err != nil {
+		return err
+	}
+
+	if inRet.Msg.Which() != types.Message_Which_Return {
+		return fmt.Errorf("message was not a return")
+	}
+
+	inRet.Ret, err = inRet.Msg.AsReturn()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
 	if rc == nil {
 		return
@@ -170,7 +212,7 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 		// Debug.
 		/*
 			logEvent := rc.log.Debug()
-			msgRawData := msg.rawSerMsg.Arena().RawDataCopy()
+			msgRawData := msg.Msg.Arena().RawDataCopy()
 			for i, data := range msgRawData {
 				logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
 			}
@@ -235,8 +277,8 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 
 		boot: BootstrapFuture(newRootFutureCap(v)),
 
-		outQueue:  make(chan outMsg, 60000), // TODO: Parametrize buffer size.
-		questions: makeQuestionsTable(),     // makeTable[QuestionId, question](),
+		outQueue:  make(chan outMsg, 100), // TODO: Parametrize buffer size.
+		questions: makeQuestionsTable(),   // makeTable[QuestionId, question](),
 		answers:   makeTable[AnswerId, answer](),
 		imports:   makeTable[ImportId, imprt](),
 		exports:   makeTable[ExportId, export](),

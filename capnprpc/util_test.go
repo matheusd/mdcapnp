@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/sourcegraph/conc/pool"
+	"matheusd.com/depvendoredtestify/require"
 	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
 )
@@ -94,6 +96,53 @@ func (th *testHarness) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) {
 	c1, c2 := th.twoVatsPipe(v1, v2)
 	rc1 = v1.RunConn(c1)
 	rc2 = v2.RunConn(c2)
+	return
+}
+
+func (th *testHarness) tcpTransportPair(v1Name, v2Name string) (*IOTransport, *IOTransport) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(th.t, err)
+	th.t.Cleanup(func() { lis.Close() })
+
+	connChan := make(chan net.Conn, 2)
+	errChan := make(chan error, 2)
+	go func() {
+		c, err := lis.Accept()
+		if err != nil {
+			errChan <- err
+		} else {
+			connChan <- c
+		}
+	}()
+	go func() {
+		c, err := net.Dial("tcp", lis.Addr().String())
+		if err != nil {
+			errChan <- err
+		} else {
+			connChan <- c
+		}
+	}()
+
+	conns := make([]net.Conn, 0, 2)
+	for len(conns) < 2 {
+		select {
+		case c := <-connChan:
+			conns = append(conns, c)
+		case err := <-errChan:
+			th.t.Fatal(err)
+		}
+	}
+
+	io1 := NewIOTransport(v2Name, conns[0])
+	io2 := NewIOTransport(v1Name, conns[1])
+
+	return io1, io2
+}
+
+func (th *testHarness) connectVatsWithTCP(v1, v2 *testVat) (rc1, rc2 *runningConn) {
+	io1, io2 := th.tcpTransportPair(v1.name, v2.name)
+	rc1 = v1.RunConn(io1)
+	rc2 = v2.RunConn(io2)
 	return
 }
 

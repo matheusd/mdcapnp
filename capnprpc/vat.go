@@ -267,7 +267,8 @@ func (v *Vat) sendStep(ctx context.Context, step *pipelineStep, conn *runningCon
 		return err
 	}
 
-	err = conn.queue(ctx, cmb.outMsg)
+	// err = conn.queue(ctx, cmb.outMsg)
+	err = conn.send(ctx, cmb.outMsg)
 	if err != nil {
 		return err
 	}

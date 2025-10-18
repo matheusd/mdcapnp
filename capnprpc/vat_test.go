@@ -309,7 +309,7 @@ func BenchmarkVoidCall(b *testing.B) {
 		return nil
 	})
 
-	b.Run("both", func(b *testing.B) {
+	b.Run("pipe", func(b *testing.B) {
 		th := newTestHarness(b)
 		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
 		cc, _ := th.connectVats(c, s)
@@ -331,8 +331,65 @@ func BenchmarkVoidCall(b *testing.B) {
 			}
 		}
 
-		b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
+		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
 
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})
+
+	b.Run("conn", func(b *testing.B) {
+		th := newTestHarness(b)
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		cc, _ := th.connectVatsWithTCP(c, s)
+		callCount.Store(0)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := cc.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(cc.Bootstrap())
+
+		b.ReportAllocs()
+		for b.Loop() {
+			err := api.VoidCall().Wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
+
+		require.Equal(b, uint64(b.N), callCount.Load())
+	})
+
+	b.Run("level0", func(b *testing.B) {
+		th := newTestHarness(b)
+		s := th.newVat("server", WithBootstrapHandler(handler))
+
+		io1, io2 := th.tcpTransportPair("client", "server")
+		s.RunConn(io2)
+
+		c := NewLevel0ClientVat(Level0ClientCfg{Conn: io1})
+
+		callCount.Store(0)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		require.NoError(b, c.WaitBootstrap(ctx))
+
+		b.ReportAllocs()
+		for b.Loop() {
+			c.NextCallMsg(testAPI_InterfaceID, testAPI_Void_CallID)
+			_, err := c.Call(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
+
+		require.Equal(b, uint64(b.N), callCount.Load())
+	})
+
 }

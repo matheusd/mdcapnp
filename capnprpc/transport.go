@@ -61,7 +61,7 @@ func (iot *IOTransport) send(ctx context.Context, outMsg OutMsg) error {
 	if err != nil {
 		return err
 	}
-	// fmt.Println("XXXXXX wrote", n)
+	// fmt.Println("XXXXXX wrote", iot.remName, n)
 	if n != len(serBytes) {
 		return io.ErrShortWrite
 	}
@@ -107,7 +107,7 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 			return InMsg{}, err
 		}
 
-		err = iot.inArena.DecodeSingleSegment(iot.inBuf)
+		err = iot.inArena.DecodeSingleSegment(iot.inBuf[:8+seg0SizeBytes])
 		if err != nil {
 			return InMsg{}, err
 		}

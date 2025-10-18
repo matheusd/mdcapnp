@@ -744,7 +744,7 @@ func (b *MessageBuilder) NewFinish() (sb FinishBuilder, err error) {
 }
 
 func (b *MessageBuilder) NewReturn() (sb ReturnBuilder, err error) {
-	var structSize = capnpser.StructSize{DataSectionSize: 3, PointerSectionSize: 3}
+	var structSize = capnpser.StructSize{DataSectionSize: 2, PointerSectionSize: 1}
 	const unionValue = uint16(Message_Which_Return)
 
 	var nsb capnpser.StructBuilder

@@ -418,7 +418,8 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			Msg("Processed call into payload result")
 	}
 
-	return rc.queue(ctx, outMsg)
+	return rc.send(ctx, outMsg)
+	// return rc.queue(ctx, outMsg)
 }
 
 func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin types.Finish) error {
