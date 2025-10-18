@@ -107,16 +107,30 @@ func (tc *testConn) receive(ctx context.Context) (InMsg, error) {
 	}
 }
 
+func (tc *testConn) close() error {
+	return nil
+}
+
 func (tc *testConn) remoteName() string {
 	return "testconn"
+}
+
+type writerCloser interface {
+	io.Writer
+	io.Closer
+}
+
+type readerCloser interface {
+	io.Reader
+	io.Closer
 }
 
 type testPipeConn struct {
 	remName  string
 	remIndex int
 
-	w     io.Writer
-	r     io.Reader
+	w     writerCloser
+	r     readerCloser
 	inBuf []byte
 
 	recvArena  capnpser.Arena
@@ -152,4 +166,10 @@ func (tpc *testPipeConn) receive(ctx context.Context) (InMsg, error) {
 
 func (tpc *testPipeConn) remoteName() string {
 	return tpc.remName
+}
+
+func (tpc *testPipeConn) close() error {
+	tpc.r.Close()
+	tpc.w.Close()
+	return nil
 }

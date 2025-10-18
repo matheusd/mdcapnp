@@ -7,6 +7,8 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"sync"
 
 	"github.com/rs/zerolog"
@@ -51,6 +53,7 @@ type InMsg struct {
 type conn interface {
 	send(context.Context, OutMsg) error
 	receive(context.Context) (InMsg, error) // Ok because message goes to stack.
+	close() error
 	remoteName() string
 
 	// TODO: Allow conn-owned buffer (io_uring)?
@@ -74,7 +77,7 @@ type runningConn struct {
 	log zerolog.Logger
 	rid uint64 // A unique running id, set by the vat when creating this.
 
-	boot bootstrapCap
+	boot BootstrapFuture
 
 	// bootExportId is the export id of the bootstrap cap offered by the vat
 	// on this conn.
@@ -82,7 +85,7 @@ type runningConn struct {
 
 	outQueue chan outMsg
 
-	crb callReturnBuilder
+	crb CallContext
 
 	// TODO: question and export IDs are set by local vat, answer and import
 	// ids are set by the remote vat. Split table type into two
@@ -103,8 +106,8 @@ func (rc *runningConn) String() string {
 }
 
 func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
-	mr := m.mb.AsReader()
-	which := mr.Which().String()
+	// mr := m.mb.AsReader()
+	// which := mr.Which().String()
 
 	/*
 		rc.log.Trace().
@@ -117,9 +120,11 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 		return context.Cause(ctx)
 
 	case rc.outQueue <- m:
-		rc.log.Trace().
-			Str("which", which).
-			Msg("Queued outgoing message")
+		/*
+			rc.log.Trace().
+				Str("which", which).
+				Msg("Queued outgoing message")
+		*/
 		return nil
 
 	default:
@@ -153,6 +158,12 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 	for {
 		msg, err := rc.c.receive(ctx)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// EOF is considered a graceful conn shutdown.
+				err = nil
+			} else {
+				err = fmt.Errorf("inLoop receive errored: %w", err)
+			}
 			return err
 		}
 
@@ -198,7 +209,7 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 			err := c.send(ctx, OutMsg{Msg: outMsg.serMsg})
 			outMsg.ackSent()
 			if err != nil {
-				return err
+				return fmt.Errorf("outLoop send errored: %w", err)
 			}
 
 			v.mbp.put(outMsg.serMsg)
@@ -209,6 +220,11 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 	}
 }
 
+func (rc *runningConn) waitToClose(ctx context.Context) error {
+	<-ctx.Done()
+	return rc.c.close()
+}
+
 func newRunningConn(c conn, v *Vat) *runningConn {
 	log := v.log.With().Str("remote", c.remoteName()).Logger()
 
@@ -217,7 +233,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 		vat: v,
 		log: log,
 
-		boot: bootstrapCap(newRootFutureCap(v)),
+		boot: BootstrapFuture(newRootFutureCap(v)),
 
 		outQueue:  make(chan outMsg, 60000), // TODO: Parametrize buffer size.
 		questions: makeQuestionsTable(),     // makeTable[QuestionId, question](),
@@ -234,17 +250,7 @@ func newRunningConn(c conn, v *Vat) *runningConn {
 	return rc
 }
 
-type bootstrapCap callFuture
-
-func (bc bootstrapCap) Wait(ctx context.Context) (capability, error) {
-	return castCallResultOrErr[capability](waitResult(ctx, callFuture(bc)))
-}
-
-func castBootstrap(bc bootstrapCap) callFuture {
-	return callFuture{step: bc.step}
-}
-
-func (rc *runningConn) Bootstrap() bootstrapCap {
+func (rc *runningConn) Bootstrap() BootstrapFuture {
 	return rc.boot // Any calls fork the pipeline.
 }
 

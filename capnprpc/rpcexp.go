@@ -16,16 +16,15 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
+type InterfaceId uint64
+type MethodId uint16
+
 type messageTarget struct {
 	impCap  ImportId
 	pansQid QuestionId
 
 	isImportedCap    bool
 	isPromisedAnswer bool
-}
-
-type capability struct { // Right type?
-	eid ExportId
 }
 
 type introductionInfo struct {
@@ -112,7 +111,7 @@ type answerPromise struct {
 	eid ExportId
 }
 
-func (ap answerPromise) resolveToHandler(handler callHandler) error {
+func (ap answerPromise) resolveToHandler(handler CallHandler) error {
 	var err error
 
 	// resolution is the new export ap is resolving to.
@@ -285,17 +284,30 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability
 	return ap.resolveToThirdPartyImport(tpRc, ImportId(cap.eid))
 }
 
-type callReturnBuilder struct {
+type CallParamsBuilder func(types.MessageBuilder) error
+
+type CallContext struct {
 	rc    *runningConn
 	pb    types.PayloadBuilder
 	serMb *capnpser.MessageBuilder // Root reply message builder
+
+	iid InterfaceId
+	mid MethodId
+}
+
+func (cc *CallContext) InterfaceId() InterfaceId {
+	return cc.iid
+}
+
+func (cc *CallContext) MethodId() MethodId {
+	return cc.mid
 }
 
 // readReturnCapTable returns the capTable from the payload.
 //
 // NOTE: this assumes the message being built is a Return with Results and cap
 // table list.
-func (crb *callReturnBuilder) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
+func (crb *CallContext) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
 	var rpcMsg types.Message
 
 	// Errors don't need checking, because this is assumed to be called
@@ -313,7 +325,7 @@ func (crb *callReturnBuilder) readReturnCapTable() capnpser.GenericStructList[ty
 
 // MUST be called with crb.rc.mu locked.
 // Does NOT create the export, only determines the ID it should have.
-func (crb *callReturnBuilder) respondAsPromise() (answerPromise, error) {
+func (crb *CallContext) respondAsPromise() (answerPromise, error) {
 	eid, ok := crb.rc.exports.nextID()
 	if !ok {
 		return answerPromise{}, errors.New("no more exports allowed")
@@ -342,8 +354,8 @@ type callExceptionError interface {
 }
 
 type errUnimplemented struct {
-	Iid interfaceId
-	Mid methodId
+	Iid InterfaceId
+	Mid MethodId
 }
 
 func (err errUnimplemented) Error() string {
@@ -354,35 +366,22 @@ func (err errUnimplemented) ToException() exception {
 	return exception{typ: 3, reason: err.Error()}
 }
 
-type callHandlerArgs struct {
-	iid interfaceId
-	mid methodId
-	rc  *runningConn
+// CallHandler is the lowest level handler for calls (including bootstrap).
+type CallHandler interface {
+	Call(ctx context.Context, cc *CallContext) error
 }
 
-// callHandler is the lowest handler for calls (including bootstrap).
-type callHandler interface {
-	Call(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error
-}
+type CallHandlerFunc func(ctx context.Context, rb *CallContext) error
 
-type callHandlerFunc func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error
-
-func (f callHandlerFunc) Call(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
-	return f(ctx, args, rb)
+func (f CallHandlerFunc) Call(ctx context.Context, rb *CallContext) error {
+	return f(ctx, rb)
 }
 
 type allUnimplementedCallHandler struct{}
 
-func (h allUnimplementedCallHandler) Call(ctx context.Context, args callHandlerArgs, res *callReturnBuilder) error {
-	return errUnimplemented{Iid: args.iid, Mid: args.mid}
+func (h allUnimplementedCallHandler) Call(ctx context.Context, res *CallContext) error {
+	return errUnimplemented{Iid: res.iid, Mid: res.mid}
 }
-
-type callable struct {
-	// promise || local-callable || remote-capability
-	// pipelinable
-}
-
-type callParamsBuilder func(types.MessageBuilder) error
 
 type inMsg struct {
 	rc  *runningConn
@@ -481,7 +480,7 @@ type export struct {
 	typ      exportType
 	refCount int
 
-	handler callHandler // Set when this is senderHosted.
+	handler CallHandler // Set when this is senderHosted.
 
 	// Set when this was a promise that got resolved.
 	resolvedToExport ExportId

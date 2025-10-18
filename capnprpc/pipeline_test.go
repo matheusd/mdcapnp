@@ -8,25 +8,25 @@ import (
 	"testing"
 )
 
-type testCapFuture callFuture
+type testCapFuture CallFuture
 
 func (tcf testCapFuture) next() testCapFuture {
-	return testCapFuture(remoteCall(
-		callFuture(tcf),
-		callSetup{
-			interfaceId: 1000,
-			methodId:    11,
+	return testCapFuture(RemoteCall(
+		CallFuture(tcf),
+		CallSetup{
+			InterfaceId: 1000,
+			MethodId:    11,
 		},
 	))
 }
 
 //go:noinline
 func (tcf testCapFuture) nextNoInline() testCapFuture {
-	return testCapFuture(remoteCall(
-		callFuture(tcf),
-		callSetup{
-			interfaceId: 1000,
-			methodId:    11,
+	return testCapFuture(RemoteCall(
+		CallFuture(tcf),
+		CallSetup{
+			InterfaceId: 1000,
+			MethodId:    11,
 		},
 	))
 }

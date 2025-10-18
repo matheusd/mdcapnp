@@ -13,11 +13,11 @@ import (
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
-// callSetup are the requirements to build and send a Call message.
-type callSetup struct {
-	interfaceId   uint64
-	methodId      uint16
-	paramsBuilder callParamsBuilder // Builds the Params field of an rpc.Call struct
+// CallSetup are the requirements to build and send a Call message.
+type CallSetup struct {
+	InterfaceId   InterfaceId
+	MethodId      MethodId
+	ParamsBuilder CallParamsBuilder // Builds the Params field of an rpc.Call struct
 }
 
 type pipelineStepState int
@@ -42,7 +42,7 @@ type pipelineStepStateValue struct {
 type pipelineStep struct {
 	value  sigvalue.Stateful[pipelineStepState, pipelineStepStateValue]
 	parent *pipelineStep
-	csetup callSetup
+	csetup CallSetup
 }
 
 func finalizePipelineStep(step *pipelineStep) {
@@ -74,17 +74,17 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 	}
 }
 
-type callFuture struct {
+type CallFuture struct {
 	step *pipelineStep
 }
 
-func newRootFutureCap(v *Vat) callFuture {
-	return callFuture{
+func newRootFutureCap(v *Vat) CallFuture {
+	return CallFuture{
 		step: newRootStep(v),
 	}
 }
 
-func remoteCall(obj callFuture, csetup callSetup) (res callFuture) {
+func RemoteCall(obj CallFuture, csetup CallSetup) (res CallFuture) {
 	parentStep := obj.step
 
 	// Every call creates a new step with parent reference
@@ -94,7 +94,7 @@ func remoteCall(obj callFuture, csetup callSetup) (res callFuture) {
 	return res
 }
 
-func castCallResult[T any](callResult any) (res T, err error) {
+func CastCallResult[T any](callResult any) (res T, err error) {
 	// Check if result is already the expected return type.
 	var ok bool
 	if res, ok = callResult.(T); ok {
@@ -133,19 +133,19 @@ func castCallResult[T any](callResult any) (res T, err error) {
 	return
 }
 
-func castCallResultOrErr[T any](callResult any, inErr error) (res T, err error) {
+func CastCallResultOrErr[T any](callResult any, inErr error) (res T, err error) {
 	if inErr != nil {
 		err = inErr
 	} else {
-		res, err = castCallResult[T](callResult)
+		res, err = CastCallResult[T](callResult)
 	}
 	return
 }
 
-func waitResult(ctx context.Context, cap callFuture) (res any, err error) {
+func WaitResult(ctx context.Context, cf CallFuture) (res any, err error) {
 	// Find the vat.
 	var vat *Vat
-	step := cap.step
+	step := cf.step
 	for step != nil && vat == nil {
 		conn := step.value.GetValue().conn
 		if conn != nil {
@@ -160,12 +160,12 @@ func waitResult(ctx context.Context, cap callFuture) (res any, err error) {
 	}
 
 	// Run pipeline.
-	if err = vat.execStep(ctx, cap.step); err != nil {
+	if err = vat.execStep(ctx, cf.step); err != nil {
 		return
 	}
 
 	// Wait until the required step of the pipeline completes or fails.
-	stepState, stepValue, err := cap.step.value.WaitStateAtLeast(ctx, pipeStepStateDone)
+	stepState, stepValue, err := cf.step.value.WaitStateAtLeast(ctx, pipeStepStateDone)
 	if err != nil {
 		return
 	}
@@ -188,6 +188,6 @@ func waitResult(ctx context.Context, cap callFuture) (res any, err error) {
 	return
 }
 
-func releaseFuture(ctx context.Context, cap callFuture) {
+func releaseFuture(ctx context.Context, cap CallFuture) {
 	finalizePipelineStep(cap.step)
 }

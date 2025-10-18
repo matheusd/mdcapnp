@@ -15,7 +15,7 @@ import (
 type vatConfig struct {
 	logger           *zerolog.Logger
 	name             string
-	bootstrapHandler callHandler
+	bootstrapHandler CallHandler
 	net              VatNetwork
 	failOnConnErr    bool
 
@@ -81,7 +81,7 @@ func WithVatNetwork(net VatNetwork) VatOption {
 	}
 }
 
-func withBootstrapHandler(h callHandler) VatOption {
+func WithBootstrapHandler(h CallHandler) VatOption {
 	return func(c *vatConfig) {
 		c.bootstrapHandler = h
 	}

@@ -185,11 +185,14 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 				ov.conn.String(), rc.String())
 		}
 
-		rc.log.Debug().
-			Int("qid", int(qid)).
-			Str("rtyp", stepResultType).
-			Bool("noFinishNeeded", noFinishNeeded).
-			Msg("Processed Return message")
+		/*
+			rc.log.Debug().
+				Int("qid", int(qid)).
+				Str("rtyp", stepResultType).
+				Bool("noFinishNeeded", noFinishNeeded).
+				Msg("Processed Return message")
+		*/
+		_ = stepResultType
 
 		ov.iid = stepImportId
 		if stepResultPromise > 0 {
@@ -272,13 +275,6 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 
 	// TODO: proxy calls when exp.typ == exportTypeThirdPartyExport.
 
-	callArgs := callHandlerArgs{
-		iid: interfaceId(iid),
-		mid: methodId(mid),
-		// params: c.params, // FIXME how?
-		rc: rc,
-	}
-
 	// Start preparing reply.
 	outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
 	if err != nil {
@@ -293,13 +289,15 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	crb := &rc.crb // Ok to reuse (rc is locked).
 	crb.pb, err = reply.NewResults()
 	crb.serMb = outMsg.serMsg
+	crb.iid = InterfaceId(iid)
+	crb.mid = MethodId(mid)
 	if err != nil {
 		return err
 	}
 
 	// Make the call!
 	logEvent.Msg("Locally handling call")
-	err = exp.handler.Call(rc.ctx, callArgs, crb)
+	err = exp.handler.Call(rc.ctx, crb)
 	if ex, ok := err.(callExceptionError); ok {
 		// When an exception that will be sent remotely is detected,
 		// re-create the reply. This ensures anything written to the

@@ -194,7 +194,7 @@ func (tvn *testVatNetwork) connectVats(v1, v2 *testVat) (rc1, rc2 *runningConn) 
 func Test3PHBasic(t *testing.T) {
 	// Bob's bootstrap cap is a remote promise.
 	bobHandlerCalledChan := make(chan answerPromise, 1)
-	bobHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	bobHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		ap, err := rb.respondAsPromise()
 		if err != nil {
 			return err
@@ -207,7 +207,7 @@ func Test3PHBasic(t *testing.T) {
 	// Carol's bootstrap cap is a concrete handler that always returns
 	// void.
 	carolHandlerCalled := make(chan struct{}, 1)
-	carolHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	carolHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		carolHandlerCalled <- struct{}{}
 		return nil
 	})
@@ -220,8 +220,8 @@ func Test3PHBasic(t *testing.T) {
 	// Setup harness.
 	tnet := newTestVatNetwork(t)
 	alice := tnet.newVat("alice")
-	bob := tnet.newVat("bob", withBootstrapHandler(bobHandler))
-	carol := tnet.newVat("carol", withBootstrapHandler(carolHandler))
+	bob := tnet.newVat("bob", WithBootstrapHandler(bobHandler))
+	carol := tnet.newVat("carol", WithBootstrapHandler(carolHandler))
 
 	// Existing connections (before 3PH).
 	aliceBobRc, _ := tnet.connectVats(alice, bob)

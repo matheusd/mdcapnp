@@ -54,6 +54,11 @@ func NewVat(opts ...VatOption) *Vat {
 	return v
 }
 
+// TODO: merge with RunConn??
+func (v *Vat) UseRemoteVat(c conn) RemoteVat {
+	return RemoteVat{rc: v.RunConn(c)}
+}
+
 func (v *Vat) RunConn(c conn) *runningConn {
 	rc := newRunningConn(c, v)
 	rc.rid = v.rcCount.Add(1)
@@ -149,8 +154,8 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 		if err != nil {
 			return err
 		}
-		_ = call.SetInterfaceId(step.csetup.interfaceId)
-		_ = call.SetMethodId(step.csetup.methodId)
+		_ = call.SetInterfaceId(uint64(step.csetup.InterfaceId))
+		_ = call.SetMethodId(uint16(step.csetup.MethodId))
 		cmb.builder = capnpser.StructBuilder(call)
 
 		// TODO: prepare call args.
@@ -170,6 +175,7 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 	connG := pool.New().WithContext(rc.ctx).WithCancelOnError().WithFirstError()
 	connG.Go(rc.inLoop)
 	connG.Go(rc.outLoop)
+	connG.Go(rc.waitToClose)
 
 	// Start the bootstrap pipeline (sends the bootstrap message).
 	// Parametrize doing this automatically?
@@ -191,6 +197,7 @@ func (v *Vat) runConn(ctx context.Context, rc *runningConn) {
 		select {
 		case v.connDone <- connDone{rc: rc, err: err}:
 		case <-time.After(time.Second): // TODO: parametrize?
+			v.log.Warn().Msg("Conn Wait() goroutine timed out waiting to send on vat.connDone")
 		}
 	}()
 }
@@ -347,17 +354,22 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 			err = v.runStep(rs)
 		}
 
+		v.log.Trace().Msg("Vat begining stop procedure")
+
 		// Remove every remaining conn.
 		for _, rc := range rs.conns {
 			v.stopConn(rc)
 		}
 
+		v.log.Trace().Msg("All conns commanded to stop")
+
 		// Wait until the remaining conns have signalled their
 		// termination.
-		for range rs.conns {
+		for _, rc := range rs.conns {
 			select {
 			case <-v.connDone:
 			case <-time.After(time.Second): // TODO: improve this.
+				rc.log.Warn().Msg("vat.Run() timed out waiting for conn to be done")
 			}
 		}
 

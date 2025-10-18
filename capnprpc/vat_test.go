@@ -106,13 +106,13 @@ func TestBootstrapBothSides(t *testing.T) {
 // TestVoidCallBothSides tests a void call between two vats.
 func TestVoidCallBothSides(t *testing.T) {
 	var called atomic.Bool
-	handler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		called.Store(true)
 		return nil
 	})
 
 	th := newTestHarness(t)
-	c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(handler))
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
 	cc, _ := th.connectVats(c, s)
 
 	// First call.
@@ -145,7 +145,7 @@ func TestVoidCallBothSides(t *testing.T) {
 // promise with a capability).
 func TestRemotePromiseWithCap(t *testing.T) {
 	var callHandled atomic.Bool
-	callHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	callHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		if !callHandled.CompareAndSwap(false, true) {
 			return errors.New("already called")
 		}
@@ -154,7 +154,7 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	resolvePromiseChan := make(chan struct{}, 1)
 	resolveErrChan := make(chan error, 1)
-	bootHandler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	bootHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		ap, err := rb.respondAsPromise()
 		if err != nil {
 			return err
@@ -169,7 +169,7 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	// Setup harness.
 	th := newTestHarness(t)
-	c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(bootHandler))
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(bootHandler))
 	cc, _ := th.connectVats(c, s)
 
 	// Wait for bootstrap to complete to ease log reviewing.
@@ -304,14 +304,14 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 // BenchmarkVoidCall benchmarks a basic void call under various circumstances.
 func BenchmarkVoidCall(b *testing.B) {
 	var callCount atomic.Uint64
-	handler := callHandlerFunc(func(ctx context.Context, args callHandlerArgs, rb *callReturnBuilder) error {
+	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
 		callCount.Add(1)
 		return nil
 	})
 
 	b.Run("both", func(b *testing.B) {
 		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", withBootstrapHandler(handler))
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
 		cc, _ := th.connectVats(c, s)
 		callCount.Store(0)
 		ctx := testctx.New(b)

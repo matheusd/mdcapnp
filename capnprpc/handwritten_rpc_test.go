@@ -11,20 +11,20 @@ import (
 	types "matheusd.com/mdcapnp/capnprpc/types"
 )
 
-type futureString callFuture
+type futureString CallFuture
 
 func (fs futureString) wait(ctx context.Context) (string, error) {
-	return castCallResultOrErr[string](waitResult(ctx, callFuture(fs)))
+	return CastCallResultOrErr[string](WaitResult(ctx, CallFuture(fs)))
 }
 
-type testAPI callFuture
+type testAPI CallFuture
 
 const testAPI_InterfaceID = 1000
 
-type futureVoid callFuture
+type futureVoid CallFuture
 
 func (fv futureVoid) Wait(ctx context.Context) error {
-	_, err := waitResult(ctx, callFuture(fv))
+	_, err := WaitResult(ctx, CallFuture(fv))
 	return err
 }
 
@@ -33,32 +33,32 @@ const testAPI_GetAnotherAPI_CallID = 102
 const testAPI_GetUser_CallID = 103
 
 func (api testAPI) VoidCall() futureVoid {
-	return futureVoid(remoteCall(
-		callFuture(api),
-		callSetup{
-			interfaceId: testAPI_InterfaceID,
-			methodId:    testAPI_Void_CallID,
+	return futureVoid(RemoteCall(
+		CallFuture(api),
+		CallSetup{
+			InterfaceId: testAPI_InterfaceID,
+			MethodId:    testAPI_Void_CallID,
 		},
 	))
 }
 
 func (api testAPI) GetAnotherAPICap() testAPI {
-	return testAPI(remoteCall(
-		callFuture(api),
-		callSetup{
-			interfaceId: testAPI_InterfaceID,
-			methodId:    testAPI_GetAnotherAPI_CallID,
+	return testAPI(RemoteCall(
+		CallFuture(api),
+		CallSetup{
+			InterfaceId: testAPI_InterfaceID,
+			MethodId:    testAPI_GetAnotherAPI_CallID,
 		},
 	))
 }
 
 func (api testAPI) GetUser(id string) testUser {
-	return testUser(remoteCall(
-		callFuture(api),
-		callSetup{
-			interfaceId: testAPI_InterfaceID,
-			methodId:    testAPI_GetUser_CallID,
-			paramsBuilder: func(types.MessageBuilder) error {
+	return testUser(RemoteCall(
+		CallFuture(api),
+		CallSetup{
+			InterfaceId: testAPI_InterfaceID,
+			MethodId:    testAPI_GetUser_CallID,
+			ParamsBuilder: func(types.MessageBuilder) error {
 				_ = id
 				return nil
 			},
@@ -68,41 +68,41 @@ func (api testAPI) GetUser(id string) testUser {
 
 // Wait until this is resolved as a concrete, exported capability.
 func (api testAPI) Wait(ctx context.Context) (capability, error) {
-	return castCallResultOrErr[capability](waitResult(ctx, callFuture(api)))
+	return CastCallResultOrErr[capability](WaitResult(ctx, CallFuture(api)))
 }
 
 func (api testAPI) WaitDiscardResult(ctx context.Context) error {
-	_, err := waitResult(ctx, callFuture(api))
+	_, err := WaitResult(ctx, CallFuture(api))
 	return err
 }
 
-func testAPIAsBootstrap(bt bootstrapCap) testAPI {
-	return testAPI(castBootstrap(bt))
+func testAPIAsBootstrap(bt BootstrapFuture) testAPI {
+	return testAPI(bt)
 }
 
-type testUser callFuture
+type testUser CallFuture
 
 func (usr testUser) GetProfile() testUserProfile {
-	return testUserProfile(remoteCall(
-		callFuture(usr),
-		callSetup{
-			interfaceId: 1000,
-			methodId:    11,
-			paramsBuilder: func(types.MessageBuilder) error {
+	return testUserProfile(RemoteCall(
+		CallFuture(usr),
+		CallSetup{
+			InterfaceId: 1000,
+			MethodId:    11,
+			ParamsBuilder: func(types.MessageBuilder) error {
 				return nil
 			},
 		},
 	))
 }
 
-type testUserProfile callFuture
+type testUserProfile CallFuture
 
 func (up testUserProfile) GetAvatarData() futureString {
-	return futureString(remoteCall(
-		callFuture(up),
-		callSetup{
-			interfaceId: 1000,
-			methodId:    11,
+	return futureString(RemoteCall(
+		CallFuture(up),
+		CallSetup{
+			InterfaceId: 1000,
+			MethodId:    11,
 		},
 	))
 }
@@ -137,7 +137,7 @@ func example01() {
 	prof2_2 := user2.GetProfile()        // Fork
 	go prof2_2.GetAvatarData().wait(ctx) // Dispatched fork before original.
 	go prof2.GetAvatarData().wait(ctx)
-	go waitResult(ctx, callFuture(user2)) // Dispatched fork parent after fork children.
+	go WaitResult(ctx, CallFuture(user2)) // Dispatched fork parent after fork children.
 
 	// _ = testUser(api).GetProfile() // Should not compile
 }
