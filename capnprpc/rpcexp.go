@@ -284,15 +284,18 @@ func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability
 	return ap.resolveToThirdPartyImport(tpRc, ImportId(cap.eid))
 }
 
-type CallParamsBuilder func(types.MessageBuilder) error
+type CallParamsBuilder func(types.PayloadBuilder) error
+
+type CallResultsParser func(types.Payload) (any, error)
 
 type CallContext struct {
 	rc    *runningConn
 	pb    types.PayloadBuilder
 	serMb *capnpser.MessageBuilder // Root reply message builder
 
-	iid InterfaceId
-	mid MethodId
+	iid    InterfaceId
+	mid    MethodId
+	params types.Payload // Request Call.Params field
 }
 
 func (cc *CallContext) InterfaceId() InterfaceId {
@@ -303,16 +306,45 @@ func (cc *CallContext) MethodId() MethodId {
 	return cc.mid
 }
 
+func (cc *CallContext) Params() types.Payload {
+	return cc.params
+}
+
+func CallContextParamsStruct[T ~capnpser.StructType](cc *CallContext) (res T, err error) {
+	pay := cc.Params()
+	payContent, err := pay.Content()
+	if err != nil {
+		err = fmt.Errorf("could not get payload content: %v", err)
+		return
+	}
+
+	res = T(payContent.AsStruct())
+	return
+}
+
+func (cc *CallContext) RespondAsStruct(size capnpser.StructSize) (res capnpser.StructBuilder, err error) {
+	res, err = cc.serMb.NewStruct(size)
+	if err == nil {
+		cc.pb.SetContent(res.AsAnyPointer())
+	}
+	return
+}
+
+func RespondCallAsStruct[T ~capnpser.StructBuilderType](cc *CallContext, size capnpser.StructSize) (T, error) {
+	res, err := cc.RespondAsStruct(size)
+	return T(res), err
+}
+
 // readReturnCapTable returns the capTable from the payload.
 //
 // NOTE: this assumes the message being built is a Return with Results and cap
 // table list.
-func (crb *CallContext) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
+func (cc *CallContext) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
 	var rpcMsg types.Message
 
 	// Errors don't need checking, because this is assumed to be called
 	// during return building, where the structures were allocated.
-	serMsg := crb.serMb.MessageReader()
+	serMsg := cc.serMb.MessageReader()
 	rpcMsg.ReadFromRoot(&serMsg)
 	ret, _ := rpcMsg.AsReturn()
 	res, _ := ret.AsResults()
@@ -325,23 +357,23 @@ func (crb *CallContext) readReturnCapTable() capnpser.GenericStructList[types.Ca
 
 // MUST be called with crb.rc.mu locked.
 // Does NOT create the export, only determines the ID it should have.
-func (crb *CallContext) respondAsPromise() (answerPromise, error) {
-	eid, ok := crb.rc.exports.nextID()
+func (cc *CallContext) respondAsPromise() (answerPromise, error) {
+	eid, ok := cc.rc.exports.nextID()
 	if !ok {
 		return answerPromise{}, errors.New("no more exports allowed")
 	}
 
 	// TODO: Track caps somewhere else? See corresponding in processCall.
-	capTable, err := crb.pb.NewCapTable(1, 1)
+	capTable, err := cc.pb.NewCapTable(1, 1)
 	if err != nil {
 		return answerPromise{}, err
 	}
 	capDesc := capTable.At(0)
 	capDesc.SetSenderPromise(eid)
 
-	crb.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
+	cc.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
 
-	return answerPromise{rc: crb.rc, eid: eid}, nil
+	return answerPromise{rc: cc.rc, eid: eid}, nil
 }
 
 type exception struct { // TODO: improve.

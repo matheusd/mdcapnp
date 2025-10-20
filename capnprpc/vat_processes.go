@@ -117,6 +117,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 	var stepResultPromise ExportId
 	var stepResultType string
 	var stepImportId ImportId
+
 	content, err := payload.Content()
 	if err != nil {
 		return err
@@ -149,7 +150,14 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 		// TODO: copy if its a struct? Or release serialized message if
 		// content is just a cap (because it's not needed anymore)?
 		// stepResult = content.AsStruct()
-		stepResult = struct{}{}
+		if step.csetup.ResultsParser != nil {
+			stepResult, err = step.csetup.ResultsParser(payload)
+			if err != nil {
+				return fmt.Errorf("error parsing results: %w", err)
+			}
+		} else {
+			stepResult = struct{}{}
+		}
 		stepResultType = "struct"
 	} else {
 		return errors.New("unknown/unimplemented content type")
@@ -291,6 +299,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	crb.serMb = outMsg.serMsg
 	crb.iid = InterfaceId(iid)
 	crb.mid = MethodId(mid)
+	crb.params, _ = c.Params()
 	if err != nil {
 		return err
 	}

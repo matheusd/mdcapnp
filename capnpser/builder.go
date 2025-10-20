@@ -183,6 +183,15 @@ func ReaderOfStructBuilder[B ~StructBuilderType, T ~StructType](b B) T {
 	return T(sb.Reader())
 }
 
+func (sb *StructBuilder) AsAnyPointer() AnyPointerBuilder {
+	return AnyPointerBuilder{
+		mb:  sb.mb,
+		off: sb.off,
+		ptr: buildRawStructPointer(sb.off, sb.sz),
+		sid: sb.sid,
+	}
+}
+
 func (sb *StructBuilder) hasData(dataIndex DataFieldIndex) bool {
 	return dataIndex < DataFieldIndex(sb.sz.DataSectionSize)
 }
@@ -938,6 +947,11 @@ func (mb *MessageBuilder) NewStruct(size StructSize) (sb StructBuilder, err erro
 		off: off,
 		sz:  size,
 	}, nil
+}
+
+func NewStructBuilder[T ~StructBuilderType](serMsg *MessageBuilder, size StructSize) (T, error) {
+	b, err := serMsg.NewStruct(size)
+	return T(b), err
 }
 
 // NewRootStruct initializes a new struct and sets it as the root struct on this

@@ -9,15 +9,43 @@ import (
 	"errors"
 	"fmt"
 
+	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
 // CallSetup are the requirements to build and send a Call message.
 type CallSetup struct {
-	InterfaceId   InterfaceId
-	MethodId      MethodId
-	ParamsBuilder CallParamsBuilder // Builds the Params field of an rpc.Call struct
+	InterfaceId InterfaceId
+	MethodId    MethodId
+
+	// ParamsBuilder is called with the outbound message builder when the
+	// Call message is being built. This can be used to fill the Params
+	// field of the Call.
+	ParamsBuilder CallParamsBuilder
+
+	// ResultsParser is called when a Return.Results is received in response
+	// to a Call. It can parse the encoded results into some Go value.
+	ResultsParser CallResultsParser
+}
+
+func NewCallParamsStruct[T ~capnpser.StructBuilderType](payload types.PayloadBuilder, size capnpser.StructSize) (T, error) {
+	res, err := payload.SetContentAsNewStruct(size)
+	return T(res), err
+}
+
+func ResultsStruct[T ~capnpser.StructType](payload types.Payload) (res T, err error) {
+	var content capnpser.AnyPointer
+	content, err = payload.Content()
+	if err != nil {
+		return
+	}
+	if !content.IsStruct() {
+		err = errors.New("payload contents is not a struct in results")
+		return
+	}
+	res = T(content.AsStruct())
+	return
 }
 
 type pipelineStepState int

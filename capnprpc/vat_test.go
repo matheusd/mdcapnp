@@ -141,6 +141,33 @@ func TestVoidCallBothSides(t *testing.T) {
 	// TODO: verify answers were deleted.
 }
 
+// TestAddCall tests an Add() call between two vats.
+func TestAddCall(t *testing.T) {
+	handler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+		req, err := CallContextParamsStruct[addRequest](cc)
+		if err != nil {
+			return err
+		}
+		a, b := req.A(), req.B()
+		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize)
+		if err != nil {
+			return err
+		}
+		res.SetC(a + b)
+		return nil
+	})
+
+	th := newTestHarness(t)
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+	cc, _ := th.connectVats(c, s)
+
+	a, b := int64(11), int64(1100)
+	addResFuture := testAPIAsBootstrap(cc.Bootstrap()).Add(a, b)
+	res, err := addResFuture.wait(testctx.New(t))
+	require.NoError(t, err)
+	require.Equal(t, a+b, res)
+}
+
 // TestRemotePromiseWithCap performs a basic level 1 test (resolving a remote
 // promise with a capability).
 func TestRemotePromiseWithCap(t *testing.T) {
@@ -391,5 +418,51 @@ func BenchmarkVoidCall(b *testing.B) {
 
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})
+}
 
+// BenchmarkAddCall benchmarks a basic Add() call under various circumstances.
+func BenchmarkAddCall(b *testing.B) {
+	handler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+		req, err := CallContextParamsStruct[addRequest](cc)
+		if err != nil {
+			return err
+		}
+		a, b := req.A(), req.B()
+		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize)
+		if err != nil {
+			return err
+		}
+		res.SetC(a + b)
+		return nil
+	})
+
+	b.Run("conn", func(b *testing.B) {
+		th := newTestHarness(b)
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		cc, _ := th.connectVatsWithTCP(c, s)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := cc.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(cc.Bootstrap())
+
+		var aa, bb int64 = 1, 3
+		b.ReportAllocs()
+		for b.Loop() {
+			aa += 1
+			bb = bb<<1 + aa
+			res, err := api.Add(aa, bb).wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if res != aa+bb {
+				b.Fatal("wrong result")
+			}
+		}
+
+		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
+	})
 }

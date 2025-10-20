@@ -127,6 +127,11 @@ func (s *Call) NoPromisePipelining() bool {
 	return (*capnpser.Struct)(s).Bool(dataFieldIndex, dataFieldBit)
 }
 
+func (s *Call) Params() (res Payload, err error) {
+	err = (*capnpser.Struct)(s).ReadStruct(1, (*capnpser.Struct)(&res))
+	return
+}
+
 type CallBuilder capnpser.StructBuilder
 
 func (b *CallBuilder) SetQuestionId(v QuestionId) error {
@@ -153,6 +158,16 @@ func (b *CallBuilder) NewTarget() (sb MessageTargetBuilder, err error) {
 	var nsb capnpser.StructBuilder
 	nsb, err = (*capnpser.StructBuilder)(b).NewStructField(ptrFieldIndex, structSize)
 	sb = MessageTargetBuilder(nsb)
+	return
+}
+
+func (b *CallBuilder) NewParams() (sb PayloadBuilder, err error) {
+	var structSize = payload_size
+	const ptrFieldIndex = 1
+
+	var nsb capnpser.StructBuilder
+	nsb, err = (*capnpser.StructBuilder)(b).NewStructField(ptrFieldIndex, structSize)
+	sb = PayloadBuilder(nsb)
 	return
 }
 
@@ -254,6 +269,8 @@ const (
 	payload_capTable_ptrField = 1
 )
 
+var payload_size = capnpser.StructSize{DataSectionSize: 0, PointerSectionSize: 2}
+
 func (s *Payload) Content() (res AnyPointer, err error) {
 	err = (*capnpser.Struct)(s).ReadAnyPointer(payload_content_ptrField, &res)
 	return
@@ -271,6 +288,10 @@ func (b *PayloadBuilder) AsReader() Payload {
 
 func (b *PayloadBuilder) SetContent(v capnpser.AnyPointerBuilder) error {
 	return (*capnpser.StructBuilder)(b).SetAnyPointer(payload_content_ptrField, v)
+}
+
+func (b *PayloadBuilder) SetContentAsNewStruct(size capnpser.StructSize) (capnpser.StructBuilder, error) {
+	return (*capnpser.StructBuilder)(b).NewStructField(payload_content_ptrField, size)
 }
 
 func (b *PayloadBuilder) NewCapTable(listLen, listCap int) (capnpser.GenericStructListBuilder[CapDescriptorBuilder], error) {
@@ -348,7 +369,7 @@ func (b *ReturnBuilder) SetNoFinishNeeded(v bool) error {
 }
 
 func (b *ReturnBuilder) NewResults() (sb PayloadBuilder, err error) {
-	var structSize = capnpser.StructSize{DataSectionSize: 0, PointerSectionSize: 2}
+	var structSize = payload_size
 	const unionValue = uint16(Return_Which_Results)
 
 	var nsb capnpser.StructBuilder
