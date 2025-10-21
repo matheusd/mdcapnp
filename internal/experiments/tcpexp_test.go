@@ -7,15 +7,22 @@ package experiments
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/binary"
 	"io"
 	"math/rand/v2"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"matheusd.com/depvendoredtestify/require"
 	"matheusd.com/testctx"
+)
+
+const (
+	sigModeChannel int = iota
+	sigModePipe
 )
 
 type peer struct {
@@ -25,6 +32,12 @@ type peer struct {
 
 	inBuf []byte
 
+	echoPipeR *os.File
+	echoPipeW *os.File
+	inPipeSig []byte
+
+	sigMode int
+
 	pool      sync.Pool
 	outQueue  chan *[]byte
 	gotEcho   chan struct{}
@@ -32,7 +45,10 @@ type peer struct {
 }
 
 func (p *peer) inLoop(ctx context.Context) {
+	// runtime.LockOSThread()
 	inBuf := p.inBuf
+	pipeSig := make([]byte, 8)
+	var i uint64
 	for {
 		_, err := io.ReadFull(p.r, inBuf)
 		if err != nil {
@@ -51,10 +67,15 @@ func (p *peer) inLoop(ctx context.Context) {
 			}
 			p.echoCount.Add(1)
 		} else {
+			i++
+			binary.LittleEndian.PutUint64(pipeSig, i)
+
 			// Echo reply.
-			select {
-			case p.gotEcho <- struct{}{}:
-			case <-ctx.Done():
+			switch p.sigMode {
+			case sigModeChannel:
+				p.gotEcho <- struct{}{}
+			case sigModePipe:
+				p.echoPipeW.Write(pipeSig)
 			}
 		}
 	}
@@ -110,7 +131,9 @@ func (p *peer) sendEchoRequest(ctx context.Context) {
 func (p *peer) waitEchoResponse(ctx context.Context) {
 	select {
 	case <-ctx.Done():
+		return
 	case <-p.gotEcho:
+		return
 	}
 }
 
@@ -124,24 +147,36 @@ func (p *peer) sendEchoRequestDirect(_ context.Context) {
 	p.pool.Put(outBufPtr)
 }
 
-func (p *peer) waitEchoResponseDirect(ctx context.Context) {
+func (p *peer) waitEchoResponseDirect(_ context.Context) {
 	_, err := io.ReadFull(p.r, p.inBuf)
 	if err != nil {
 		return
 	}
 }
 
+func (p *peer) waitEchoSigFromPipe(_ context.Context) {
+	p.echoPipeR.Read(p.inPipeSig)
+}
+
 func newPeer(c net.Conn) *peer {
 	var seed [32]byte
 	crand.Read(seed[:])
 	rng := rand.NewChaCha8(seed)
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+
 	return &peer{
-		r:        c,
-		w:        c,
-		rng:      rng,
-		inBuf:    make([]byte, 96),
-		outQueue: make(chan *[]byte, 100),
-		gotEcho:  make(chan struct{}, 100),
+		r:         c,
+		w:         c,
+		rng:       rng,
+		inBuf:     make([]byte, 96),
+		outQueue:  make(chan *[]byte, 100),
+		gotEcho:   make(chan struct{}, 10),
+		inPipeSig: make([]byte, 8),
+		echoPipeR: pr,
+		echoPipeW: pw,
 		pool: sync.Pool{
 			New: func() any {
 				buf := make([]byte, 96)
@@ -151,59 +186,113 @@ func newPeer(c net.Conn) *peer {
 	}
 }
 
-func BenchmarkTCPMultiplexIO(b *testing.B) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(b, err)
-	b.Cleanup(func() { lis.Close() })
+func BenchmarkTCPMultiplexAlternatives(b *testing.B) {
+	var iterIndex uint64
 
-	connChan := make(chan net.Conn, 2)
-	errChan := make(chan error, 2)
-	go func() {
-		c, err := lis.Accept()
-		if err != nil {
-			errChan <- err
-		} else {
-			connChan <- c
-		}
-	}()
-	go func() {
-		c, err := net.Dial("tcp", lis.Addr().String())
-		if err != nil {
-			errChan <- err
-		} else {
-			connChan <- c
-		}
-	}()
+	tests := []struct {
+		name     string
+		setup    func(b *testing.B, ctx context.Context, p1, p2 *peer)
+		loopIter func(b *testing.B, ctx context.Context, p1, p2 *peer)
+	}{{
+		name: "std",
+		setup: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			go p1.inLoop(ctx)
+			go p1.outLoop(ctx)
+			go p2.inLoop(ctx)
+			go p2.outLoop(ctx)
+		},
+		loopIter: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			p1.sendEchoRequest(ctx)
+			p1.waitEchoResponse(ctx)
+		},
+	}, {
+		name: "svrecho",
+		setup: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			go p1.inLoop(ctx)
+			go p1.outLoop(ctx)
+			go p2.echoLoop(ctx)
+		},
+		loopIter: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			p1.sendEchoRequest(ctx)
+			p1.waitEchoResponse(ctx)
+		},
+	}, {
+		name: "pipe",
+		setup: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			go p2.echoLoop(ctx)
+			p1.sigMode = sigModePipe
+			go p1.inLoop(ctx)
+		},
+		loopIter: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			p1.sendEchoRequestDirect(ctx)
+			p1.waitEchoSigFromPipe(ctx)
+		},
+	}, {
+		name: "direct",
+		setup: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			go p2.echoLoop(ctx)
+		},
+		loopIter: func(b *testing.B, ctx context.Context, p1, p2 *peer) {
+			p1.sendEchoRequestDirect(ctx)
+			p1.waitEchoResponseDirect(ctx)
+		},
+	}}
 
-	conns := make([]net.Conn, 0, 2)
-	for len(conns) < 2 {
-		select {
-		case c := <-connChan:
-			conns = append(conns, c)
-		case err := <-errChan:
-			b.Fatal(err)
-		}
+	for _, tc := range tests {
+		b.Run(tc.name, func(b *testing.B) {
+			lis, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(b, err)
+			b.Cleanup(func() { lis.Close() })
+
+			connChan := make(chan net.Conn, 2)
+			errChan := make(chan error, 2)
+			go func() {
+				c, err := lis.Accept()
+				if err != nil {
+					errChan <- err
+				} else {
+					connChan <- c
+				}
+			}()
+			go func() {
+				c, err := net.Dial("tcp", lis.Addr().String())
+				if err != nil {
+					errChan <- err
+				} else {
+					connChan <- c
+				}
+			}()
+
+			conns := make([]net.Conn, 0, 2)
+			for len(conns) < 2 {
+				select {
+				case c := <-connChan:
+					conns = append(conns, c)
+				case err := <-errChan:
+					b.Fatal(err)
+				}
+			}
+
+			ctx := testctx.New(b)
+
+			p1 := newPeer(conns[0])
+			p2 := newPeer(conns[1])
+			tc.setup(b, ctx, p1, p2)
+
+			b.ReportAllocs()
+			var wantCount uint64
+			iterIndex = 0
+			for b.Loop() {
+				tc.loopIter(b, ctx, p1, p2)
+				iterIndex++
+
+				wantCount++
+				if ctx.Err() != nil {
+					b.Fatal(ctx.Err())
+				}
+			}
+
+			require.Equal(b, wantCount, p2.echoCount.Load())
+		})
 	}
-
-	ctx := testctx.New(b)
-
-	p1 := newPeer(conns[0])
-	p2 := newPeer(conns[1])
-	// go p1.inLoop(ctx)
-	// go p1.outLoop(ctx)
-	// go p2.inLoop(ctx)
-	// go p2.outLoop(ctx)
-	go p2.echoLoop(ctx)
-
-	b.ReportAllocs()
-	var wantCount uint64
-	for b.Loop() {
-		// p1.sendEchoRequest(ctx)
-		//p1.waitEchoResponse(ctx)
-		p1.sendEchoRequestDirect(ctx)
-		p1.waitEchoResponseDirect(ctx)
-		wantCount++
-	}
-
-	require.Equal(b, wantCount, p2.echoCount.Load())
 }
