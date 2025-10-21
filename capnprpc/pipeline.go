@@ -19,6 +19,8 @@ type CallSetup struct {
 	InterfaceId InterfaceId
 	MethodId    MethodId
 
+	callOutMsg rpcCallMsgBuilder // !!! Experimental
+
 	// ParamsBuilder is called with the outbound message builder when the
 	// Call message is being built. This can be used to fill the Params
 	// field of the Call.
@@ -27,6 +29,8 @@ type CallSetup struct {
 	// ResultsParser is called when a Return.Results is received in response
 	// to a Call. It can parse the encoded results into some Go value.
 	ResultsParser CallResultsParser
+
+	copyReturnResults bool
 }
 
 func NewCallParamsStruct[T ~capnpser.StructBuilderType](payload types.PayloadBuilder, size capnpser.StructSize) (T, error) {
@@ -104,11 +108,13 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 
 type CallFuture struct {
 	step *pipelineStep
+	vat  *Vat
 }
 
 func newRootFutureCap(v *Vat) CallFuture {
 	return CallFuture{
 		step: newRootStep(v),
+		vat:  v,
 	}
 }
 
@@ -118,6 +124,7 @@ func RemoteCall(obj CallFuture, csetup CallSetup) (res CallFuture) {
 	// Every call creates a new step with parent reference
 	res.step = newChildStep(parentStep)
 	res.step.csetup = csetup
+	res.vat = obj.vat
 
 	return res
 }
@@ -214,6 +221,18 @@ func WaitResult(ctx context.Context, cf CallFuture) (res any, err error) {
 
 	res = pipeRes
 	return
+}
+
+func releaseStepResultMsgBuilder(cf CallFuture) {
+	step := cf.step
+	step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+		// TODO: make assertions on type, state, etc
+		anyp := ov.value.(capnpser.AnyPointerBuilder)
+		vat := ov.conn.vat
+		vat.mbp.put(anyp.MsgBuilder())
+		ov.value = nil
+		return os, ov, nil
+	})
 }
 
 func releaseFuture(ctx context.Context, cap CallFuture) {

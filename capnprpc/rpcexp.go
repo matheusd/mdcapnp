@@ -37,13 +37,13 @@ type messageBuilderPool struct {
 	p     *sync.Pool
 }
 
-func (mp *messageBuilderPool) getRawMessageBuilder() *capnpser.MessageBuilder {
+func (mp *messageBuilderPool) getRawMessageBuilder(sizeHint capnpser.WordCount) *capnpser.MessageBuilder {
 	return mp.p.Get().(*capnpser.MessageBuilder)
 }
 
-func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize int) (outMsg, error) {
+func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize capnpser.WordCount) (outMsg, error) {
 	// TODO: calculate the size hint.
-	serMb := mp.getRawMessageBuilder()
+	serMb := mp.getRawMessageBuilder(extraPayloadSize)
 	mb, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
 		return outMsg{}, err

@@ -462,7 +462,62 @@ func BenchmarkAddCall(b *testing.B) {
 				b.Fatal("wrong result")
 			}
 		}
-
-		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
 	})
+
+	b.Run("alt", func(b *testing.B) {
+		th := newTestHarness(b)
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		cc, _ := th.connectVatsWithTCP(c, s)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := cc.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(cc.Bootstrap())
+
+		var aa, bb, cv int64 = 1, 3, 0
+		b.ReportAllocs()
+		for b.Loop() {
+			aa += 1
+			bb = bb<<1 + aa
+			err := api.AddAlt(aa, bb, &cv).wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if cv != aa+bb {
+				b.Fatal("wrong result")
+			}
+		}
+	})
+
+	b.Run("alt2", func(b *testing.B) {
+		th := newTestHarness(b)
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		cc, _ := th.connectVatsWithTCP(c, s)
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := cc.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(cc.Bootstrap())
+
+		var aa, bb int64 = 1, 3
+		b.ReportAllocs()
+		for b.Loop() {
+			aa += 1
+			bb = bb<<1 + aa
+			res, err := api.AddAlt2(aa, bb).wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if res != aa+bb {
+				b.Fatal("wrong result")
+			}
+		}
+	})
+
 }

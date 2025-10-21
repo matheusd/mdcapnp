@@ -155,6 +155,13 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 			if err != nil {
 				return fmt.Errorf("error parsing results: %w", err)
 			}
+		} else if step.csetup.copyReturnResults {
+			mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
+			err = capnpser.DeepCopyAndSetRoot(content, mb)
+			if err != nil {
+				return err
+			}
+			stepResult = mb
 		} else {
 			stepResult = struct{}{}
 		}
@@ -465,7 +472,7 @@ func (v *Vat) copyThirdPartyCapDesc(tpcd types.ThirdPartyCapDescriptor) (recvdTh
 	if err != nil {
 		return recvdThirdPartyCapDesc{}, err
 	}
-	mb := v.mbp.getRawMessageBuilder()
+	mb := v.mbp.getRawMessageBuilder(0) // FIXME: get hint of tpcd size?
 	tpcdCopy, err := capnpser.DeepCopy(tpcdId, mb)
 	if err != nil {
 		v.mbp.put(mb)

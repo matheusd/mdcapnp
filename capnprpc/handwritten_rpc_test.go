@@ -116,6 +116,85 @@ func (api testAPI) Add(a int64, b int64) futureAddResult {
 	))
 }
 
+type futureAddAltResult CallFuture
+
+func (fut futureAddAltResult) wait(ctx context.Context) error {
+	_, err := WaitResult(ctx, CallFuture(fut))
+	return err
+}
+
+func (api testAPI) AddAlt(a int64, b int64, c *int64) futureAddAltResult {
+	return futureAddAltResult(RemoteCall(
+		CallFuture(api),
+		CallSetup{
+			InterfaceId: testAPI_InterfaceID,
+			MethodId:    testAPI_Add_CallID,
+			ParamsBuilder: func(payload types.PayloadBuilder) error {
+				req, err := NewCallParamsStruct[addRequestBuilder](payload, addRequestSize)
+				if err != nil {
+					return err
+				}
+				req.SetA(a)
+				req.SetB(b)
+				return nil
+			},
+			ResultsParser: func(p types.Payload) (any, error) {
+				res, err := ResultsStruct[addResponse](p)
+				if err != nil {
+					return nil, err
+				}
+				*c = res.C()
+				return c, nil
+			},
+		},
+	))
+}
+
+type futureAddAlt2Result CallFuture
+
+func (fut futureAddAlt2Result) wait(ctx context.Context) (res int64, err error) {
+	// var resAny capnpser.AnyPointerBuilder
+	// resAny, err = CastCallResultOrErr[capnpser.AnyPointerBuilder](WaitResult(ctx, CallFuture(fut)))
+	var resMb *capnpser.MessageBuilder
+	resMb, err = CastCallResultOrErr[*capnpser.MessageBuilder](WaitResult(ctx, CallFuture(fut)))
+	if err != nil {
+		return
+	}
+	resAnyReader := resMb.MessageReader()
+	resStruct, err := resAnyReader.GetRoot()
+	resAdd := addResponse(resStruct)
+	res = resAdd.C()
+	// fut.vat.mbp.put(resAny.MsgBuilder())
+	fut.vat.mbp.put(resMb)
+	return
+}
+
+func (api testAPI) AddAlt2(a int64, b int64) futureAddAlt2Result {
+	callb := api.vat.GetCallMessageBuilder(addRequestSize.TotalSize())
+
+	call, _ := callb.mb.NewCall()
+	callb.builder = capnpser.StructBuilder(call)
+	_ = call.SetInterfaceId(testAPI_InterfaceID)
+	_ = call.SetMethodId(testAPI_Add_CallID)
+	payload, _ := call.NewParams()
+	req, err := NewCallParamsStruct[addRequestBuilder](payload, addRequestSize)
+	if err != nil {
+		panic(err)
+	}
+	req.SetA(a)
+	req.SetB(b)
+
+	return futureAddAlt2Result(RemoteCall(
+		CallFuture(api),
+		CallSetup{
+			InterfaceId:       testAPI_InterfaceID,
+			MethodId:          testAPI_Add_CallID,
+			callOutMsg:        callb,
+			copyReturnResults: true,
+		},
+	))
+}
+
 func (api testAPI) GetAnotherAPICap() testAPI {
 	return testAPI(RemoteCall(
 		CallFuture(api),

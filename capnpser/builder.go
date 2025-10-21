@@ -32,6 +32,10 @@ func (ap *AnyPointerBuilder) Reader() AnyPointer {
 	}
 }
 
+func (ap *AnyPointerBuilder) MsgBuilder() *MessageBuilder {
+	return ap.mb
+}
+
 func CapPointerAsAnyPointerBuilder(index uint32) AnyPointerBuilder {
 	return AnyPointerBuilder{
 		ptr: buildRawCapPointer(index),
@@ -181,6 +185,15 @@ func (sb *StructBuilder) Reader() Struct {
 func ReaderOfStructBuilder[B ~StructBuilderType, T ~StructType](b B) T {
 	sb := StructBuilder(b)
 	return T(sb.Reader())
+}
+
+func (sb *StructBuilder) MsgBuilder() *MessageBuilder {
+	return sb.mb
+}
+
+func StructBuilderMsgBuilder[B ~StructBuilderType](b B) *MessageBuilder {
+	sb := (StructBuilder)(b)
+	return (&sb).MsgBuilder()
 }
 
 func (sb *StructBuilder) AsAnyPointer() AnyPointerBuilder {

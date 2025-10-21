@@ -55,6 +55,11 @@ func NewVat(opts ...VatOption) *Vat {
 	return v
 }
 
+func (v *Vat) GetCallMessageBuilder(payloadSizeHint capnpser.WordCount) rpcCallMsgBuilder {
+	outMsg, _ := v.mbp.getForPayloadSize(payloadSizeHint)
+	return rpcCallMsgBuilder{outMsg: outMsg}
+}
+
 // TODO: merge with RunConn??
 func (v *Vat) UseRemoteVat(c conn) RemoteVat {
 	return RemoteVat{rc: v.RunConn(c)}
@@ -139,18 +144,20 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 	}
 
 	// Prepare the RPC message for this single step
-	outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
-	if err != nil {
+	var cmb rpcCallMsgBuilder
+	if step.csetup.callOutMsg.serMsg != nil {
+		cmb = step.csetup.callOutMsg
+	} else if outMsg, err := v.mbp.getForPayloadSize(0); err != nil { // TODO: size hint?
 		return err
-	}
-	cmb := rpcCallMsgBuilder{outMsg: outMsg, isBootstrap: step.parent == nil}
-	if cmb.isBootstrap {
+	} else if step.parent == nil {
+		cmb = rpcCallMsgBuilder{outMsg: outMsg, isBootstrap: step.parent == nil}
 		bb, err := cmb.mb.NewBoostrap()
 		if err != nil {
 			return err
 		}
 		cmb.builder = capnpser.StructBuilder(bb)
 	} else {
+		cmb = rpcCallMsgBuilder{outMsg: outMsg, isBootstrap: step.parent == nil}
 		call, err := cmb.mb.NewCall()
 		if err != nil {
 			return err
