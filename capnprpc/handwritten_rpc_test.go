@@ -15,7 +15,7 @@ import (
 type futureString CallFuture
 
 func (fs futureString) wait(ctx context.Context) (string, error) {
-	return CastCallResultOrErr[string](WaitResult(ctx, CallFuture(fs)))
+	return CastCallResultOrErr[string](WaitReturn(ctx, CallFuture(fs)))
 }
 
 type testAPI CallFuture
@@ -25,7 +25,7 @@ const testAPI_InterfaceID = 1000
 type futureVoid CallFuture
 
 func (fv futureVoid) Wait(ctx context.Context) error {
-	_, err := WaitResult(ctx, CallFuture(fv))
+	_, err := WaitReturn(ctx, CallFuture(fv))
 	return err
 }
 
@@ -37,10 +37,10 @@ const testAPI_Add_CallID = 104
 func (api testAPI) VoidCall() futureVoid {
 	return futureVoid(RemoteCall(
 		CallFuture(api),
-		CallSetup{
-			InterfaceId: testAPI_InterfaceID,
-			MethodId:    testAPI_Void_CallID,
-		},
+		SetupCallNoParams(CallFuture(api),
+			testAPI_InterfaceID,
+			testAPI_Void_CallID,
+		),
 	))
 }
 
@@ -87,7 +87,7 @@ func (s *addResponse) C() int64 {
 type futureAddResult CallFuture
 
 func (fut futureAddResult) wait(ctx context.Context) (res int64, err error) {
-	return CastCallResultOrErr[int64](WaitResult(ctx, CallFuture(fut)))
+	return CastCallResultOrErr[int64](WaitReturn(ctx, CallFuture(fut)))
 }
 
 func (api testAPI) Add(a int64, b int64) futureAddResult {
@@ -119,7 +119,7 @@ func (api testAPI) Add(a int64, b int64) futureAddResult {
 type futureAddAltResult CallFuture
 
 func (fut futureAddAltResult) wait(ctx context.Context) error {
-	_, err := WaitResult(ctx, CallFuture(fut))
+	_, err := WaitReturn(ctx, CallFuture(fut))
 	return err
 }
 
@@ -155,43 +155,58 @@ type futureAddAlt2Result CallFuture
 func (fut futureAddAlt2Result) wait(ctx context.Context) (res int64, err error) {
 	// var resAny capnpser.AnyPointerBuilder
 	// resAny, err = CastCallResultOrErr[capnpser.AnyPointerBuilder](WaitResult(ctx, CallFuture(fut)))
-	var resMb *capnpser.MessageBuilder
-	resMb, err = CastCallResultOrErr[*capnpser.MessageBuilder](WaitResult(ctx, CallFuture(fut)))
+	/*
+		var resMb *capnpser.MessageBuilder
+		resMb, err = CastCallResultOrErr[*capnpser.MessageBuilder](WaitResult(ctx, CallFuture(fut)))
+		if err != nil {
+			return
+		}
+		resAnyReader := resMb.MessageReader()
+		resStruct, err := resAnyReader.GetRoot()
+		resAdd := addResponse(resStruct)
+		res = resAdd.C()
+		// fut.vat.mbp.put(resAny.MsgBuilder())
+		fut.vat.mbp.put(resMb)
+	*/
+	r, rr, err := WaitReturnResultsStruct[addResponse](ctx, CallFuture(fut))
 	if err != nil {
 		return
 	}
-	resAnyReader := resMb.MessageReader()
-	resStruct, err := resAnyReader.GetRoot()
-	resAdd := addResponse(resStruct)
-	res = resAdd.C()
-	// fut.vat.mbp.put(resAny.MsgBuilder())
-	fut.vat.mbp.put(resMb)
+	res = r.C()
+	rr.Release()
 	return
 }
 
 func (api testAPI) AddAlt2(a int64, b int64) futureAddAlt2Result {
-	callb := api.vat.GetCallMessageBuilder(addRequestSize.TotalSize())
 
-	call, _ := callb.mb.NewCall()
-	callb.builder = capnpser.StructBuilder(call)
-	_ = call.SetInterfaceId(testAPI_InterfaceID)
-	_ = call.SetMethodId(testAPI_Add_CallID)
-	payload, _ := call.NewParams()
-	req, err := NewCallParamsStruct[addRequestBuilder](payload, addRequestSize)
-	if err != nil {
-		panic(err)
-	}
+	/*
+		callb := api.vat.getCallMessageBuilder(addRequestSize.TotalSize())
+			call, _ := callb.mb.NewCall()
+			callb.builder = capnpser.StructBuilder(call)
+			_ = call.SetInterfaceId(testAPI_InterfaceID)
+			_ = call.SetMethodId(testAPI_Add_CallID)
+			payload, _ := call.NewParams()
+			req, err := NewCallParamsStruct[addRequestBuilder](payload, addRequestSize)
+			if err != nil {
+				panic(err)
+			}
+	*/
+
+	cs, req := SetupCallWithStructParams[addRequestBuilder](
+		CallFuture(api),
+		addRequestSize.TotalSize(),
+		testAPI_InterfaceID,
+		testAPI_Add_CallID,
+		addRequestSize,
+	)
+
 	req.SetA(a)
 	req.SetB(b)
+	cs.WantReturnResults = true
 
 	return futureAddAlt2Result(RemoteCall(
 		CallFuture(api),
-		CallSetup{
-			InterfaceId:       testAPI_InterfaceID,
-			MethodId:          testAPI_Add_CallID,
-			callOutMsg:        callb,
-			copyReturnResults: true,
-		},
+		cs,
 	))
 }
 
@@ -221,11 +236,11 @@ func (api testAPI) GetUser(id string) testUser {
 
 // Wait until this is resolved as a concrete, exported capability.
 func (api testAPI) Wait(ctx context.Context) (capability, error) {
-	return CastCallResultOrErr[capability](WaitResult(ctx, CallFuture(api)))
+	return CastCallResultOrErr[capability](WaitReturn(ctx, CallFuture(api)))
 }
 
 func (api testAPI) WaitDiscardResult(ctx context.Context) error {
-	_, err := WaitResult(ctx, CallFuture(api))
+	_, err := WaitReturn(ctx, CallFuture(api))
 	return err
 }
 
@@ -290,7 +305,7 @@ func example01() {
 	prof2_2 := user2.GetProfile()        // Fork
 	go prof2_2.GetAvatarData().wait(ctx) // Dispatched fork before original.
 	go prof2.GetAvatarData().wait(ctx)
-	go WaitResult(ctx, CallFuture(user2)) // Dispatched fork parent after fork children.
+	go WaitReturn(ctx, CallFuture(user2)) // Dispatched fork parent after fork children.
 
 	// _ = testUser(api).GetProfile() // Should not compile
 }

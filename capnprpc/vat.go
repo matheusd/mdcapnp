@@ -55,6 +55,11 @@ func NewVat(opts ...VatOption) *Vat {
 	return v
 }
 
+// isLevel0Sync returns true if this is a level 0 sync client vat.
+func (v *Vat) isLevel0Sync() bool {
+	return v.cfg.isLevel0Sync
+}
+
 func (v *Vat) GetCallMessageBuilder(payloadSizeHint capnpser.WordCount) rpcCallMsgBuilder {
 	outMsg, _ := v.mbp.getForPayloadSize(payloadSizeHint)
 	return rpcCallMsgBuilder{outMsg: outMsg}

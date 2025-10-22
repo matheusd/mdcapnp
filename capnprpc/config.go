@@ -22,6 +22,10 @@ type vatConfig struct {
 	// delayResolveIn3PH is how long to delay sending a resolve after
 	// sending a Provide.
 	delayResolveIn3PH time.Duration
+
+	// isLevel0Sync is true if the vat is a level 0 sync client vat that
+	// does not support remote promises, pipelining, 3PH, etc.
+	isLevel0Sync bool
 }
 
 // applyOptions applies the given options to the config.

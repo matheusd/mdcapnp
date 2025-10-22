@@ -6,19 +6,22 @@ package capnprpc
 
 import "context"
 
-type capability struct { // Right type?
-	eid ExportId
+type CapabilityType = struct {
+	eid ExportId // Is this right???
 }
+
+type capability CapabilityType
 
 type BootstrapFuture CallFuture
 
 func (bc BootstrapFuture) Wait(ctx context.Context) (capability, error) {
-	return CastCallResultOrErr[capability](WaitResult(ctx, CallFuture(bc)))
+	// return CastCallResultOrErr[capability](WaitReturn(ctx, CallFuture(bc)))
+	return WaitReturnResultsCapability[capability](ctx, CallFuture(bc))
 }
 
 type VoidFuture CallFuture
 
 func (fv VoidFuture) Wait(ctx context.Context) error {
-	_, err := WaitResult(ctx, CallFuture(fv))
+	_, err := WaitReturn(ctx, CallFuture(fv))
 	return err
 }

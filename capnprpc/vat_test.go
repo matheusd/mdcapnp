@@ -403,12 +403,15 @@ func BenchmarkVoidCall(b *testing.B) {
 		ctx := testctx.New(b)
 
 		// Wait for bootstrap.
-		require.NoError(b, c.WaitBootstrap(ctx))
+		_, err := c.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(c.Bootstrap())
 
 		b.ReportAllocs()
 		for b.Loop() {
-			c.NextCallMsg(testAPI_InterfaceID, testAPI_Void_CallID)
-			_, err := c.Call(ctx)
+			err := api.VoidCall().Wait(ctx)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -520,4 +523,36 @@ func BenchmarkAddCall(b *testing.B) {
 		}
 	})
 
+	b.Run("level0", func(b *testing.B) {
+		th := newTestHarness(b)
+		s := th.newVat("server", WithBootstrapHandler(handler))
+
+		io1, io2 := th.tcpTransportPair("client", "server")
+		s.RunConn(io2)
+
+		c := NewLevel0ClientVat(Level0ClientCfg{Conn: io1})
+
+		ctx := testctx.New(b)
+
+		// Wait for bootstrap.
+		_, err := c.Bootstrap().Wait(testctx.New(b))
+		require.NoError(b, err)
+
+		// Bootstrap resolved.
+		api := testAPIAsBootstrap(c.Bootstrap())
+
+		var aa, bb int64 = 1, 3
+		b.ReportAllocs()
+		for b.Loop() {
+			aa += 1
+			bb = bb<<1 + aa
+			res, err := api.AddAlt2(aa, bb).wait(ctx)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if res != aa+bb {
+				b.Fatal("wrong result")
+			}
+		}
+	})
 }

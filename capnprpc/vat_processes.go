@@ -155,6 +155,17 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 			if err != nil {
 				return fmt.Errorf("error parsing results: %w", err)
 			}
+		} else if step.csetup.WantReturnResults {
+			// We need to copy because processReturn is inside the
+			// inbound loop of the source running conn, but handling
+			// is done outside (by the caller of WaitResult).
+			mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
+			err = capnpser.DeepCopyAndSetRoot(content, mb)
+			if err != nil {
+				return err
+			}
+			stepResult = mb
+
 		} else if step.csetup.copyReturnResults {
 			mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
 			err = capnpser.DeepCopyAndSetRoot(content, mb)
@@ -1110,7 +1121,7 @@ func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
 	cb.SetQuestionId(thisQid)
 	mtb, err := cb.NewTarget()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("unable to create message target: %v", err)
 	}
 
 	if parentIid > 0 {

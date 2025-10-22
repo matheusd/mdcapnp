@@ -97,7 +97,7 @@ type runningConn struct {
 	imports   table[ImportId, imprt]
 	exports   table[ExportId, export]
 
-	inBuf []byte
+	// inBuf []byte
 
 	ctx    context.Context
 	cancel func(error) // Closes runningConn.

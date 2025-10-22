@@ -14,9 +14,9 @@ import (
 )
 
 func TestVoidCallLevel0(t *testing.T) {
-	called := make(chan struct{})
+	called := make(chan struct{}, 1)
 	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
-		close(called)
+		called <- struct{}{}
 		return nil
 	})
 
@@ -31,10 +31,20 @@ func TestVoidCallLevel0(t *testing.T) {
 	ctx := testctx.New(t)
 
 	// Wait for bootstrap.
-	require.NoError(t, c.WaitBootstrap(ctx))
+	boot := c.Bootstrap()
+	_, err := boot.Wait(ctx)
+	require.NoError(t, err)
 
-	c.NextCallMsg(testAPI_InterfaceID, testAPI_Void_CallID)
-	_, err := c.Call(ctx)
+	// Execute void call.
+	api := testAPIAsBootstrap(c.Bootstrap())
+	err = api.VoidCall().Wait(ctx)
+	require.NoError(t, err)
+
+	// Ensure server was actually called.
+	chantest.AssertRecv(t, called)
+
+	// Execute second call.
+	err = api.VoidCall().Wait(ctx)
 	require.NoError(t, err)
 	chantest.AssertRecv(t, called)
 }
