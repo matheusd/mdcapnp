@@ -302,19 +302,23 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	// TODO: proxy calls when exp.typ == exportTypeThirdPartyExport.
 
 	// Start preparing reply.
-	outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
-	if err != nil {
-		return err
-	}
-	reply, err := outMsg.mb.NewReturn()
-	if err != nil {
-		return err
-	}
-	reply.SetAnswerId(AnswerId(qid))
+	/*
+		outMsg, err := v.mbp.getForPayloadSize(0) // TODO: size hint?
+		if err != nil {
+			return err
+		}
+		reply, err := outMsg.mb.NewReturn()
+		if err != nil {
+			return err
+		}
+		reply.SetAnswerId(AnswerId(qid))
+	*/
 
 	crb := &rc.crb // Ok to reuse (rc is locked).
-	crb.pb, err = reply.NewResults()
-	crb.serMb = outMsg.serMsg
+	*crb = CallContext{vat: v, rc: rc}
+	// crb.pb, err = reply.NewResults()
+	// crb.serMb = outMsg.serMsg
+	crb.aid = AnswerId(qid)
 	crb.iid = InterfaceId(iid)
 	crb.mid = MethodId(mid)
 	crb.params, _ = c.Params()
@@ -322,30 +326,19 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 		return err
 	}
 
+	var outm outMsg
+
 	// Make the call!
 	logEvent.Msg("Locally handling call")
 	err = exp.handler.Call(rc.ctx, crb)
 	if ex, ok := err.(callExceptionError); ok {
-		// When an exception that will be sent remotely is detected,
-		// re-create the reply. This ensures anything written to the
-		// payload inside the handler's Call() method will *NOT* be
-		// sent as an orphan object inside the reply.
-		if err := outMsg.serMsg.Reset(); err != nil {
-			return err
-		}
-
-		// Turn the error into a returned exception.
-		reply, err = outMsg.mb.NewReturn()
+		var exb types.ExceptionBuilder
+		outm, exb, err = v.newReturnException(AnswerId(qid))
 		if err != nil {
 			return err
 		}
-		reply.SetAnswerId(AnswerId(qid))
 
-		exc, err := reply.NewException()
-		if err != nil {
-			return err
-		}
-		exc.SetReason(err.Error()) // TODO: send more details.
+		exb.SetReason(err.Error()) // TODO: send more details.
 		_ = ex
 
 		/*
@@ -367,6 +360,19 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 		// Fatal connection error.
 		return err
 	} else {
+		var reply types.ReturnBuilder
+		if crb.serMb == nil {
+			// Handler did not allocate any return data. Assume a void
+			// return.
+			outm, reply, _, err = v.newReturnPayload(AnswerId(qid))
+			if err != nil {
+				return err
+			}
+		} else {
+			outm = outMsg{serMsg: crb.serMb, mb: crb.mb}
+			reply = crb.rb
+		}
+
 		// No finish is needed if the call promised no pipelining or
 		// the result has no capabilities (i.e. the result is not
 		// callable).
@@ -445,7 +451,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			Msg("Processed call into payload result")
 	}
 
-	return rc.send(ctx, outMsg)
+	return rc.send(ctx, outm)
 	// return rc.queue(ctx, outMsg)
 }
 
@@ -901,7 +907,7 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac types.Accep
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	outMsg, payBuilder, err := v.newReturnPayload(provideAid)
+	outMsg, _, payBuilder, err := v.newReturnPayload(provideAid)
 	if err != nil {
 		return err
 	}

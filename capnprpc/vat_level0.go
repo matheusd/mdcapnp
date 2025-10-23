@@ -34,7 +34,7 @@ type Level0ClientVat struct {
 	callSetupStage atomic.Int64 // Protection against misuse.
 	csetup         CallSetup
 
-	mbp *messageBuilderPool
+	mbp *MessageBuilderPool
 
 	boot BootstrapFuture
 
@@ -47,7 +47,7 @@ func NewLevel0ClientVat(cfg Level0ClientCfg) *Level0ClientVat {
 		cfg:     cfg,
 		conn:    cfg.Conn,
 		lastQid: level0BootQid + 1,
-		mbp:     newMessageBuilderPool(),
+		mbp:     NewMessageBuilderPool(),
 	}
 	v.boot = BootstrapFuture(newRootFutureCap(v))
 	v.csetup.callOutMsg.isBootstrap = true
@@ -186,7 +186,8 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	} else {
 		// Caller wants the reply data. Copy into a new message builder for them
 		// to use it.
-		mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
+		sizeHint := inMsg.Msg.Arena().TotalSize() // TODO: Add overhead?
+		mb := v.mbp.getRawMessageBuilder(sizeHint)
 		err = capnpser.DeepCopyAndSetRoot(content, mb)
 		if err != nil {
 			return nil, err

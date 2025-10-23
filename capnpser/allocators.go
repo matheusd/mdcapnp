@@ -36,25 +36,6 @@ func (s *SimpleSingleAllocator) Init(state *AllocState) (err error) {
 	return
 }
 
-func (s *SimpleSingleAllocator) AllocateXXXX(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
-	sizeBytes := int(size.ByteCount())
-	seg0 := state.GetSeg0()
-	freeCap := cap(state.FirstSeg) - len(state.FirstSeg)
-	if freeCap < sizeBytes {
-		// Resize needed.
-		newSeg0Size := len(seg0) + sizeBytes
-		headerBuf := state.GetHeader()
-		headerBuf = slices.Grow(headerBuf, newSeg0Size)[:8+newSeg0Size]
-		state.SetHeaderAndSeg0(headerBuf, 1)
-	} else {
-		// Increase len of segment 0.
-		off = WordOffset(len(seg0) / WordSize)
-		state.SetSeg0(seg0[:len(seg0)+sizeBytes])
-	}
-	return
-
-}
-
 func (s *SimpleSingleAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
 	sizeBytes := int(size.ByteCount())
 	lenSeg0 := len(state.FirstSeg)
@@ -85,3 +66,65 @@ func (s *SimpleSingleAllocator) Reset(state *AllocState) (err error) {
 }
 
 var DefaultSimpleSingleAllocator = &SimpleSingleAllocator{initialSize: 1024 / WordSize}
+
+type PoolableAllocatorPoolIntf interface {
+	Get(size WordCount) []byte
+	Put(b []byte)
+}
+
+type SingleSegmentPoolableAllocator struct {
+	initialSize WordCount
+	pool        PoolableAllocatorPoolIntf
+}
+
+func (p *SingleSegmentPoolableAllocator) Init(state *AllocState) (err error) {
+	buf := p.pool.Get(p.initialSize)
+	state.SetHeaderAndSeg0(buf[:16], 1)
+	return
+}
+
+func (p *SingleSegmentPoolableAllocator) Allocate(state *AllocState, preferred SegmentID, size WordCount) (seg SegmentID, off WordOffset, err error) {
+	sizeBytes := int(size.ByteCount())
+	lenSeg0 := len(state.FirstSeg)
+	newLenSeg0 := lenSeg0 + sizeBytes
+	freeCap := cap(state.FirstSeg) - lenSeg0
+	off = WordOffset(lenSeg0 / WordSize)
+	if freeCap < sizeBytes {
+		// Resize needed.
+		// state.HeaderBuf = slices.Grow(state.HeaderBuf, newLenSeg0)
+		//state.FirstSeg = state.HeaderBuf[8 : 8+newLenSeg0]
+		oldBuf := state.HeaderBuf[:8+lenSeg0]
+		newBuf := p.pool.Get(WordCount(newLenSeg0/WordSize) + 1)
+
+		copy(newBuf, oldBuf)
+		state.SetHeaderAndSeg0(newBuf[:newLenSeg0+8], 1)
+		clear(oldBuf)
+		p.pool.Put(oldBuf)
+	} else {
+		state.FirstSeg = state.FirstSeg[:newLenSeg0]
+	}
+
+	return
+
+}
+
+func (p *SingleSegmentPoolableAllocator) Reset(state *AllocState) (err error) {
+	oldBuf := state.HeaderBuf[:8+len(state.FirstSeg)]
+	clear(oldBuf)
+	if cap(oldBuf) == int(p.initialSize) {
+		// Can still use the same slice.
+		state.SetHeaderAndSeg0(oldBuf[:16], 1)
+	} else {
+		// Cannot use the same slice. Fetch one with the initial size.
+		p.pool.Put(oldBuf)
+		p.Init(state)
+	}
+	return nil
+}
+
+func NewSingleSegmentPoolableAllocator(initialSize WordCount, pool PoolableAllocatorPoolIntf) *SingleSegmentPoolableAllocator {
+	return &SingleSegmentPoolableAllocator{
+		initialSize: initialSize,
+		pool:        pool,
+	}
+}

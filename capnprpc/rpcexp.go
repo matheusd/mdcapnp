@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 	"weak"
 
@@ -30,54 +29,6 @@ type messageTarget struct {
 type introductionInfo struct {
 	sendToRecipientAlt capnpser.AnyPointer
 	sendToTargetAlt    capnpser.AnyPointer
-}
-
-type messageBuilderPool struct {
-	alloc capnpser.Allocator // Alloc strategy for outbound rpc messages.
-	p     *sync.Pool
-}
-
-func (mp *messageBuilderPool) getRawMessageBuilder(sizeHint capnpser.WordCount) *capnpser.MessageBuilder {
-	return mp.p.Get().(*capnpser.MessageBuilder)
-}
-
-func (mp *messageBuilderPool) getForPayloadSize(extraPayloadSize capnpser.WordCount) (outMsg, error) {
-	// TODO: calculate the size hint.
-	serMb := mp.getRawMessageBuilder(extraPayloadSize)
-	mb, err := types.NewRootMessageBuilder(serMb)
-	if err != nil {
-		return outMsg{}, err
-	}
-	return outMsg{serMsg: serMb, mb: mb}, nil
-}
-
-func (mp *messageBuilderPool) get() (outMsg, error) {
-	return mp.getForPayloadSize(0)
-}
-
-func (mp *messageBuilderPool) put(serMb *capnpser.MessageBuilder) {
-	err := serMb.Reset()
-	if err != nil {
-		panic(err) // Simple allocator never errors on Reset().
-	}
-	mp.p.Put(serMb)
-}
-
-func newMessageBuilderPool() *messageBuilderPool {
-	alloc := capnpser.NewSimpleSingleAllocator(16, false)
-	return &messageBuilderPool{
-		alloc: alloc,
-		p: &sync.Pool{
-			New: func() any {
-				serMb, err := capnpser.NewMessageBuilder(alloc)
-				if err != nil {
-					// SimpleSingleAlloc never errors here.
-					panic(err)
-				}
-				return serMb
-			},
-		},
-	}
 }
 
 type rpcCallMsgBuilder struct {
@@ -124,6 +75,7 @@ func (ap answerPromise) resolveToHandler(handler CallHandler) error {
 	ap.rc.mu.Lock()
 	exp, ok := ap.rc.exports.get(ap.eid)
 	if !ok {
+		fmt.Println(ap.rc.vat.cfg.name, ap.rc.exports)
 		err = fmt.Errorf("export %d not found", ap.eid)
 	} else if exp.resolved() {
 		err = fmt.Errorf("promised export %d already resolved to %s",
@@ -289,10 +241,15 @@ type CallParamsBuilder func(types.PayloadBuilder) error
 type CallResultsParser func(types.Payload) (any, error)
 
 type CallContext struct {
-	rc    *runningConn
-	pb    types.PayloadBuilder
-	serMb *capnpser.MessageBuilder // Root reply message builder
+	vat *Vat
+	rc  *runningConn
 
+	serMb *capnpser.MessageBuilder // Root reply message builder
+	mb    types.MessageBuilder
+	rb    types.ReturnBuilder
+	pb    types.PayloadBuilder
+
+	aid    AnswerId
 	iid    InterfaceId
 	mid    MethodId
 	params types.Payload // Request Call.Params field
@@ -322,16 +279,42 @@ func CallContextParamsStruct[T ~capnpser.StructType](cc *CallContext) (res T, er
 	return
 }
 
-func (cc *CallContext) RespondAsStruct(size capnpser.StructSize) (res capnpser.StructBuilder, err error) {
-	res, err = cc.serMb.NewStruct(size)
-	if err == nil {
-		cc.pb.SetContent(res.AsAnyPointer())
+func (cc *CallContext) initResponsePayload(payloadSizeHint capnpser.WordCount) (err error) {
+	totalSizeHint := returnMessageSizeOverhead + payloadSizeHint
+	cc.serMb = cc.vat.mbp.getRawMessageBuilder(totalSizeHint)
+	cc.mb, err = types.NewRootMessageBuilder(cc.serMb)
+	if err != nil {
+		return
+	}
+	cc.rb, err = cc.mb.NewReturn()
+	if err != nil {
+		return
+	}
+	cc.rb.SetAnswerId(cc.aid)
+	cc.pb, err = cc.rb.NewResults()
+	if err != nil {
+		return
 	}
 	return
 }
 
-func RespondCallAsStruct[T ~capnpser.StructBuilderType](cc *CallContext, size capnpser.StructSize) (T, error) {
-	res, err := cc.RespondAsStruct(size)
+func (cc *CallContext) RespondAsStruct(structSize capnpser.StructSize, payloadSizeHint capnpser.WordCount) (res capnpser.StructBuilder, err error) {
+	if cc.serMb == nil {
+		payloadSizeHint += structSize.TotalSize()
+		err = cc.initResponsePayload(payloadSizeHint)
+		if err != nil {
+			return
+		}
+	}
+	res, err = cc.pb.SetContentAsNewStruct(structSize)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func RespondCallAsStruct[T ~capnpser.StructBuilderType](cc *CallContext, size capnpser.StructSize, payloadSizeHint capnpser.WordCount) (T, error) {
+	res, err := cc.RespondAsStruct(size, payloadSizeHint)
 	return T(res), err
 }
 
@@ -340,15 +323,27 @@ func RespondCallAsStruct[T ~capnpser.StructBuilderType](cc *CallContext, size ca
 // NOTE: this assumes the message being built is a Return with Results and cap
 // table list.
 func (cc *CallContext) readReturnCapTable() capnpser.GenericStructList[types.CapDescriptor] {
-	var rpcMsg types.Message
+	if cc.serMb == nil {
+		// Empty list.
+		return capnpser.GenericStructList[types.CapDescriptor]{}
+	}
 
 	// Errors don't need checking, because this is assumed to be called
 	// during return building, where the structures were allocated.
-	serMsg := cc.serMb.MessageReader()
-	rpcMsg.ReadFromRoot(&serMsg)
-	ret, _ := rpcMsg.AsReturn()
-	res, _ := ret.AsResults()
-	capTable, _ := res.CapTable()
+	// TODO: use cc.* stuff
+	/*
+		var rpcMsg types.Message
+		serMsg := cc.serMb.MessageReader()
+		rpcMsg.ReadFromRoot(&serMsg)
+		ret, _ := rpcMsg.AsReturn()
+		res, _ := ret.AsResults()
+		capTable, _ := res.CapTable()
+	*/
+	res := cc.pb.AsReader()
+	capTable, err := res.CapTable()
+	if err != nil {
+		panic(err) // Should never happen.
+	}
 	return capTable
 }
 
@@ -363,6 +358,13 @@ func (cc *CallContext) respondAsPromise() (answerPromise, error) {
 		return answerPromise{}, errors.New("no more exports allowed")
 	}
 
+	if cc.serMb == nil {
+		err := cc.initResponsePayload(returnMessageSizeOverhead)
+		if err != nil {
+			return answerPromise{}, err
+		}
+	}
+
 	// TODO: Track caps somewhere else? See corresponding in processCall.
 	capTable, err := cc.pb.NewCapTable(1, 1)
 	if err != nil {
@@ -370,7 +372,6 @@ func (cc *CallContext) respondAsPromise() (answerPromise, error) {
 	}
 	capDesc := capTable.At(0)
 	capDesc.SetSenderPromise(eid)
-
 	cc.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
 
 	return answerPromise{rc: cc.rc, eid: eid}, nil

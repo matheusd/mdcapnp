@@ -115,6 +115,18 @@ const maxValidBytes = MaxValidWordCount * WordSize
 
 type ByteCount uint64
 
+// StorageWordCount returns the number of words needed to store this amount of
+// bytes. Also returns whether the amount is a valid amount that can be stored
+// in messages.
+//
+// NOTE: given the definition above, this rounds *UP*, so that the returned
+// number of words is sufficient to store this amount of bytes, potentially with
+// padding.
+func (bc ByteCount) StorageWordCount() (WordCount, bool) {
+	wc := (uint64(bc) + (WordSize - 1)) / WordSize
+	return WordCount(wc), wc <= MaxValidWordCount
+}
+
 type StructSize struct {
 	DataSectionSize    wordCount16
 	PointerSectionSize wordCount16
@@ -132,8 +144,4 @@ type ListSize struct {
 func isWordAligned(i int) bool {
 	const alignMask = WordSize - 1 // Only works because WordSize is a power of 2.
 	return i&alignMask == 0
-}
-
-func alignToWord(v Word) Word {
-	return ((v + (WordSize - 1)) / WordSize)
 }

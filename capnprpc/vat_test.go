@@ -149,7 +149,7 @@ func TestAddCall(t *testing.T) {
 			return err
 		}
 		a, b := req.A(), req.B()
-		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize)
+		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize, 0)
 		if err != nil {
 			return err
 		}
@@ -431,7 +431,7 @@ func BenchmarkAddCall(b *testing.B) {
 			return err
 		}
 		a, b := req.A(), req.B()
-		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize)
+		res, err := RespondCallAsStruct[addResponseBuilder](cc, addResponseSize, 0)
 		if err != nil {
 			return err
 		}

@@ -31,7 +31,7 @@ type Vat struct {
 	// testIDsOffset is only set during tests.
 	testIDsOffset int
 
-	mbp *messageBuilderPool
+	mbp *MessageBuilderPool
 
 	newConn    chan *runningConn
 	connDone   chan connDone
@@ -46,7 +46,7 @@ func NewVat(opts ...VatOption) *Vat {
 	v := &Vat{
 		cfg:        cfg,
 		log:        cfg.vatLogger(),
-		mbp:        newMessageBuilderPool(),
+		mbp:        NewMessageBuilderPool(),
 		newConn:    make(chan *runningConn),
 		connDone:   make(chan connDone),
 		expAccepts: make(chan expectedAccept, 5),    // Buffered to reduce locking contention on caller

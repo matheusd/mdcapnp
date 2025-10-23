@@ -148,7 +148,6 @@ func DeepCopy(src AnyPointer, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		return copyStruct(src.AsStruct(), dst)
 
 	case src.IsList():
-		fmt.Printf("XXXXXXXXX copying list %d \n", src.ptr.dataOffset())
 		return copyList(src.AsList(), dst)
 
 	default:

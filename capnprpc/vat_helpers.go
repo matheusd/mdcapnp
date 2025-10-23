@@ -11,21 +11,44 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-// newReturnPayload is a helper that initializes a Return message with a Result
-// payload.
-func (v *Vat) newReturnPayload(aid AnswerId) (outMsg outMsg, payBuilder types.PayloadBuilder, err error) {
+// newReturn is a helper that initializes a Return message.
+func (v *Vat) newReturn(aid AnswerId) (outMsg outMsg, retBuilder types.ReturnBuilder, err error) {
 	outMsg, err = v.mbp.get()
 	if err != nil {
 		return
 	}
 
-	// Reply is a Return with a single cap.
-	reply, err := outMsg.mb.NewReturn()
+	// Reply is a Return.
+	retBuilder, err = outMsg.mb.NewReturn()
 	if err != nil {
 		return
 	}
-	reply.SetAnswerId(aid)
-	payBuilder, err = reply.NewResults()
+	retBuilder.SetAnswerId(aid)
+	return
+}
+
+// newReturnPayload is a helper that initializes a Return message with a Result
+// payload.
+func (v *Vat) newReturnPayload(aid AnswerId) (outMsg outMsg, retBuilder types.ReturnBuilder, payBuilder types.PayloadBuilder, err error) {
+	outMsg, retBuilder, err = v.newReturn(aid)
+	if err != nil {
+		return
+	}
+
+	payBuilder, err = retBuilder.NewResults()
+	return
+}
+
+// newReturnException is a helper that initializes a Return message with an
+// Exception payload.
+func (v *Vat) newReturnException(aid AnswerId) (outMsg outMsg, ex types.ExceptionBuilder, err error) {
+	var ret types.ReturnBuilder
+	outMsg, ret, err = v.newReturn(aid)
+	if err != nil {
+		return
+	}
+
+	ex, err = ret.NewException()
 	return
 }
 
@@ -33,7 +56,7 @@ func (v *Vat) newReturnPayload(aid AnswerId) (outMsg outMsg, payBuilder types.Pa
 // single cap as the payload.
 func (v *Vat) newSingleCapReturn(aid AnswerId) (outMsg outMsg, capDesc types.CapDescriptorBuilder, err error) {
 	var payBuilder types.PayloadBuilder
-	outMsg, payBuilder, err = v.newReturnPayload(aid)
+	outMsg, _, payBuilder, err = v.newReturnPayload(aid)
 	if err != nil {
 		return
 	}

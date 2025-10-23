@@ -354,6 +354,88 @@ func (sb *StructBuilder) SetString(ptrIndex PointerFieldIndex, v string) (err er
 	return nil
 }
 
+func (sb *StructBuilder) SetData(ptrIndex PointerFieldIndex, v []byte) (err error) {
+	// TODO: abstract with SetText
+
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		return errStructBuilderDoesNotContainPointerField(ptrIndex)
+	}
+
+	// Allocate the data as a new object (list of bytes).
+	sid, lsPtr, err := sb.mb.newData(sb.sid, v)
+	if err != nil {
+		return err
+	}
+
+	// TODO: handle allocs in new segments.
+	if sid != sb.sid {
+		return errors.New("needs handling")
+	}
+
+	// Offset of the pointer field that will reference the new list. This
+	// is relative to the start of this struct (sb).
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
+	// Determine concrete pointer offset inside struct. This doesn't need
+	// overflow checks because the entire struct has been allocated, thus
+	// this pointer offset is known to be in bounds.
+	concretePtrOff := ptrOff + sb.off
+
+	// Determine the relative offset from the field pointer offset to the
+	// actual data. This finishes the construction of the list pointer.
+	lsPtr.startOffset = lsPtr.startOffset - concretePtrOff - 1
+
+	// Structure already fully allocated, no need to check for
+	// bounds.
+	sb.urb.SetWord(concretePtrOff, Word(lsPtr.toPointer()))
+	// sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
+	return nil
+}
+
+func (sb *StructBuilder) NewDataField(ptrIndex PointerFieldIndex, size ByteCount) (res []byte, err error) {
+	// TODO: abstract with SetData
+
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainPointerField(ptrIndex)
+		return
+	}
+
+	// Allocate the data as a new object (list of bytes).
+	sid, lsPtr, res, err := sb.mb.newDataList(sb.sid, size)
+	if err != nil {
+		return
+	}
+
+	// TODO: handle allocs in new segments.
+	if sid != sb.sid {
+		err = errors.New("needs handling")
+		return
+	}
+
+	// Offset of the pointer field that will reference the new list. This
+	// is relative to the start of this struct (sb).
+	ptrOff := ptrIndex.uncheckedWordOffset(WordOffset(sb.sz.DataSectionSize))
+
+	// Determine concrete pointer offset inside struct. This doesn't need
+	// overflow checks because the entire struct has been allocated, thus
+	// this pointer offset is known to be in bounds.
+	concretePtrOff := ptrOff + sb.off
+
+	// Determine the relative offset from the field pointer offset to the
+	// actual data. This finishes the construction of the list pointer.
+	lsPtr.startOffset = lsPtr.startOffset - concretePtrOff - 1
+
+	// Structure already fully allocated, no need to check for
+	// bounds.
+	sb.urb.SetWord(concretePtrOff, Word(lsPtr.toPointer()))
+	// sb.urb.SetWord(ptrOff, Word(lsPtr.toPointer()))
+	return
+}
+
 func (sb *StructBuilder) NewStructField(ptrIndex PointerFieldIndex, size StructSize) (nsb StructBuilder, err error) {
 	if !sb.hasPointer(ptrIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
@@ -634,9 +716,13 @@ func (as *AllocState) SetSeg0(b []byte) {
 }
 
 func (as *AllocState) SetHeaderAndSeg0(buf []byte, expectedSegCount SegmentCount) {
-	headerSize := alignToWord(4 + Word(expectedSegCount)*4)
-	as.HeaderBuf = buf[:headerSize]
-	as.FirstSeg = buf[headerSize:]
+	headerSizeWords, ok := ByteCount(4 + ByteCount(expectedSegCount)*4).StorageWordCount()
+	headerSizeBytes := headerSizeWords.ByteCount()
+	if !ok {
+		panic("expected segment count overflows max allowable in SetHeaderAndSeg0")
+	}
+	as.HeaderBuf = buf[:headerSizeBytes]
+	as.FirstSeg = buf[headerSizeBytes:]
 	// as.firstSegPtr = unsafe.Pointer(unsafe.SliceData(as.FirstSeg))
 }
 
@@ -683,8 +769,8 @@ func (as *AllocState) uncheckedSegSlice(seg SegmentID, offset WordOffset, size W
 // This is used to detect if HeaderBuf and Seg[0] have been allocated in such a
 // way as to be the same underlying array.
 //
-// Note: this can be called only after checking that HeaderBuf != nil, that
-// len(Segs) > 0 and that len(Segs[0]) > 0, otherwise it panics.
+// Note: this can be called only after checking that HeaderBuf != nil, that and
+// that len(FirstSeg) > 0, otherwise it panics.
 func (as *AllocState) headerBufPrefixesSeg0Buf() bool {
 	// The two buffers are contiguous (i.e. seg0 is aliased on the same
 	// underlying array as headerBuf) if the data for seg0 starts
@@ -696,6 +782,21 @@ func (as *AllocState) headerBufPrefixesSeg0Buf() bool {
 	seg0BufPtr := unsafe.Pointer(unsafe.SliceData(as.FirstSeg))
 	return cap(as.HeaderBuf) >= len(as.HeaderBuf)+len(as.FirstSeg) &&
 		seg0BufPtr == unsafe.Add(headerBufPtr, len(as.HeaderBuf))
+}
+
+// isAlreadyFramedSingleSegment returns true if the current state is for a
+// single segment arena where the HeaderBuf is contiguous with the first segment
+// data (i.e. an already framed single segment message).
+//
+// Note: this be called only after verifying len(as.FirstLen) > 0, otherwise it
+// panics.
+func (as *AllocState) isAlreadyFramedSingleSegment() bool {
+	// A single segment header is 4 bytes segment count (== 0) and 4 bytes
+	// segment size (in words).
+	const singleSegmentHeaderSize = 8
+	return len(as.HeaderBuf) == singleSegmentHeaderSize &&
+		len(as.Segs) == 0 &&
+		as.headerBufPrefixesSeg0Buf()
 }
 
 // putSingleSegHeaderInBuf writes the framing header in headerBuf for the case
@@ -1038,9 +1139,53 @@ func (mb *MessageBuilder) CopyToNewByteList(b []byte) (res AnyPointerBuilder, er
 	return
 }
 
+// newByteList allocates a new data slice in the meesage. The data is
+// preferably (but not necessarily) put into segment preferSeg.
+func (mb *MessageBuilder) newDataList(preferSeg SegmentID, dataLen ByteCount) (sid SegmentID, ptr listPointer, b []byte, err error) {
+	// TODO: abstract with newText.
+
+	if dataLen > MaxListSize {
+		return 0, listPointer{}, nil, errByteListTooLarge
+	}
+
+	// No need to check ok because MaxListSize is necessarily < MaxValidWordCount
+	words, _ := dataLen.StorageWordCount()
+	sid, b, off, err := mb.allocateValidSizeXXX(preferSeg, words)
+	if err != nil {
+		// return SegmentBuilder{}, listPointer{}, err
+		return 0, listPointer{}, nil, err
+	}
+
+	start := int(off * WordSize)
+	end := start + int(dataLen)
+	b = b[start:end:end]
+
+	return sid,
+		listPointer{
+			startOffset: off,
+			elSize:      listElSizeByte,
+			listSize:    listSize(dataLen),
+		}, b, nil
+}
+
+// newData allocates and places v as a new data in the meesage. The data is
+// preferably (but not necessarily) put into segment preferSeg.
+func (mb *MessageBuilder) newData(preferSeg SegmentID, v []byte) (sid SegmentID, ptr listPointer, err error) {
+	// TODO: abstract with newText.
+
+	var b []byte
+	sid, ptr, b, err = mb.newDataList(preferSeg, ByteCount(len(v)))
+	if err != nil {
+		return
+	}
+
+	copy(b, v)
+	return
+}
+
 // newText allocates and places s as a new text in the meesage. The text is
 // preferably (but not necessarily) put into segment preferSeg.
-func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) ( /*segb SegmentBuilder, ptr listPointer*/ sid SegmentID, ptr listPointer, err error) {
+func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (sid SegmentID, ptr listPointer, err error) {
 	// Length of texts (strings) in capnp is +1 due to null at the end.
 	textLen := uint(len(s) + 1)
 	if textLen > MaxListSize {
@@ -1149,6 +1294,47 @@ func (mb *MessageBuilder) AllocateUnsafeRootRawBuilder(size WordCount) (rb Unsaf
 	return
 }
 
+// TotalCapacity returns the total underlying message capacity (in words) across
+// all segments in the currently allocated message state.
+//
+// This is a measure of how much capacity the chosen allocator has (currently)
+// allocated into the buffers of this message.
+//
+// The results of this method need to be interpreted in the context of this
+// message's chosen allocator.
+//
+// NOTE: when the message's HeaderBuf is contiguous with the first segment, then
+// the return value also includes its length.
+func (mb *MessageBuilder) TotalCapacity() ByteCount {
+	// urgh... ugly method, maybe do something else.
+	if len(mb.state.FirstSeg) == 0 {
+		// Not a valid state after init.
+		return 0
+	}
+
+	if mb.state.isAlreadyFramedSingleSegment() {
+		// In this case (HeaderBuf contiguous with FirstSeg), we can
+		// measure directly by the cap in HeaderBuf).
+		return ByteCount(cap(mb.state.HeaderBuf))
+	}
+
+	panic("TODO")
+}
+
+// SerializeSize returns the total size of the raw message (in bytes) in its
+// current state when serialized.
+func (mb *MessageBuilder) SerializeSize() ByteCount {
+	if len(mb.state.FirstSeg) == 0 {
+		return 0
+	}
+
+	if mb.state.isAlreadyFramedSingleSegment() {
+		return ByteCount(len(mb.state.HeaderBuf)) + ByteCount(len(mb.state.FirstSeg))
+	}
+
+	panic("TODO")
+}
+
 // Serialize returns a serialized copy of the message.
 //
 // NOTE: this may be aliased into the message builder, meaning the contents of
@@ -1161,22 +1347,11 @@ func (mb *MessageBuilder) Serialize() ([]byte, error) {
 	// Special case where the allocator allocated both the header buffer
 	// and the single segment data in the same contiguous buffer. In this
 	// case, the data is already fully framed and serialized.
-	//
-	// A single segment header is 4 bytes segment count (== 0) and 4 bytes
-	// segment size (in words).
-	const singleSegmentHeaderSize = 8
-	if len(mb.state.HeaderBuf) == singleSegmentHeaderSize &&
-		len(mb.state.Segs) == 0 &&
-		mb.state.headerBufPrefixesSeg0Buf() {
+	if mb.state.isAlreadyFramedSingleSegment() {
 		mb.state.putSingleSegHeaderInBuf() // Write single segment header
 		return mb.state.HeaderBuf[:len(mb.state.HeaderBuf)+len(mb.state.FirstSeg)], nil
 	}
 
 	// TODO: proceed to standard framing and serialization.
-	panic("boo")
-}
-
-func (mb *MessageBuilder) SerializeXXX() ([]byte, error) {
-	mb.state.putSingleSegHeaderInBuf() // Write single segment header
-	return mb.state.HeaderBuf[:len(mb.state.HeaderBuf)+len(mb.state.FirstSeg)], nil
+	panic("TODO")
 }

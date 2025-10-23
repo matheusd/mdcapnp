@@ -128,11 +128,11 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 }
 
 type vatImpl interface {
-	msgBuilderPool() *messageBuilderPool
+	msgBuilderPool() *MessageBuilderPool
 }
 
-func (v *Vat) msgBuilderPool() *messageBuilderPool             { return v.mbp }
-func (v *Level0ClientVat) msgBuilderPool() *messageBuilderPool { return v.mbp }
+func (v *Vat) msgBuilderPool() *MessageBuilderPool             { return v.mbp }
+func (v *Level0ClientVat) msgBuilderPool() *MessageBuilderPool { return v.mbp }
 
 func (v *Vat) getCallMessageBuilder(payloadSizeHint capnpser.WordCount) *capnpser.MessageBuilder {
 	return v.mbp.getRawMessageBuilder(payloadSizeHint)
@@ -156,7 +156,7 @@ type CallFuture struct {
 }
 
 func setupCall(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, wantParams bool) (CallSetup, types.PayloadBuilder) {
-	serMb := parent.vat.msgBuilderPool().getRawMessageBuilder(payloadSizeHint)
+	serMb := parent.vat.msgBuilderPool().getRawMessageBuilder(callMessageSizeOverhead + payloadSizeHint)
 	mb, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
 		panic(err)

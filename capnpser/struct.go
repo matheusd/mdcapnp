@@ -336,6 +336,15 @@ func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) err
 	return nil
 }
 
+func (s *Struct) Data(ptrIndex PointerFieldIndex) []byte {
+	seg, lp, _, err := s.readListPtr(ptrIndex)
+	if err != nil || lp.elSize != listElSizeByte || lp.listSize == 0 {
+		return nil
+	}
+
+	return seg.uncheckedSlice(lp.startOffset, ByteCount(lp.listSize))
+}
+
 func (s *Struct) UnsafeString(ptrIndex PointerFieldIndex) string {
 	seg, lp, _, err := s.readListPtr(ptrIndex)
 	if err != nil || lp.elSize != listElSizeByte || lp.listSize == 0 {

@@ -157,6 +157,25 @@ func (arena *Arena) DecodeSingleSegment(fb []byte) error {
 	return nil
 }
 
+// TotalSize returns the sum of data currently referenced by this Arena.
+func (arena *Arena) TotalSize() WordCount {
+	var bc ByteCount
+	if arena.fb != nil {
+		bc = ByteCount(len(arena.fb))
+	} else if arena.segs == nil {
+		bc = ByteCount(arena.s.intLen())
+	} else {
+		bc = ByteCount(arena.s.intLen())
+		segs := *arena.segs
+		for _, s := range segs {
+			bc += ByteCount(s.intLen())
+		}
+	}
+
+	res, _ := bc.StorageWordCount()
+	return res
+}
+
 // RawDataCopy returns a copy of the underlying arena data. This is mostly
 // useful for debugging issues.
 func (arena *Arena) RawDataCopy() (res [][]byte) {

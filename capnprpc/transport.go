@@ -47,7 +47,7 @@ func NewIOTransport(remoteName string, rw net.Conn) *IOTransport {
 		r:       r,
 		w:       w,
 		closeRW: close,
-		inBuf:   make([]byte, 128*1024),
+		inBuf:   make([]byte, 512*1024), // TODO: parametrize
 	}
 }
 
@@ -61,7 +61,6 @@ func (iot *IOTransport) send(ctx context.Context, outMsg OutMsg) error {
 	if err != nil {
 		return err
 	}
-	// fmt.Println("XXXXXX wrote", iot.remName, n)
 	if n != len(serBytes) {
 		return io.ErrShortWrite
 	}
@@ -98,7 +97,7 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 
 		if len(iot.inBuf) < seg0SizeBytes+8 {
 			oldHeader := iot.inBuf[:8]
-			iot.inBuf = make([]byte, seg0SizeBytes)
+			iot.inBuf = make([]byte, 8+seg0SizeBytes)
 			copy(iot.inBuf, oldHeader)
 		}
 
