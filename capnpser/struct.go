@@ -224,6 +224,9 @@ func (s *Struct) readListPtr(ptrIndex PointerFieldIndex) (seg *Segment, lp listP
 	var ptrType pointerType
 	var pointerOffset WordOffset
 	seg, ptrType, ptr, listDL, pointerOffset, err = s.readFieldPtr(ptrIndex)
+	if err != nil {
+		return
+	}
 
 	if ptr.isNullPointer() {
 		// A null pointer is an either an empty list or the default
@@ -281,7 +284,7 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) error {
 	seg, lp, listDL, err := s.readListPtr(ptrIndex)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to decode field %d as a list pointer: %v", ptrIndex, err)
 	}
 
 	if lp.elSize != listElSizeComposite {
@@ -290,9 +293,10 @@ func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) err
 		if lp.toPointer().isNullPointer() {
 			*sls = StructList{
 				l: List{
-					seg: seg,
-					ptr: lp,
-					dl:  listDL,
+					arena: s.arena,
+					seg:   seg,
+					ptr:   lp,
+					dl:    listDL,
 				},
 				itemSize: StructSize{},
 				listLen:  0,
@@ -309,7 +313,8 @@ func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) err
 	// therefore the tag word is in-bounds.
 	tagWord := s.seg.uncheckedGetWordAsPointer(lp.startOffset)
 	if !tagWord.isStructPointer() {
-		return errors.New("composite list tag word is not a struct pointer")
+		// return errors.New("composite list tag word is not a struct pointer")
+		return fmt.Errorf("composite list tag word is not a struct pointer %016x", tagWord)
 	}
 	listLen := listSize(tagWord.dataOffset())
 	itemSize := StructSize{DataSectionSize: tagWord.dataSectionSize(), PointerSectionSize: tagWord.pointerSectionSize()}
@@ -325,9 +330,10 @@ func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) err
 
 	*sls = StructList{
 		l: List{
-			seg: seg,
-			ptr: lp,
-			dl:  listDL,
+			seg:   seg,
+			arena: s.arena,
+			ptr:   lp,
+			dl:    listDL,
 		},
 		itemSize: itemSize,
 		listLen:  listLen,
@@ -380,6 +386,9 @@ func (s *Struct) UnsafeStringXXX(dataIndex DataFieldIndex, size WordCount) strin
 
 func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error) {
 	seg, ptrType, ptr, structDL, pointerOffset, err := s.readFieldPtr(ptrIndex)
+	if err != nil {
+		return
+	}
 
 	// Check if the final pointer (after potential deref) is a struct
 	// pointer.

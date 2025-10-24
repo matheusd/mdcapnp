@@ -5,6 +5,8 @@
 package capnpser
 
 import (
+	"errors"
+	"fmt"
 	"unsafe"
 )
 
@@ -69,6 +71,47 @@ func (ls *List) AsAnyPointer() AnyPointer {
 		dl:    ls.dl,
 		ptr:   ls.ptr.toPointer(),
 	}
+}
+
+func (ls *List) AsStructList() (StructList, error) {
+	if ls.ptr.elSize != listElSizeComposite {
+		return StructList{}, errors.New("list is not a struct list")
+	}
+
+	if ls.ptr.toPointer().isNullPointer() {
+		// Empty struct list.
+		return StructList{
+			l: *ls,
+		}, nil
+	}
+
+	// Get the tag word and convert it into a struct pointer.
+	tagWord, err := ls.seg.getWordAsPointer(ls.ptr.startOffset)
+	if err != nil {
+		return StructList{}, fmt.Errorf("unable to read tag word: %v", err)
+	}
+	if !tagWord.isStructPointer() {
+		return StructList{}, fmt.Errorf("tag word is not a struct pointer")
+	}
+	itemsStruct := tagWord.toStructPointer()
+
+	// Check if the total items size as encoded in the tag word is the
+	// expected one given the list word count.
+	totalItemsSize, ok := mulWordCounts(WordCount(itemsStruct.dataOffset), itemsStruct.structSize().TotalSize())
+	if !ok {
+		return StructList{}, errors.New("item count * item size overflows valid max word count")
+	}
+	if totalItemsSize != WordCount(ls.ptr.listSize) {
+		return StructList{}, fmt.Errorf("incongruent word counts when converting list to StructList (%d vs %d)",
+			ls.ptr.listSize, totalItemsSize)
+	}
+
+	// All good.
+	return StructList{
+		l:        *ls,
+		itemSize: itemsStruct.structSize(),
+		listLen:  listSize(itemsStruct.dataOffset),
+	}, nil
 }
 
 // Read this list into a slice. Only valid for one-byte-per-element lists.
@@ -137,6 +180,10 @@ type StructList struct {
 	l        List
 	itemSize StructSize
 	listLen  listSize
+}
+
+func (sl *StructList) AsAnyPointer() AnyPointer {
+	return sl.l.AsAnyPointer()
 }
 
 // Len returns the number of elements in this list.

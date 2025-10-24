@@ -4,7 +4,9 @@
 
 package capnpser
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 func decodeSingleSegmentStream(fb []byte) ([]byte, error) {
 	if len(fb) < 8 { // 4 byte seg count + 4 byte seg size

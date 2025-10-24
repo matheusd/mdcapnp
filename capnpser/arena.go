@@ -32,7 +32,7 @@ func (ms *Segment) intLen() int {
 // wordLen returns the number of words in the segment. This assumes the segment
 // has a valid length (i.e. <= MaxValidWordCount).
 func (ms *Segment) wordLen() WordCount {
-	return WordCount(len(ms.b) / 8)
+	return WordCount(len(ms.b) / WordSize)
 }
 
 func (ms *Segment) getWordAsPointer(offset WordOffset) (pointer, error) {

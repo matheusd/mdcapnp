@@ -13,8 +13,8 @@ import (
 )
 
 type AnyPointerBuilder struct {
-	mb *MessageBuilder
-
+	mb  *MessageBuilder
+	urb SegmentBuilder
 	off WordOffset // Concrete offset into segment where pointer data begins (if this is a struct/list).
 	ptr pointer
 	sid SegmentID
@@ -594,15 +594,40 @@ func (sb *StructBuilder) NewStructListField(ptrIndex PointerFieldIndex, itemSize
 	// Determine concrete offset from structure start until ptrOff.
 	concretePtrOff := /*sb.off*/ +ptrOff
 
+	// This has already been verified to be correct inside NewStructList().
+	storedWordCount := uint64(itemSize.TotalSize()) * uint64(listCap) // Does not include tag word.
+
 	// Build the final list pointer.
 	lsPtr := listPointer{
 		startOffset: res.off - concretePtrOff - 1,
 		elSize:      listElSizeComposite,
-		listSize:    listSize(listWordCount(listElSizeComposite, res.listLen)),
+		listSize:    listSize(storedWordCount),
 	}
 
 	// Write the pointer field.
 	sb.urb.SetWord(concretePtrOff, Word(lsPtr.toPointer()))
+	return
+}
+
+func (sb *StructBuilder) StructList(ptrIndex PointerFieldIndex) (res StructListBuilder, err error) {
+	var sls StructList
+	s := sb.Reader()
+	err = s.ReadStructList(ptrIndex, &sls)
+	if err != nil {
+		return
+	}
+
+	// TODO: what if in different segment????
+
+	res = StructListBuilder{
+		off:      sls.l.ptr.startOffset,
+		itemSize: sls.itemSize,
+		listLen:  sls.listLen,
+		listCap:  sls.listLen,
+		mb:       sb.mb,
+		urb:      sb.urb,
+		sid:      sb.sid,
+	}
 	return
 }
 

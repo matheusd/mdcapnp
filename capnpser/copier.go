@@ -9,11 +9,45 @@ import (
 	"fmt"
 )
 
-func copyList(src List, dst *MessageBuilder) (AnyPointerBuilder, error) {
-	if src.ptr.elSize == listElSizeComposite {
-		// TODO: support this.
-		return AnyPointerBuilder{}, errors.New("list of structs not supported in copyList()")
+// copyStructListReferents goes through the items of a struct list and copies
+// their referents (the values of any pointers).
+//
+// This is called after the tag word and the list items have been copied to the
+// destination.
+func copyStructListReferents(srcList StructList, dst *MessageBuilder, dstList AnyPointerBuilder) error {
+	listLen := srcList.Len()
+
+	dstItem := AnyPointerBuilder{
+		mb:  dst,
+		urb: dstList.urb,
+		off: dstList.off + 1, // One past the tag word offset.
+		sid: dstList.sid,
+		ptr: buildRawStructPointer(dstList.off+1, srcList.itemSize),
 	}
+
+	itemSizeWords := srcList.itemSize.TotalSize()
+	for i := range listLen {
+		srcItem := srcList.At(i)
+
+		if err := copyStructPointerReferents(srcItem, dst, dstItem); err != nil {
+			return fmt.Errorf("error copying struct list referent %d: %v", i, err)
+		}
+
+		dstItem.off += WordOffset(itemSizeWords)
+		dstItem.ptr = dstItem.ptr.withDataOffset(dstItem.off)
+	}
+	return nil
+}
+
+func copyList(src List, dst *MessageBuilder) (AnyPointerBuilder, error) {
+	// TODO: read tag word if src.ptr.elSize == listElSizeComposite and
+	// double check it is valid?
+	/*
+		if src.ptr.elSize == listElSizeComposite {
+			// TODO: support this.
+			return AnyPointerBuilder{}, errors.New("list of structs not supported in copyList()")
+		}
+	*/
 
 	// Allocate space for list contents.
 	totalWords := src.lenWords()
@@ -25,42 +59,55 @@ func copyList(src List, dst *MessageBuilder) (AnyPointerBuilder, error) {
 	// Copy the entire list contents.
 	seg.copyWordsFrom(&src.seg.b, src.ptr.startOffset, off, totalWords)
 
-	// All done.
-	return AnyPointerBuilder{
+	dstList := AnyPointerBuilder{
 		mb:  dst,
+		urb: seg,
 		off: off,
 		ptr: buildRawListPointer(off, src.ptr.elSize, src.ptr.listSize),
 		sid: seg.id,
-	}, nil
-}
-
-func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
-	seg, off, err := dst.allocateValidSize(0, src.structSize())
-	if err != nil {
-		return AnyPointerBuilder{}, err
 	}
 
-	// Copy data and pointers.
-	seg.copyWordsFrom(&src.seg.b, src.ptr.dataOffset, off, src.structSize())
+	// For struct lists, descend into the individual items to copy their
+	// referents.
+	if src.ptr.elSize == listElSizeComposite {
+		strList, err := src.AsStructList()
+		if err != nil {
+			return AnyPointerBuilder{}, err
+		}
+		err = copyStructListReferents(strList, dst, dstList)
+		if err != nil {
+			return AnyPointerBuilder{}, err
+		}
+	}
+
+	// All done.
+	return dstList, nil
+}
+
+// copyStructPointerReferents goes through the list of pointers in the struct,
+// copying the referents.
+func copyStructPointerReferents(src Struct, dst *MessageBuilder, dstStruct AnyPointerBuilder) error {
+	seg, off := dstStruct.urb, dstStruct.off
 
 	// For each pointer, copy the referent and adjust offset.
 	srcSubPtrOff := src.ptr.dataOffset + WordOffset(src.ptr.dataSectionSize)
 	for i := wordCount16(0); i < src.ptr.pointerSectionSize; i, srcSubPtrOff = i+1, srcSubPtrOff+1 {
+		// TODO: add src.ReadField(i) instead of reading pointer???
 		ptr, err := src.seg.getWordAsPointer(srcSubPtrOff)
 		if err != nil {
-			return AnyPointerBuilder{}, fmt.Errorf("unable to get value of ptr %d at %d: %v",
+			return fmt.Errorf("unable to get value of ptr %d at %d: %v",
 				i, srcSubPtrOff, err)
 		}
 
 		if ptr.isOtherPointer() || ptr.isZeroStruct() || ptr.isNullPointer() {
 			// Empty pointers can be ignored (nothing to de-ref and
-			// already copied above, outside the loop).
+			// already copied by the caller, outside the loop).
 			continue
 		}
 
 		if ptr.isFarPointer() {
 			// TODO: support this.
-			return AnyPointerBuilder{}, errors.New("far pointers not supported in copyStruct()")
+			return errors.New("far pointers not supported in copyStruct()")
 		}
 
 		var subDst AnyPointerBuilder
@@ -68,7 +115,7 @@ func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		if ptr.isListPointer() {
 			var sub List
 			if err := src.ReadList(PointerFieldIndex(i), &sub); err != nil {
-				return AnyPointerBuilder{}, err
+				return err
 			}
 
 			// Recurse into list.
@@ -76,24 +123,24 @@ func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		} else if ptr.isStructPointer() {
 			var sub Struct
 			if err := src.ReadStruct(PointerFieldIndex(i), &sub); err != nil {
-				return AnyPointerBuilder{}, err
+				return err
 			}
 
 			// Recurse into it.
 			subDst, err = copyStruct(sub, dst)
 		} else {
 			// Should not happen if we handled all cases.
-			err = errors.New("unknown case in copyStruct()")
+			err = errors.New("unknown case in copyStructPointerReferents()")
 		}
 
 		// At this point, we recursed into the sub struct/list.
 		if err != nil {
-			return AnyPointerBuilder{}, err
+			return err
 		}
 
 		if subDst.sid != seg.id {
 			// TODO: support this.
-			return AnyPointerBuilder{}, errors.New("point to far segments not supported in copyStruct")
+			return errors.New("point to far segments not supported in copyStructPointerReferents")
 		}
 
 		// Determine the new offset to this pointer field in dst.
@@ -107,14 +154,33 @@ func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		seg.SetWord(dstSubPtrOff, Word(newPtr))
 	}
 
+	return nil
+}
+
+func copyStruct(src Struct, dst *MessageBuilder) (AnyPointerBuilder, error) {
+	seg, off, err := dst.allocateValidSize(0, src.structSize())
+	if err != nil {
+		return AnyPointerBuilder{}, err
+	}
+
+	// Copy data and pointers.
+	seg.copyWordsFrom(&src.seg.b, src.ptr.dataOffset, off, src.structSize())
+
 	// Build the final object.
-	return AnyPointerBuilder{
+	dstStruct := AnyPointerBuilder{
 		mb:  dst,
 		off: off,
 		ptr: buildRawStructPointer(off, src.ptr.structSize()),
 		sid: seg.id,
-	}, nil
+		urb: seg,
+	}
 
+	// Copy the child referents.
+	if err := copyStructPointerReferents(src, dst, dstStruct); err != nil {
+		return AnyPointerBuilder{}, err
+	}
+
+	return dstStruct, nil
 }
 
 // DeepCopy a source object into a destination builder. This produces a
@@ -138,6 +204,7 @@ func DeepCopy(src AnyPointer, dst *MessageBuilder) (AnyPointerBuilder, error) {
 		seg.SetWord(off, Word(src.ptr))
 		return AnyPointerBuilder{
 			mb:  dst,
+			urb: seg,
 			off: off,
 			ptr: src.ptr,
 			sid: seg.id,

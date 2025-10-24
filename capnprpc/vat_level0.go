@@ -131,7 +131,7 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	// from the Bootstrap first.
 	if v.bootImportId == 0 {
 		if err := v.recvBoot(ctx); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error processing bootstrap before call Return: %v", err)
 		}
 	}
 
@@ -261,7 +261,7 @@ func (c *Level0ClientVat) recvBoot(ctx context.Context) error {
 
 	capTable, err := pay.CapTable()
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to read capTable: %v", err)
 	}
 
 	capIndex := int(capPtr.Index())
@@ -282,7 +282,7 @@ func (v *Level0ClientVat) sendRecvBoot(ctx context.Context) error {
 		return err
 	}
 	if err := v.recvBoot(ctx); err != nil {
-		return err
+		return fmt.Errorf("error processing received bootstrap: %v", err)
 	}
 	return nil
 }

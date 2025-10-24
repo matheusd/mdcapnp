@@ -51,6 +51,11 @@ func (err ErrObjectOutOfBounds) Error() string {
 		err.Offset, err.Size, err.WordLen)
 }
 
+func (err ErrObjectOutOfBounds) Is(target error) bool {
+	_, ok := target.(ErrObjectOutOfBounds)
+	return ok
+}
+
 type ErrUnknownSegment SegmentID
 
 func (err ErrUnknownSegment) Error() string {

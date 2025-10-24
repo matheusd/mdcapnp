@@ -107,6 +107,15 @@ func addWordOffsetAndCount(off WordOffset, c WordCount) (r WordOffset, ok bool) 
 	return addWordOffsets(off, WordOffset(c))
 }
 
+// mulWordCounts multiplies two word counts together and verifies the result is
+// a valid word count.
+func mulWordCounts(wc1, wc2 WordCount) (r WordCount, ok bool) {
+	hi, lo := bits.Mul32(uint32(wc1), uint32(wc2))
+	r = WordCount(lo)
+	ok = hi == 0 && r < MaxValidWordCount
+	return
+}
+
 // MaxValidWordCount is the maximum number of words a segment may have.
 const MaxValidWordCount = 1<<29 - 1
 

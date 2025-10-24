@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync/atomic"
 
 	"matheusd.com/mdcapnp/capnpser"
 )
@@ -29,6 +30,9 @@ type IOTransport struct {
 
 	inBuf   []byte
 	inArena capnpser.Arena
+
+	depthLimit atomic.Uintptr
+	readLimit  atomic.Uint64
 }
 
 func nopFlush() error { return nil }
@@ -41,7 +45,7 @@ func NewIOTransport(remoteName string, rw net.Conn) *IOTransport {
 	w := rw
 	close := rw.Close
 
-	return &IOTransport{
+	iot := &IOTransport{
 		flush:   flush,
 		remName: remoteName,
 		r:       r,
@@ -49,6 +53,21 @@ func NewIOTransport(remoteName string, rw net.Conn) *IOTransport {
 		closeRW: close,
 		inBuf:   make([]byte, 512*1024), // TODO: parametrize
 	}
+	iot.depthLimit.Store(64) // TODO: constant somewhere?
+	iot.readLimit.Store(64 * 1024 * 1024)
+	return iot
+}
+
+// SetReadDepthLimit sets the depth limit for traversing messages read from this
+// remote end.
+func (iot *IOTransport) SetReadDepthLimit(limit uint) {
+	iot.depthLimit.Store(uintptr(limit))
+}
+
+// SetReadDepthLimit sets the read limit (in bytes) for traversing messages read
+// from this remote end.
+func (iot *IOTransport) SetReadLimit(limit uint64) {
+	iot.readLimit.Store(limit)
 }
 
 func (iot *IOTransport) send(ctx context.Context, outMsg OutMsg) error {
@@ -86,9 +105,11 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 			return InMsg{}, errors.New("multi-seg not supported in IOTransport.receive")
 		}
 
+		// TODO: Support multi-segment messages.
+
 		// TODO: protect against too large reads.
 		seg0SizeWords := binary.LittleEndian.Uint32(iot.inBuf[4:])
-		seg0SizeBytes := int(seg0SizeWords * capnpser.WordSize)
+		seg0SizeBytes := int(seg0SizeWords) * capnpser.WordSize
 
 		if seg0SizeBytes == 0 {
 			// Empty message???
@@ -106,14 +127,16 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 			return InMsg{}, err
 		}
 
+		// TODO: Already decoded, no need to decode again. Have an API
+		// to build it directly.
 		err = iot.inArena.DecodeSingleSegment(iot.inBuf[:8+seg0SizeBytes])
 		if err != nil {
 			return InMsg{}, err
 		}
-		iot.inArena.ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
+		iot.inArena.ReadLimiter().InitConcurrentUnsafe(iot.readLimit.Load())
 
 		res := InMsg{Msg: capnpser.MakeMsg(&iot.inArena)}
-		res.Msg.SetDepthLimit(64)
+		res.Msg.SetDepthLimit(uint(iot.depthLimit.Load()))
 
 		return res, nil
 	}
