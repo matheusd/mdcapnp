@@ -61,6 +61,10 @@ func (s *Struct) structSize() WordCount {
 	return WordCount(s.ptr.dataSectionSize) + WordCount(s.ptr.pointerSectionSize)
 }
 
+func (s *Struct) Arena() *Arena { // TODO: unsafe to provide... maybe add a ReadOnlyArenaAccess??
+	return s.arena
+}
+
 func (s *Struct) AsAnyPointer() AnyPointer {
 	return AnyPointer{
 		seg:   s.seg,

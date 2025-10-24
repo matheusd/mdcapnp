@@ -13,8 +13,30 @@ import (
 )
 
 const (
-	callMessageSizeOverhead    capnpser.WordCount = 6 // TODO: Measure this precisely.
-	returnMessageSizeOverhead  capnpser.WordCount = 6 // TODO: Measure this precisely.
+	// callMessageSizeOverhead is the minimum expected overhead of a Call
+	// type message (not counting the params content payload or entries in
+	// the cap table):
+	//
+	//   Call => 			3 + 3 = 6
+	//     Target => 		1 + 1 = 2
+	//       PromisedAnswer => 	1 + 1 = 2
+	//     Params => 		0 + 2 = 2
+	//   Total => 			      = 12
+	//
+	callMessageSizeOverhead capnpser.WordCount = 12
+
+	// returnMessageSizeOverhead is the minimum expected overhead of a
+	// Return type message:
+	//
+	//    Return => 	2 + 1 = 3
+	// 	Results* => 	0 + 2 = 2
+	// 	Exception => 	1 + 3 = 4
+	//    Total => 		      = 3 + 4 = 7
+	//
+	//    *Results and Exception are part of a union, therefore we choose
+	//    the largest one (Exception).
+	returnMessageSizeOverhead capnpser.WordCount = 7
+
 	singleCapReturnPayloadSize capnpser.WordCount = 3 // TODO: Measure this precisely.
 )
 

@@ -96,6 +96,9 @@ func (p *SingleSegmentPoolableAllocator) Allocate(state *AllocState, preferred S
 		oldBuf := state.HeaderBuf[:8+lenSeg0]
 		newBuf := p.pool.Get(WordCount(newLenSeg0/WordSize) + 1)
 
+		// TODO: Track every time we had to realloc to allow caller to
+		// measure things?
+
 		copy(newBuf, oldBuf)
 		state.SetHeaderAndSeg0(newBuf[:newLenSeg0+8], 1)
 		clear(oldBuf)

@@ -125,6 +125,7 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	// After sending, the request MessageBuilder is ready for reuse.
 	v.mbp.put(v.csetup.callOutMsg.serMsg)
 	wantReturnResults := v.csetup.WantReturnResults
+	resParser := v.csetup.ResultsParser
 	v.csetup = CallSetup{}
 
 	// When the call was pipelined from the bootstrap, we expect the Return
@@ -180,7 +181,12 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	}
 
 	var finalRes any
-	if content.IsZeroStruct() || !wantReturnResults {
+	if resParser != nil {
+		finalRes, err = resParser(pay)
+		if err != nil {
+			return nil, err
+		}
+	} else if content.IsZeroStruct() || !wantReturnResults {
 		// All done in this case.
 		finalRes = struct{}{}
 	} else {
