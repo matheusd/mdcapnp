@@ -82,6 +82,16 @@ func (rl *ReadLimiter) InitNoLimit() {
 	rl.rlType = rlTypeNoLimit
 }
 
+// InitFrom copies the settings from another ReadLimiter. If the other
+// ReadLimiter has consumed bytes from the limit, this limiter will also reflect
+// that.
+func (rl *ReadLimiter) InitFrom(other *ReadLimiter) {
+	rl.limit.Store(other.limit.Load())
+	rl.unsafeLimit = other.unsafeLimit
+	rl.originalLimit = other.originalLimit
+	rl.rlType = other.rlType
+}
+
 // testName returns a description of this RL for tests.
 func (rl *ReadLimiter) testName() string {
 	if rl == nil {

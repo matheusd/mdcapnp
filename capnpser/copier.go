@@ -235,3 +235,37 @@ func DeepCopyAndSetRoot(src AnyPointer, dst *MessageBuilder) error {
 
 	return dst.NonStdSetRoot(&res)
 }
+
+func ShallowCopy(src *Message, dst *MessageBuilder) error {
+	arena := src.arena
+	if arena.segs != nil && len(*arena.segs) > 0 {
+		// TODO: support this.
+		return errors.New("ShallowCopy does not support multi-segment arenas")
+	}
+
+	if len(dst.state.FirstSeg) != WordSize {
+		return errors.New("first segment in dst already has data other than root pointer")
+	}
+
+	totalSize := arena.s.wordLen()
+	if totalSize == 0 {
+		return errors.New("source message has no data in first segment")
+	}
+	seg, off, err := dst.allocate(0, totalSize-1) // -1 because root word is already allocated.
+	if err != nil {
+		return err
+	}
+
+	if off != 1 {
+		return errors.New("first allocate was not at offset 1")
+	}
+
+	if seg.id != 0 {
+		return errors.New("first allocate was not at segment 0")
+	}
+
+	copy(*seg.b, src.arena.s.b)
+	dst.readerArena.rl.InitFrom(src.arena.ReadLimiter()) // TODO: What about depth limit?
+
+	return nil
+}

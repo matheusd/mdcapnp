@@ -33,6 +33,8 @@ type CallSetup struct {
 	copyReturnResults bool
 
 	WantReturnResults bool
+
+	WantShallowReturnCopy bool
 }
 
 type ReturnResults struct {
@@ -366,6 +368,49 @@ func WaitReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf Cal
 	return
 }
 
+func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
+	resAny, err := WaitReturn(ctx, cf)
+	if err != nil {
+		return
+	}
+
+	var ok bool
+	rr.vat = cf.vat
+	rr.copyMb, ok = resAny.(*capnpser.MessageBuilder)
+	if !ok {
+		err = fmt.Errorf("result was not a *capnpser.MessageBuilder (got %T)", resAny)
+		return
+	}
+
+	resReader := rr.copyMb.MessageReader()
+	resRoot, err := resReader.GetRoot()
+	if err != nil {
+		return
+	}
+	resMsg := types.Message(resRoot)
+	if resMsg.Which() != types.Message_Which_Return {
+		err = errors.New("not the expected Return")
+		return
+	}
+	resReturn, err := resMsg.AsReturn()
+	if err != nil {
+		return
+	}
+	resPayload, err := resReturn.AsResults()
+	if err != nil {
+		return
+	}
+	rr.content, err = resPayload.Content()
+	if err != nil {
+		return
+	}
+	if !rr.content.IsStruct() {
+		err = errors.New("Return.Results.Content is not an expected Struct")
+		return
+	}
+	res = T(rr.content.AsStruct())
+	return
+}
 func WaitReturnResultsCapability[T ~CapabilityType](ctx context.Context, cf CallFuture) (res T, err error) {
 	resAny, err := WaitReturn(ctx, cf)
 	if err != nil {

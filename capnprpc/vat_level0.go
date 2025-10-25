@@ -125,6 +125,7 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	// After sending, the request MessageBuilder is ready for reuse.
 	v.mbp.put(v.csetup.callOutMsg.serMsg)
 	wantReturnResults := v.csetup.WantReturnResults
+	wantShallowReturnCopy := v.csetup.WantShallowReturnCopy
 	resParser := v.csetup.ResultsParser
 	v.csetup = CallSetup{}
 
@@ -186,13 +187,21 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if content.IsZeroStruct() || !wantReturnResults {
+	} else if content.IsZeroStruct() || (!wantReturnResults && !wantShallowReturnCopy) {
 		// All done in this case.
 		finalRes = struct{}{}
+	} else if wantShallowReturnCopy {
+		sizeHint := inMsg.Msg.Arena().TotalSize()
+		mb := v.mbp.getRawMessageBuilder(sizeHint)
+		err = capnpser.ShallowCopy(&inMsg.Msg, mb)
+		if err != nil {
+			return nil, err
+		}
+		finalRes = mb
 	} else {
 		// Caller wants the reply data. Copy into a new message builder for them
 		// to use it.
-		sizeHint := inMsg.Msg.Arena().TotalSize() // TODO: Add overhead?
+		sizeHint := inMsg.Msg.Arena().TotalSize()
 		mb := v.mbp.getRawMessageBuilder(sizeHint)
 		err = capnpser.DeepCopyAndSetRoot(content, mb)
 		if err != nil {
