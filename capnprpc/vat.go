@@ -7,7 +7,6 @@ package capnprpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"runtime/trace"
 	"slices"
 	"sync/atomic"
@@ -170,18 +169,19 @@ func (v *Vat) execStep(ctx context.Context, step *pipelineStep) error {
 		_ = call.SetInterfaceId(uint64(step.csetup.InterfaceId))
 		_ = call.SetMethodId(uint16(step.csetup.MethodId))
 		cmb.builder = capnpser.StructBuilder(call)
-		pbuilder := step.csetup.ParamsBuilder
-		if pbuilder != nil {
-			pb, err := call.NewParams()
-			if err != nil {
-				return err
+		/*
+			pbuilder := step.csetup.ParamsBuilder
+			if pbuilder != nil {
+				pb, err := call.NewParams()
+				if err != nil {
+					return err
+				}
+				err = pbuilder(pb)
+				if err != nil {
+					return fmt.Errorf("param building errored: %w", err)
+				}
 			}
-			err = pbuilder(pb)
-			if err != nil {
-				return fmt.Errorf("param building errored: %w", err)
-			}
-		}
-
+		*/
 	}
 
 	// Determine connection from parent or step itself

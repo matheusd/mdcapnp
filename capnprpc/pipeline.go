@@ -24,15 +24,15 @@ type CallSetup struct {
 	// ParamsBuilder is called with the outbound message builder when the
 	// Call message is being built. This can be used to fill the Params
 	// field of the Call.
-	ParamsBuilder CallParamsBuilder
+	// ParamsBuilder CallParamsBuilder
 
 	// ResultsParser is called when a Return.Results is received in response
 	// to a Call. It can parse the encoded results into some Go value.
-	ResultsParser CallResultsParser
+	// ResultsParser CallResultsParser
 
-	copyReturnResults bool
+	// copyReturnResults bool
 
-	WantReturnResults bool
+	// WantReturnResults bool
 
 	WantShallowReturnCopy bool
 }
@@ -195,7 +195,16 @@ func SetupCallWithParams(parent CallFuture, payloadSizeHint capnpser.WordCount, 
 	return setupCall(parent, payloadSizeHint, iid, mid, true)
 }
 
-func SetupCallWithStructParams[T ~capnpser.StructBuilderType](parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, T) {
+func SetupCallWithStructParams(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, capnpser.StructBuilder) {
+	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
+	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
+	if err != nil {
+		panic(err)
+	}
+	return cs, sb
+}
+
+func SetupCallWithStructParamsGeneric[T ~capnpser.StructBuilderType](parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, T) {
 	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
 	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
 	if err != nil {
@@ -332,57 +341,27 @@ func WaitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
 	return
 }
 
-func WaitReturnResults(ctx context.Context, cf CallFuture) (res ReturnResults, err error) {
-	resAny, err := WaitReturn(ctx, cf)
-	if err != nil {
-		return ReturnResults{}, fmt.Errorf("WaitResult() errored: %v", err)
-	}
-
-	var ok bool
-	res.copyMb, ok = resAny.(*capnpser.MessageBuilder)
-	if !ok {
-		err = fmt.Errorf("result was not a *capnpser.MessageBuilder (got %T)", resAny)
-		return
-	}
-
-	resReader := res.copyMb.MessageReader()
-	resRoot, err := resReader.GetRoot()
-	if err != nil {
-		return
-	}
-	res.vat = cf.vat
-	res.content = resRoot.AsAnyPointer()
-	return
-}
-
-func WaitReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
-	rr, err = WaitReturnResults(ctx, cf)
-	if err != nil {
-		return
-	}
-	if !rr.content.IsStruct() {
-		err = errors.New("Return.Results.Content is not an expected Struct")
-		return
-	}
-	res = T(rr.content.AsStruct())
-	return
-}
-
 func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
 	resAny, err := WaitReturn(ctx, cf)
 	if err != nil {
 		return
 	}
 
-	var ok bool
 	rr.vat = cf.vat
-	rr.copyMb, ok = resAny.(*capnpser.MessageBuilder)
-	if !ok {
-		err = fmt.Errorf("result was not a *capnpser.MessageBuilder (got %T)", resAny)
-		return
+
+	var resReader capnpser.Message
+	switch resTyped := resAny.(type) {
+	case *capnpser.MessageBuilder:
+		rr.copyMb = resTyped
+		resReader = rr.copyMb.MessageReader()
+		resReader.Arena().ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
+		resReader.SetDepthLimit(64) // TODO: Make this a constant somewhere?
+	case *capnpser.Arena:
+		resReader = capnpser.MakeMsg(resTyped)
+	default:
+		err = fmt.Errorf("unhandled result type (got %T)", resAny)
 	}
 
-	resReader := rr.copyMb.MessageReader()
 	resRoot, err := resReader.GetRoot()
 	if err != nil {
 		return

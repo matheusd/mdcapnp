@@ -26,17 +26,8 @@ func (t *questionsTable) nextID() (id QuestionId, ok bool) {
 	return
 }
 
-var xxx_maxqtsize int
-var xxx_qtsets int
-
 func (t *questionsTable) set(id QuestionId, v question) {
 	t.entries[id] = v
-	/*
-		xxx_qtsets += 1
-		if len(t.entries) > xxx_maxqtsize {
-			xxx_maxqtsize = len(t.entries)
-		}
-	*/
 }
 
 func (t *questionsTable) get(id QuestionId) (res question, ok bool) {

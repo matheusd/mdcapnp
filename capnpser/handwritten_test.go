@@ -123,9 +123,9 @@ func GoserbenchSmallStructTypeSize(a *GoserbenchSmallStructType) (wc WordCount, 
 	return
 }
 
-func UnsafeWriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent UnsafeRawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+func UnsafeWriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent unsafeRawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
 	// Get an aliased writer to the desired location.
-	var urb UnsafeRawBuilder
+	var urb unsafeRawBuilder
 	parent.AliasChild(startOff, &urb)
 
 	// Write the data fields.
@@ -158,9 +158,9 @@ func UnsafeWriteRootGoserbenchSmallStructType(a *GoserbenchSmallStructType, mb *
 	return nil
 }
 
-func WriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent RawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+func WriteGoserbenchSmallStructType(a *GoserbenchSmallStructType, parent rawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
 	// Get an aliased writer to the desired location.
-	var rb RawBuilder
+	var rb rawBuilder
 	parent.AliasChild(startOff, &rb)
 
 	// Write the data fields.
@@ -204,9 +204,9 @@ func GoserbenchSmallStructTypeSizeXXX(a *GoserbenchSmallStructType) (wc WordCoun
 	return
 }
 
-func WriteGoserbenchSmallStructTypeXXX(a *GoserbenchSmallStructType, parent RawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
+func WriteGoserbenchSmallStructTypeXXX(a *GoserbenchSmallStructType, parent rawBuilder, ptrOff, startOff WordOffset) (endOff WordOffset) {
 	// Get an aliased writer to the desired location.
-	var rb RawBuilder
+	var rb rawBuilder
 	parent.AliasChild(startOff, &rb)
 
 	// Write the data fields.

@@ -39,7 +39,7 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.
 	return rc.queue(ctx, outMsg)
 }
 
-func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Return) error {
+func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnpser.Message, ret types.Return) error {
 	qid := QuestionId(ret.AnswerId())
 	q, ok := rc.questions.get(qid)
 	if !ok {
@@ -150,25 +150,17 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Retu
 		// TODO: copy if its a struct? Or release serialized message if
 		// content is just a cap (because it's not needed anymore)?
 		// stepResult = content.AsStruct()
-		if step.csetup.ResultsParser != nil {
+		/*if step.csetup.ResultsParser != nil {
 			stepResult, err = step.csetup.ResultsParser(payload)
 			if err != nil {
 				return fmt.Errorf("error parsing results: %w", err)
 			}
-		} else if step.csetup.WantReturnResults {
-			// We need to copy because processReturn is inside the
-			// inbound loop of the source running conn, but handling
-			// is done outside (by the caller of WaitResult).
-			mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
-			err = capnpser.DeepCopyAndSetRoot(content, mb)
-			if err != nil {
-				return err
-			}
-			stepResult = mb
-
-		} else if step.csetup.copyReturnResults {
-			mb := v.mbp.getRawMessageBuilder(0) // TODO: get size hint
-			err = capnpser.DeepCopyAndSetRoot(content, mb)
+		} else */
+		if step.csetup.WantShallowReturnCopy {
+			inMsgArena := rawInMsg.Arena()
+			sizeHint := inMsgArena.TotalSize()
+			mb := v.mbp.getRawMessageBuilder(sizeHint)
+			err = capnpser.ShallowCopy(&rawInMsg, mb)
 			if err != nil {
 				return err
 			}
@@ -1028,7 +1020,7 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.M
 		var ret types.Return
 		ret, err = msg.AsReturn()
 		if err == nil {
-			err = v.processReturn(ctx, rc, ret)
+			err = v.processReturn(ctx, rc, rawMsg, ret)
 		}
 
 	case types.Message_Which_Resolve:

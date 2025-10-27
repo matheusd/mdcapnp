@@ -33,8 +33,9 @@ type introductionInfo struct {
 
 type rpcCallMsgBuilder struct {
 	outMsg
-	builder     capnpser.StructBuilder
-	isBootstrap bool
+	builder       capnpser.StructBuilder
+	paramsBuilder capnpser.StructBuilder
+	isBootstrap   bool
 }
 
 func (rb *rpcCallMsgBuilder) initAsBootstrap() error {
@@ -298,6 +299,11 @@ func (cc *CallContext) initResponsePayload(payloadSizeHint capnpser.WordCount) (
 	return
 }
 
+// RespondAsStruct responds this call with a struct. It sets up the content
+// response struct and (optinally) allocates extra space for an estimated
+// payload size.
+//
+// The caller should fill the response struct as required by the call.
 func (cc *CallContext) RespondAsStruct(structSize capnpser.StructSize, payloadSizeHint capnpser.WordCount) (res capnpser.StructBuilder, err error) {
 	if cc.serMb == nil {
 		payloadSizeHint += structSize.TotalSize()
@@ -328,17 +334,6 @@ func (cc *CallContext) readReturnCapTable() capnpser.GenericStructList[types.Cap
 		return capnpser.GenericStructList[types.CapDescriptor]{}
 	}
 
-	// Errors don't need checking, because this is assumed to be called
-	// during return building, where the structures were allocated.
-	// TODO: use cc.* stuff
-	/*
-		var rpcMsg types.Message
-		serMsg := cc.serMb.MessageReader()
-		rpcMsg.ReadFromRoot(&serMsg)
-		ret, _ := rpcMsg.AsReturn()
-		res, _ := ret.AsResults()
-		capTable, _ := res.CapTable()
-	*/
 	res := cc.pb.AsReader()
 	capTable, err := res.CapTable()
 	if err != nil {
@@ -347,7 +342,6 @@ func (cc *CallContext) readReturnCapTable() capnpser.GenericStructList[types.Cap
 	return capTable
 }
 
-// TODO: Add crb.respondAsStruct()
 // TODO: Add crb.respondAsSingleCap()
 
 // MUST be called with crb.rc.mu locked.
@@ -525,10 +519,6 @@ type export struct {
 	thirdPartyCapDescIdAlt capnpser.AnyPointer
 	thirdPartyVineId       ExportId
 	thirdPartyProvideQid   QuestionId
-
-	// Track calls that must be fulfilled once this is fulfilled.
-
-	// TODO: refcount to send Finish()?
 }
 
 func (e *export) resolved() bool {

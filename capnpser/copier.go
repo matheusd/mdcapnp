@@ -236,6 +236,13 @@ func DeepCopyAndSetRoot(src AnyPointer, dst *MessageBuilder) error {
 	return dst.NonStdSetRoot(&res)
 }
 
+// ShallowCopy performs a "shallow" message copy from src to dst. This directly
+// copies the data segments from source, without any validation on their
+// correctness.
+//
+// This is in contrast to a [DeepCopy], which copies structures by recursing
+// into them (starting at the root message structure) and as such removes
+// orphaned data and exercises the reading limits of the message.
 func ShallowCopy(src *Message, dst *MessageBuilder) error {
 	arena := src.arena
 	if arena.segs != nil && len(*arena.segs) > 0 {
@@ -265,7 +272,11 @@ func ShallowCopy(src *Message, dst *MessageBuilder) error {
 	}
 
 	copy(*seg.b, src.arena.s.b)
-	dst.readerArena.rl.InitFrom(src.arena.ReadLimiter()) // TODO: What about depth limit?
+
+	// Shallow copy must preserve read limit and depth limit, otherwise
+	// client code may be vulnerable.
+	dst.readerArena.rl.InitFrom(src.arena.ReadLimiter())
+	dst.readerDl = src.dl
 
 	return nil
 }

@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 
 	types "matheusd.com/mdcapnp/capnprpc/types"
-	"matheusd.com/mdcapnp/capnpser"
 )
 
 const level0BootQid = 1
@@ -124,9 +123,8 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 
 	// After sending, the request MessageBuilder is ready for reuse.
 	v.mbp.put(v.csetup.callOutMsg.serMsg)
-	wantReturnResults := v.csetup.WantReturnResults
 	wantShallowReturnCopy := v.csetup.WantShallowReturnCopy
-	resParser := v.csetup.ResultsParser
+	// resParser := v.csetup.ResultsParser
 	v.csetup = CallSetup{}
 
 	// When the call was pipelined from the bootstrap, we expect the Return
@@ -182,32 +180,18 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	}
 
 	var finalRes any
-	if resParser != nil {
-		finalRes, err = resParser(pay)
-		if err != nil {
-			return nil, err
-		}
-	} else if content.IsZeroStruct() || (!wantReturnResults && !wantShallowReturnCopy) {
+	/*
+		if resParser != nil {
+			finalRes, err = resParser(pay)
+			if err != nil {
+				return nil, err
+			}
+		} else */
+	if content.IsZeroStruct() || !wantShallowReturnCopy {
 		// All done in this case.
 		finalRes = struct{}{}
-	} else if wantShallowReturnCopy {
-		sizeHint := inMsg.Msg.Arena().TotalSize()
-		mb := v.mbp.getRawMessageBuilder(sizeHint)
-		err = capnpser.ShallowCopy(&inMsg.Msg, mb)
-		if err != nil {
-			return nil, err
-		}
-		finalRes = mb
 	} else {
-		// Caller wants the reply data. Copy into a new message builder for them
-		// to use it.
-		sizeHint := inMsg.Msg.Arena().TotalSize()
-		mb := v.mbp.getRawMessageBuilder(sizeHint)
-		err = capnpser.DeepCopyAndSetRoot(content, mb)
-		if err != nil {
-			return nil, err
-		}
-		finalRes = mb
+		finalRes = inMsg.Msg.Arena()
 	}
 
 	return finalRes, nil

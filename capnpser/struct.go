@@ -65,6 +65,23 @@ func (s *Struct) Arena() *Arena { // TODO: unsafe to provide... maybe add a Read
 	return s.arena
 }
 
+// WithDepthLimit returns this struct with the depth limit modified to the
+// specified one.
+func (s *Struct) WithDepthLimit(dl uint) Struct {
+	if dl > MaxDepthLimit {
+		panic(fmt.Sprintf("value %d not allowable as a depth limit", dl))
+	}
+
+	res := *s
+	res.dl = depthLimit(dl)
+	return res
+}
+
+func StructWithDepthLimit[T ~StructType](s T, dl uint) T {
+	ss := (Struct)(s)
+	return T(ss.WithDepthLimit(dl))
+}
+
 func (s *Struct) AsAnyPointer() AnyPointer {
 	return AnyPointer{
 		seg:   s.seg,
@@ -285,7 +302,7 @@ func (s *Struct) ReadList(ptrIndex PointerFieldIndex, ls *List) error {
 	return nil
 }
 
-func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) error {
+func (s *Struct) ReadStructListOld(ptrIndex PointerFieldIndex, sls *StructList) error {
 	seg, lp, listDL, err := s.readListPtr(ptrIndex)
 	if err != nil {
 		return fmt.Errorf("unable to decode field %d as a list pointer: %v", ptrIndex, err)
@@ -341,6 +358,53 @@ func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) err
 		},
 		itemSize: itemSize,
 		listLen:  listLen,
+	}
+
+	return nil
+}
+
+func (s *Struct) ReadStructList(ptrIndex PointerFieldIndex, sls *StructList) (err error) {
+	sls.l.arena = s.arena
+
+	sls.l.seg, sls.l.ptr, sls.l.dl, err = s.readListPtr(ptrIndex)
+	if err != nil {
+		return fmt.Errorf("unable to decode field %d as a list pointer: %v", ptrIndex, err)
+	}
+
+	if sls.l.ptr.elSize != listElSizeComposite {
+		// A null pointer means this is an empty list or the default
+		// field value.
+		if sls.l.ptr.toPointer().isNullPointer() {
+			sls.itemSize = StructSize{}
+			sls.listLen = 0
+			return nil
+		}
+
+		// TODO: support re-interpreting native lists as composite.
+		return errors.New("not a composite list")
+	}
+
+	// Read the tag word, which contains the per-item information. The list
+	// has already been verified to be entirely in-bounds (by word count),
+	// therefore the tag word is in-bounds.
+	tagWord := s.seg.uncheckedGetWordAsPointer(sls.l.ptr.startOffset)
+	if !tagWord.isStructPointer() {
+		// return errors.New("composite list tag word is not a struct pointer")
+		return fmt.Errorf("composite list tag word is not a struct pointer %016x", tagWord)
+	}
+	sls.listLen = listSize(tagWord.dataOffset())
+	sls.itemSize = tagWord.structSize()
+
+	// Double check the total list word count size is correct, when
+	// calculated as itemSize * len (readListPtr verified by by total word
+	// count only).
+	gotListWordCount, ok := mulWordCounts(sls.itemSize.TotalSize(), WordCount(sls.listLen))
+	if !ok {
+		return errors.New("tag word list length overflows WordCount")
+	}
+	if gotListWordCount+1 != listWordCount(sls.l.ptr.elSize, sls.l.ptr.listSize) {
+		return fmt.Errorf("incongruent list sizes: in list pointer %d, in tag word: %d",
+			listWordCount(sls.l.ptr.elSize, sls.l.ptr.listSize), gotListWordCount)
 	}
 
 	return nil

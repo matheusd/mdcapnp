@@ -31,8 +31,8 @@ type IOTransport struct {
 	inBuf   []byte
 	inArena capnpser.Arena
 
-	depthLimit atomic.Uintptr
-	readLimit  atomic.Uint64
+	// depthLimit atomic.Uintptr
+	readLimit atomic.Uint64
 }
 
 func nopFlush() error { return nil }
@@ -53,16 +53,18 @@ func NewIOTransport(remoteName string, rw net.Conn) *IOTransport {
 		closeRW: close,
 		inBuf:   make([]byte, 512*1024), // TODO: parametrize
 	}
-	iot.depthLimit.Store(64) // TODO: constant somewhere?
+	// iot.depthLimit.Store(64) // TODO: constant somewhere?
 	iot.readLimit.Store(64 * 1024 * 1024)
 	return iot
 }
 
 // SetReadDepthLimit sets the depth limit for traversing messages read from this
 // remote end.
+/*
 func (iot *IOTransport) SetReadDepthLimit(limit uint) {
 	iot.depthLimit.Store(uintptr(limit))
 }
+*/
 
 // SetReadDepthLimit sets the read limit (in bytes) for traversing messages read
 // from this remote end.
@@ -136,7 +138,7 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 		iot.inArena.ReadLimiter().InitConcurrentUnsafe(iot.readLimit.Load())
 
 		res := InMsg{Msg: capnpser.MakeMsg(&iot.inArena)}
-		res.Msg.SetDepthLimit(uint(iot.depthLimit.Load()))
+		// res.Msg.SetDepthLimit(uint(iot.depthLimit.Load()))
 
 		return res, nil
 	}

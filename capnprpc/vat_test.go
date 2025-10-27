@@ -212,8 +212,6 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	// Call isn't done yet (waiting on remote promise).
 	chantest.AssertNoRecv(t, getCapErrChan)
-	// t.Logf("XXXXXXX %v", <-getCapErrChan)
-	// t.FailNow()
 
 	// Resolve.
 	chantest.AssertSend(t, resolvePromiseChan, struct{}{})
@@ -358,8 +356,6 @@ func BenchmarkVoidCall(b *testing.B) {
 			}
 		}
 
-		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
-
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})
 
@@ -384,8 +380,6 @@ func BenchmarkVoidCall(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-
-		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
 
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})
@@ -416,8 +410,6 @@ func BenchmarkVoidCall(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-
-		// b.Logf("XXXXX sets %d max len %d", xxx_qtsets, xxx_maxqtsize)
 
 		require.Equal(b, uint64(b.N), callCount.Load())
 	})
@@ -467,62 +459,6 @@ func BenchmarkAddCall(b *testing.B) {
 		}
 	})
 
-	b.Run("alt", func(b *testing.B) {
-		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
-		cc, _ := th.connectVatsWithTCP(c, s)
-		ctx := testctx.New(b)
-
-		// Wait for bootstrap.
-		_, err := cc.Bootstrap().Wait(testctx.New(b))
-		require.NoError(b, err)
-
-		// Bootstrap resolved.
-		api := testAPIAsBootstrap(cc.Bootstrap())
-
-		var aa, bb, cv int64 = 1, 3, 0
-		b.ReportAllocs()
-		for b.Loop() {
-			aa += 1
-			bb = bb<<1 + aa
-			err := api.AddAlt(aa, bb, &cv).wait(ctx)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if cv != aa+bb {
-				b.Fatal("wrong result")
-			}
-		}
-	})
-
-	b.Run("alt2", func(b *testing.B) {
-		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
-		cc, _ := th.connectVatsWithTCP(c, s)
-		ctx := testctx.New(b)
-
-		// Wait for bootstrap.
-		_, err := cc.Bootstrap().Wait(testctx.New(b))
-		require.NoError(b, err)
-
-		// Bootstrap resolved.
-		api := testAPIAsBootstrap(cc.Bootstrap())
-
-		var aa, bb int64 = 1, 3
-		b.ReportAllocs()
-		for b.Loop() {
-			aa += 1
-			bb = bb<<1 + aa
-			res, err := api.AddAlt2(aa, bb).wait(ctx)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if res != aa+bb {
-				b.Fatal("wrong result")
-			}
-		}
-	})
-
 	b.Run("level0", func(b *testing.B) {
 		th := newTestHarness(b)
 		s := th.newVat("server", WithBootstrapHandler(handler))
@@ -546,7 +482,7 @@ func BenchmarkAddCall(b *testing.B) {
 		for b.Loop() {
 			aa += 1
 			bb = bb<<1 + aa
-			res, err := api.AddAlt2(aa, bb).wait(ctx)
+			res, err := api.Add(aa, bb).wait(ctx)
 			if err != nil {
 				b.Fatal(err)
 			}

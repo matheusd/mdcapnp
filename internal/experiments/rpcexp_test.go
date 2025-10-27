@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"testing"
 	"unsafe"
-
-	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
 var errDummy = errors.New("dummy error")
@@ -25,7 +23,7 @@ type pipelineStep struct {
 
 	// Filled if this step forks the pipeline.
 	sides       []*pipeline
-	stepRunning *sigvalue.Once[struct{}] // FIXME: what type?
+	stepRunning *Once[struct{}] // FIXME: what type?
 }
 
 type pipeline struct {
@@ -60,7 +58,7 @@ func (pipe *pipeline) fork(i, sizeHint int) *pipeline {
 	step := &pipe.steps[i]
 	step.sides = append(pipe.steps[i].sides, fork)
 	if step.stepRunning == nil {
-		step.stepRunning = new(sigvalue.Once[struct{}])
+		step.stepRunning = new(Once[struct{}])
 	}
 
 	return fork

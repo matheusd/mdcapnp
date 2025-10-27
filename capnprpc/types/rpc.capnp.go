@@ -262,6 +262,20 @@ func (b *CapDescriptorBuilder) NewThirdPartyHosted() (sb ThirdPartyCapDescriptor
 	return
 }
 
+type CapDescriptorList capnpser.StructList
+
+func (l *CapDescriptorList) Len() int { return (*capnpser.StructList)(l).Len() }
+func (l *CapDescriptorList) At(i int) CapDescriptor {
+	return CapDescriptor((*capnpser.StructList)(l).At(i))
+}
+
+type CapDescriptorListBuilder capnpser.StructListBuilder
+
+func (lb *CapDescriptorListBuilder) Len() int { return (*capnpser.StructListBuilder)(lb).Len() }
+func (lb *CapDescriptorListBuilder) At(i int) CapDescriptorBuilder {
+	return CapDescriptorBuilder((*capnpser.StructListBuilder)(lb).At(i))
+}
+
 type Payload capnpser.Struct
 
 const (
@@ -294,9 +308,10 @@ func (b *PayloadBuilder) SetContentAsNewStruct(size capnpser.StructSize) (capnps
 	return (*capnpser.StructBuilder)(b).NewStructField(payload_content_ptrField, size)
 }
 
-func (b *PayloadBuilder) NewCapTable(listLen, listCap int) (capnpser.GenericStructListBuilder[CapDescriptorBuilder], error) {
+func (b *PayloadBuilder) NewCapTable(listLen, listCap int) (res CapDescriptorListBuilder, err error) {
 	objSize := capDescriptor_size
-	return capnpser.NewGenericStructListBuilderField[CapDescriptorBuilder]((*capnpser.StructBuilder)(b), payload_capTable_ptrField, objSize, listLen, listCap)
+	err = capnpser.NewStructListBuilderField((*capnpser.StructBuilder)(b), payload_capTable_ptrField, objSize, listLen, listCap, (*capnpser.StructListBuilder)(&res))
+	return
 }
 
 const (

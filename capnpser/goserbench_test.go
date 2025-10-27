@@ -48,7 +48,7 @@ func TestGoserbenchMarshal(t *testing.T) {
 
 // TestGoserbenchWrite tests writing a goserbench struct.
 func TestGoserbenchWrite(t *testing.T) {
-	alloc := NewSimpleSingleAllocator(12, false)
+	alloc := NewSimpleSingleAllocator(16, false)
 
 	mb, err := NewMessageBuilder(alloc)
 	require.NoError(t, err)

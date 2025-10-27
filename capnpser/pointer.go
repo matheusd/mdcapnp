@@ -99,6 +99,12 @@ func (ptr pointer) toListPointer() (lp listPointer) {
 	return
 }
 
+func (ptr pointer) structSize() (ss StructSize) {
+	ss.DataSectionSize = ptr.dataSectionSize()
+	ss.PointerSectionSize = ptr.pointerSectionSize()
+	return
+}
+
 type structPointer struct {
 	dataOffset         WordOffset
 	dataSectionSize    wordCount16
@@ -114,6 +120,10 @@ func (sp structPointer) toPointer() pointer {
 
 func (sp structPointer) structSize() StructSize {
 	return StructSize{DataSectionSize: sp.dataSectionSize, PointerSectionSize: sp.pointerSectionSize}
+}
+
+func (sp *structPointer) totalSize() WordCount {
+	return WordCount(sp.dataSectionSize) + WordCount(sp.pointerSectionSize)
 }
 
 func buildRawStructPointer(off WordOffset, sz StructSize) pointer {

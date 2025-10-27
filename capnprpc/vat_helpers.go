@@ -66,8 +66,7 @@ func (v *Vat) newSingleCapReturn(aid AnswerId) (outMsg outMsg, capDesc types.Cap
 		return
 	}
 
-	var capTable capnpser.GenericStructListBuilder[types.CapDescriptorBuilder]
-	capTable, err = payBuilder.NewCapTable(1, 1)
+	capTable, err := payBuilder.NewCapTable(1, 1)
 	if err != nil {
 		return
 	}

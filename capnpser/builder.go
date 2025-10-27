@@ -119,6 +119,28 @@ func (slb *StructListBuilder) At(i int) (res StructBuilder) {
 	return slb.at(i)
 }
 
+func (slb *StructListBuilder) ReadAt(i int, res *StructBuilder) {
+	if i < 0 {
+		panic("i is < 0 (out of bounds)")
+	}
+	if i > slb.Len() {
+		panic("i is > len (out of bounds)")
+	}
+
+	// Determine offset of this structure. No need to check for bounds
+	// because the list is assumed initialized at least up to len i.
+	relOff := WordOffset(1 + WordOffset(WordCount(i)*slb.itemSize.TotalSize()))
+
+	*res = StructBuilder{
+		off: slb.off + relOff,
+		sz:  slb.itemSize,
+		mb:  slb.mb,
+		sid: slb.sid,
+		// urb: slb.urb.Child(relOff),
+		urb: slb.urb,
+	}
+}
+
 // Add an item to the list.
 func (slb *StructListBuilder) Add() (res StructBuilder) {
 	if slb.listLen == slb.listCap {
@@ -144,18 +166,29 @@ func (gslb *GenericStructListBuilder[T]) Cap() int     { return gslb.slb.Cap() }
 func (gslb *GenericStructListBuilder[T]) At(i int) T   { return T(gslb.slb.At(i)) }
 func (gslb *GenericStructListBuilder[T]) Add(i int) T  { return T(gslb.slb.Add()) }
 
-func NewGenericStructListBuilder[T ~StructBuilderType](mb *MessageBuilder,
-	itemSize StructSize, listLen, listCap int) (res GenericStructListBuilder[T], err error) {
-
-	res.slb, err = mb.NewStructList(itemSize, listLen, listCap)
+func CastStructListBuilder[T ~StructBuilderType](slb StructListBuilder) (res GenericStructListBuilder[T]) {
+	res.slb = slb
 	return
 }
 
-func NewGenericStructListBuilderField[T ~StructBuilderType](s *StructBuilder,
-	ptrIndex PointerFieldIndex, itemSize StructSize, listLen, listCap int) (
-	res GenericStructListBuilder[T], err error) {
+func NewStructListBuilderField(s *StructBuilder,
+	ptrIndex PointerFieldIndex, itemSize StructSize, listLen, listCap int, res *StructListBuilder) (
+	err error) {
 
-	res.slb, err = s.NewStructListField(ptrIndex, itemSize, listLen, listCap)
+	// Sanity checks.
+	if listCap < listLen {
+		err = errors.New("listCap cannot be < listLen")
+		return
+	}
+	if listCap > MaxListSize {
+		err = errors.New("list capacity cannot be larger than MaxListSize")
+		return
+	}
+	res.listLen = listSize(listLen)
+	res.listCap = listSize(listCap)
+	res.itemSize = itemSize
+
+	err = s.newStructListField(ptrIndex, res)
 	return
 }
 
@@ -568,6 +601,41 @@ func (sb *StructBuilder) SetAnyPointer(ptrIndex PointerFieldIndex, v AnyPointerB
 	return nil
 }
 
+func (sb *StructBuilder) newStructListField(ptrIndex PointerFieldIndex, res *StructListBuilder) (err error) {
+	if !sb.hasPointer(ptrIndex) {
+		// TODO: allocate new struct, copy over old fields to new fields
+		// or error out?
+		err = errStructBuilderDoesNotContainPointerField(ptrIndex)
+		return
+	}
+
+	var storedWordCount WordCount
+	storedWordCount, err = sb.mb.newStructList(res)
+	if err != nil {
+		return
+	}
+
+	if res.sid != sb.sid {
+		// TODO: add support.
+		err = errors.New("unhandled list in different segment")
+		return
+	}
+
+	// Offset of the pointer field inside sb. No need to check for overflow
+	// because the struct has been validated to contain this pointer.
+	ptrOff := ptrIndex.uncheckedWordOffset(sb.off + WordOffset(sb.sz.DataSectionSize))
+
+	// Determine concrete offset from structure start until ptrOff.
+	concretePtrOff := /*sb.off*/ +ptrOff
+
+	// Build the final list pointer.
+	lsPtr := buildRawListPointer(res.off-concretePtrOff-1, listElSizeComposite, listSize(storedWordCount))
+
+	// Write the pointer field.
+	sb.urb.SetWord(concretePtrOff, Word(lsPtr))
+	return
+}
+
 func (sb *StructBuilder) NewStructListField(ptrIndex PointerFieldIndex, itemSize StructSize, listLen, listCap int) (res StructListBuilder, err error) {
 	if !sb.hasPointer(ptrIndex) {
 		// TODO: allocate new struct, copy over old fields to new fields
@@ -854,6 +922,7 @@ type MessageBuilder struct {
 	alloc       Allocator
 	segsCap     int
 	readerArena Arena
+	readerDl    depthLimit
 }
 
 func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
@@ -867,6 +936,7 @@ func NewMessageBuilder(alloc Allocator) (mb *MessageBuilder, err error) {
 	mb.segsCap = cap(mb.state.Segs)
 	mb.readerArena.ReadLimiter().InitNoLimit()
 	mb.readerArena.notResetable = true
+	mb.readerDl = maxDepthLimit
 	return mb, nil
 }
 
@@ -899,7 +969,7 @@ func (mb *MessageBuilder) updateReaderArena() *Arena {
 // discarded and re-read if any modifications are made, otherwise orphaned data
 // may be read.
 func (mb *MessageBuilder) MessageReader() Message {
-	return Message{arena: mb.updateReaderArena(), dl: maxDepthLimit}
+	return Message{arena: mb.updateReaderArena(), dl: mb.readerDl}
 }
 
 // allocate allocates size words, preferably (but not necessarily) on the
@@ -1103,6 +1173,32 @@ func (mb *MessageBuilder) NewRootStruct(size StructSize) (sb StructBuilder, err 
 	return
 }
 
+func (mb *MessageBuilder) newStructList(res *StructListBuilder) (storedWordCount WordCount, err error) {
+	var ok bool
+	storedWordCount, ok = mulWordCounts(res.itemSize.TotalSize(), WordCount(res.listCap))
+	if !ok {
+		err = errors.New("trying to init composite list larger than possible")
+		return
+	}
+	totalWordCount := storedWordCount + 1
+	if totalWordCount > maxWordOffset {
+		err = fmt.Errorf("total struct size %d overflows max word offset %d", totalWordCount, maxWordOffset)
+		return
+	}
+
+	res.urb, res.off, err = mb.allocateValidSize(0, WordCount(totalWordCount))
+	if err != nil {
+		return
+	}
+
+	// res.urb = UnsafeRawBuilder{ptr: unsafe.Pointer(&(b[res.off*WordSize]))}
+	res.mb = mb
+	res.sid = res.urb.id
+
+	// Write the initial tag word.
+	res.writeTagWord()
+	return
+}
 func (mb *MessageBuilder) NewStructList(itemSize StructSize, listLen, listCap int) (res StructListBuilder, err error) {
 	// Sanity checks.
 	if listCap < listLen {
@@ -1273,7 +1369,7 @@ func (mb *MessageBuilder) AllocateRawBuilder(size WordCount) (rb RawBuilder, err
 // root struct pointer of the message.
 //
 // This should only be called on empty messages, otherwise it errors.
-func (mb *MessageBuilder) AllocateRootRawBuilder(size WordCount) (rb RawBuilder, err error) {
+func (mb *MessageBuilder) AllocateRootRawBuilder(size WordCount) (rb rawBuilder, err error) {
 	// Ask the allocator to allocate.
 	var segID SegmentID
 	var off WordOffset
@@ -1296,7 +1392,7 @@ func (mb *MessageBuilder) AllocateRootRawBuilder(size WordCount) (rb RawBuilder,
 	return
 }
 
-func (mb *MessageBuilder) AllocateUnsafeRootRawBuilder(size WordCount) (rb UnsafeRawBuilder, err error) {
+func (mb *MessageBuilder) AllocateUnsafeRootRawBuilder(size WordCount) (rb unsafeRawBuilder, err error) {
 	// Ask the allocator to allocate.
 	var segID SegmentID
 	var off WordOffset

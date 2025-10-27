@@ -218,7 +218,6 @@ func ReadGenericStructList[T ~StructType](s *Struct, ptrIndex PointerFieldIndex)
 	var sl StructList
 	err := s.ReadStructList(ptrIndex, &sl)
 	return GenericStructList[T]{sl}, err
-
 }
 
 type GenericStructList[T ~StructType] struct {
