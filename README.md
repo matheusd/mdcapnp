@@ -142,9 +142,9 @@ sequenceDiagram
 </details>
 
 
-[Sample log for test 3PH execution](docs/3ph-test.log.html).
+[Sample log for test 3PH execution](https://matheusd.github.io/mdcapnp/3ph-test.log.html).
 
-[Test code for sample 3PH execution](capnprpc/vat_3ph_test.go).
+[Test code for sample 3PH execution](https://github.com/matheusd/mdcapnp/blob/master/capnprpc/vat_3ph_test.go#L194).
 
 
 
