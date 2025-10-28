@@ -226,12 +226,12 @@ func Test3PHBasic(t *testing.T) {
 	// Existing connections (before 3PH).
 	aliceBobRc, _ := tnet.connectVats(alice, bob)
 	bobCarolRc, _ := tnet.connectVats(bob, carol)
-	stageLog("Initial connections done")
+	stageLog("Initial connections done. Alice will ask for Bob's Bootstrap.")
 
 	// Alice asks Bob for the bootstrap cap. This is an API instance.
 	bobApiInAlice := testAPIAsBootstrap(aliceBobRc.Bootstrap())
 	require.NoError(t, bobApiInAlice.WaitDiscardResult(testctx.New(t)))
-	stageLog("Alice got Bob's bootstrap cap")
+	stageLog("Alice got Bob's bootstrap cap. Alice will ask for a sub-cap from boot.")
 
 	// Alice asks for a capability from Bob. This will only complete after
 	// 3PH completes, so wait for it in a goroutine.
@@ -240,7 +240,7 @@ func Test3PHBasic(t *testing.T) {
 	go func() {
 		aliceGetCapErrChan <- aliceGetCapCall.WaitDiscardResult(testctx.New(t))
 	}()
-	stageLog("Alice asked Bob for a new cap")
+	stageLog("Alice asked Bob for a new cap. Bob will fetch Carol's Boostrap cap.")
 
 	// Bob realizes the cap that Alice wants is in Carol. So Bob will ask
 	// Carol for it (it's her bootstrap cap). This is done OOB here, but in
@@ -252,7 +252,7 @@ func Test3PHBasic(t *testing.T) {
 	// result.
 	carolCapInBob, err := testAPIAsBootstrap(bobCarolRc.Bootstrap()).Wait(testctx.New(t))
 	require.NoError(t, err)
-	stageLog("Bob got Carol's bootstrap cap")
+	stageLog("Bob got Carol's bootstrap cap. Bob will fulfill Alice's promise with it.")
 
 	// Bob will now answer its promise to Alice with a third party cap:
 	// Carol's Bootstrap.
@@ -264,7 +264,7 @@ func Test3PHBasic(t *testing.T) {
 	// cap.
 	aliceGetCapErr := chantest.AssertRecv(t, aliceGetCapErrChan)
 	require.Nil(t, aliceGetCapErr)
-	stageLog("3PH completed!")
+	stageLog("3PH completed! Alice will make a path-shortened call to Carol.")
 
 	// Finally, Alice makes a call that will go to Carol. Note that
 	// aliceGetCapCall was originally obtained from bobApiInAlice (which is
@@ -272,5 +272,5 @@ func Test3PHBasic(t *testing.T) {
 	// 3PH) to a Carol cap.
 	chantest.AssertNoRecv(t, carolHandlerCalled) // Sanity precondition check.
 	require.NoError(t, aliceGetCapCall.VoidCall().Wait(testctx.New(t)))
-	stageLog("Path-shortened call completed")
+	stageLog("Path-shortened call completed!")
 }

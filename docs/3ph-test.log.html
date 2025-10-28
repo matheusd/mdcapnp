@@ -1,0 +1,104 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title></title>
+<style type="text/css">
+.ansi2html-content { display: inline; white-space: pre-wrap; word-wrap: break-word; }
+.body_foreground { color: #AAAAAA; }
+.body_background { background-color: #000000; }
+.inv_foreground { color: #000000; }
+.inv_background { background-color: #AAAAAA; }
+.ansi1 { font-weight: bold; }
+.ansi31 { color: #aa0000; }
+.ansi32 { color: #00aa00; }
+.ansi33 { color: #aa5500; }
+.ansi34 { color: #0000aa; }
+.ansi36 { color: #00aaaa; }
+</style>
+</head>
+<body class="body_foreground body_background" style="font-size: normal;" >
+<pre class="ansi2html-content">
+=== RUN   Test3PHBasic
+<span class="ansi33">2025-10-28T10:56:53.484292</span>      alice   <span class="ansi32">INF</span> <span class="ansi1">Vat is running</span> <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.484515</span>      carol   <span class="ansi32">INF</span> <span class="ansi1">Vat is running</span> <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:53.484507</span>        bob   <span class="ansi32">INF</span> <span class="ansi1">Vat is running</span> <span class="ansi36">vat=</span>bob
+    vat_3ph_test.go:213: ================ Initial connections done. Alice will ask for Bob's Bootstrap.
+<span class="ansi33">2025-10-28T10:56:53.586102</span>      alice   DBG Prepared Bootstrap message <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.586214</span>        bob   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob <span class="ansi36">which=</span>bootstrap
+<span class="ansi33">2025-10-28T10:56:53.586279</span>        bob   DBG Exported Bootstrap <span class="ansi36">eid=</span>32001 <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.586330</span>      alice   DBG Comitted outgoing message <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.586359</span>      alice   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice <span class="ansi36">which=</span>return
+<span class="ansi33">2025-10-28T10:56:53.586390</span>      alice   DBG Imported cap contained in Return <span class="ansi36">iid=</span>32001 <span class="ansi36">ityp=</span>senderHosted <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+    vat_3ph_test.go:213: ================ Alice got Bob's bootstrap cap. Alice will ask for a sub-cap from boot.
+<span class="ansi33">2025-10-28T10:56:53.687170</span>      alice   DBG Prepared call for exported cap <span class="ansi36">iid=</span>32001 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.687271</span>        bob   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob <span class="ansi36">which=</span>call
+<span class="ansi33">2025-10-28T10:56:53.687300</span>        bob   <span class="ansi34">TRC</span> Locally handling call <span class="ansi36">eid=</span>32001 <span class="ansi36">etype=</span>locallyHosted <span class="ansi36">impCap=</span>32001 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.687351</span>        bob   <span class="ansi34">TRC</span> Exporting capability <span class="ansi36">eid=</span>32002 <span class="ansi36">remote=</span>alice <span class="ansi36">typ=</span>senderPromise <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.687369</span>        bob   DBG Processed call into payload result <span class="ansi36">eid=</span>32001 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.687393</span>      alice   DBG Comitted outgoing message <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.687412</span>      alice   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice <span class="ansi36">which=</span>return
+<span class="ansi33">2025-10-28T10:56:53.687441</span>      alice   DBG Imported cap contained in Return <span class="ansi36">iid=</span>32002 <span class="ansi36">ityp=</span>remotePromise <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+    vat_3ph_test.go:213: ================ Alice asked Bob for a new cap. Bob will fetch Carol's Boostrap cap.
+<span class="ansi33">2025-10-28T10:56:53.787679</span>        bob   DBG Prepared Bootstrap message <span class="ansi36">qid=</span>12001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.787760</span>      carol   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>carol <span class="ansi36">which=</span>bootstrap
+<span class="ansi33">2025-10-28T10:56:53.787857</span>      carol   DBG Exported Bootstrap <span class="ansi36">eid=</span>33001 <span class="ansi36">qid=</span>12001 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:53.787904</span>        bob   DBG Comitted outgoing message <span class="ansi36">qid=</span>12001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.787952</span>        bob   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob <span class="ansi36">which=</span>return
+<span class="ansi33">2025-10-28T10:56:53.788053</span>        bob   DBG Imported cap contained in Return <span class="ansi36">iid=</span>33001 <span class="ansi36">ityp=</span>senderHosted <span class="ansi36">qid=</span>12001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+    vat_3ph_test.go:213: ================ Bob got Carol's bootstrap cap. Bob will fulfill Alice's promise with it.
+<span class="ansi33">2025-10-28T10:56:53.888632</span>        bob   DBG Resolving promised answer to third party <span class="ansi36">eid=</span>32002 <span class="ansi36">remote=</span>alice <span class="ansi36">src=</span>alice <span class="ansi36">target=</span>carol <span class="ansi36">targetIid=</span>33001 <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.888762</span>      carol   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>carol <span class="ansi36">which=</span>provide
+<span class="ansi33">2025-10-28T10:56:53.888803</span>      carol   DBG Asked to provide cap to third party <span class="ansi36">iid=</span>33001 <span class="ansi36">remote=</span>bob <span class="ansi36">typ=</span>importedCap <span class="ansi36">uniqueKey=</span>00000000223d3b4d1debf0c80000000000000000000000000000000000000000 <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:53.888836</span>      carol   <span class="ansi34">TRC</span> Registered expected accept in vat <span class="ansi36">remote=</span>bob <span class="ansi36">uniqueKey=</span>00000000223d3b4d1debf0c80000000000000000000000000000000000000000 <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:53.888852</span>        bob   DBG Sent provide for imported cap <span class="ansi36">iid=</span>33001 <span class="ansi36">qid=</span>12002 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.890125</span>        bob   <span class="ansi34">TRC</span> Slept to delay Resolve after Provide in 3PH resolution <span class="ansi36">dur=</span>1.00195 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.890172</span>        bob   <span class="ansi34">TRC</span> Resolving previously exported promise <span class="ansi36">eid=</span>32002 <span class="ansi36">remote=</span>alice <span class="ansi36">thirdParty=</span>carol <span class="ansi36">thirdPartyIid=</span>33001 <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.890242</span>      alice   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice <span class="ansi36">which=</span>resolve
+<span class="ansi33">2025-10-28T10:56:53.891121</span>      alice   <span class="ansi34">TRC</span> Shortening path after 3PH introduction <span class="ansi36">dst=</span>carol <span class="ansi36">src=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.891470</span>      alice   DBG Sending accept for 3PH introduction <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>carol <span class="ansi36">srcConn=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.891682</span>      carol   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>carol <span class="ansi36">which=</span>accept
+<span class="ansi33">2025-10-28T10:56:53.891752</span>      carol   DBG Providing shared cap to conn <span class="ansi36">eid=</span>33002 <span class="ansi36">provisionId=</span>00000000223d3b4d1debf0c80000000000000000000000000000000000000000 <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>alice <span class="ansi36">src=</span>bob <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:53.891830</span>      alice   <span class="ansi32">INF</span> <span class="ansi1">Path-shortened imported cap pipeline step to third party</span> <span class="ansi36">acceptId=</span>11001 <span class="ansi36">dst=</span>carol <span class="ansi36">iid=</span>32002 <span class="ansi36">src=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.891933</span>      alice   <span class="ansi34">TRC</span> resolveThirdPartyCapForStep completed <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.891922</span>        bob   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob <span class="ansi36">which=</span>return
+<span class="ansi33">2025-10-28T10:56:53.891979</span>        bob   DBG Received Return message for prior Provide <span class="ansi36">qid=</span>12002 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:53.891988</span>        bob   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>bob <span class="ansi36">which=</span>disembargo
+<span class="ansi33">2025-10-28T10:56:53.892681</span>      alice   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice <span class="ansi36">which=</span>return
+<span class="ansi33">2025-10-28T10:56:53.892755</span>      alice   DBG Imported cap contained in Return <span class="ansi36">iid=</span>33002 <span class="ansi36">ityp=</span>senderHosted <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:53.892754</span>      carol   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>carol <span class="ansi36">which=</span>disembargo
+    vat_3ph_test.go:213: ================ 3PH completed! Alice will make a path-shortened call to Carol.
+<span class="ansi33">2025-10-28T10:56:54.094069</span>      alice   DBG Prepared call for exported cap <span class="ansi36">iid=</span>33002 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.094192</span>      carol   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>carol <span class="ansi36">which=</span>call
+<span class="ansi33">2025-10-28T10:56:54.094226</span>      carol   <span class="ansi34">TRC</span> Locally handling call <span class="ansi36">eid=</span>33002 <span class="ansi36">etype=</span>locallyHosted <span class="ansi36">impCap=</span>33002 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.094264</span>      carol   DBG Processed call into payload result <span class="ansi36">eid=</span>33002 <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>alice <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.094292</span>      alice   DBG Comitted outgoing message <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.094334</span>      alice   <span class="ansi34">TRC</span> Starting to process inbound msg <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice <span class="ansi36">which=</span>return
+    vat_3ph_test.go:213: ================ Path-shortened call completed!
+<span class="ansi33">2025-10-28T10:56:54.194901</span>      alice   <span class="ansi34">TRC</span> Vat begining stop procedure <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.194980</span>      alice   <span class="ansi34">TRC</span> Cancelling step due to conn done <span class="ansi36">qid=</span>11002 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.194978</span>      carol   <span class="ansi34">TRC</span> Conn goroutines finished successfully <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.195012</span>      alice   <span class="ansi34">TRC</span> Cancelling step due to conn done <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>bob <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.195036</span>      alice   <span class="ansi34">TRC</span> Cancelling step due to conn done <span class="ansi36">qid=</span>11001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.195044</span>        bob   <span class="ansi34">TRC</span> Conn goroutines finished successfully <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195052</span>      alice   <span class="ansi34">TRC</span> All conns commanded to stop <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.194901</span>      carol   <span class="ansi34">TRC</span> Vat begining stop procedure <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.195083</span>      carol   <span class="ansi34">TRC</span> All conns commanded to stop <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.195090</span>      alice   <span class="ansi34">TRC</span> Conn goroutines finished successfully <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.195075</span>        bob   <span class="ansi34">TRC</span> Conn goroutines finished successfully <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195043</span>      carol   DBG Conn goroutines finished due to error <span class="ansi36">error=</span><span class="ansi31"></span><span class="ansi1 ansi31">"inLoop receive errored: io: read/write on closed pipe"</span> <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.195130</span>        bob   <span class="ansi34">TRC</span> Vat begining stop procedure <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195178</span>      carol   <span class="ansi32">INF</span> <span class="ansi1">Vat finished running successfully</span> <span class="ansi36">vat=</span>carol
+<span class="ansi33">2025-10-28T10:56:54.195183</span>        bob   <span class="ansi34">TRC</span> Cancelling step due to conn done <span class="ansi36">qid=</span>12001 <span class="ansi36">remote=</span>carol <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195268</span>        bob   <span class="ansi34">TRC</span> All conns commanded to stop <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195293</span>        bob   <span class="ansi32">INF</span> <span class="ansi1">Vat finished running successfully</span> <span class="ansi36">vat=</span>bob
+<span class="ansi33">2025-10-28T10:56:54.195119</span>      alice   <span class="ansi34">TRC</span> Conn goroutines finished successfully <span class="ansi36">vat=</span>alice
+<span class="ansi33">2025-10-28T10:56:54.195321</span>      alice   <span class="ansi32">INF</span> <span class="ansi1">Vat finished running successfully</span> <span class="ansi36">vat=</span>alice
+--- PASS: Test3PHBasic (0.71s)
+PASS
+ok  	matheusd.com/mdcapnp/capnprpc	0.717s
+
+</pre>
+</body>
+
+</html>
