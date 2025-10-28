@@ -11,7 +11,7 @@ require (
 	matheusd.com/testctx v0.2.0
 )
 
-replace github.com/rs/zerolog => /home/user/testes/vendor/zerolog/zerolog
+// replace github.com/rs/zerolog => /home/user/testes/vendor/zerolog/zerolog
 
 require (
 	github.com/mattn/go-colorable v0.1.14 // indirect

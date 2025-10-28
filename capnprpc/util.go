@@ -6,7 +6,6 @@ package capnprpc
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -39,11 +38,11 @@ func testFrameFormatter(v any) string {
 func testLogger(t testing.TB) zerolog.Logger {
 	ctw := zerolog.NewTestWriter(t)
 	ctw.Frame = 6
-	ctw.FrameFormatter = testFrameFormatter
+	// ctw.FrameFormatter = testFrameFormatter
 
 	cw := zerolog.NewConsoleWriter()
-	// cw.Out = ctw
-	cw.Out = os.Stdout
+	cw.Out = ctw
+	// cw.Out = os.Stdout
 	setupDevLogFormat(&cw)
 	return zerolog.New(cw)
 }
