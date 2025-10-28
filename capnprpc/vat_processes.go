@@ -899,14 +899,15 @@ func (v *Vat) processAccept(ctx context.Context, rc *runningConn, ac types.Accep
 	// Finally, send the Return to srcConn that corresponds to the Provide.
 	// This lets the srcConn remote know that the new conn picked up the
 	// capability.
-	outMsg, _, payBuilder, err := v.newReturnPayload(provideAid)
+	// outAccept, _, err := v.newReturn(provideAid)
+	outAccept, _, payBuilder, err := v.newReturnPayload(provideAid)
 	if err != nil {
 		return err
 	}
 	if err := payBuilder.SetContent(capnpser.ZeroStructAsPointerBuilder()); err != nil {
 		return err
 	}
-	return rc.queue(ctx, outMsg)
+	return srcConn.queue(ctx, outAccept)
 }
 
 func (v *Vat) processDisembargoAccept(ctx context.Context, rc *runningConn, dis types.Disembargo) error {

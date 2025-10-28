@@ -494,10 +494,11 @@ func (s *Struct) ReadStruct(ptrIndex PointerFieldIndex, res *Struct) (err error)
 
 func (s *Struct) ReadAnyPointer(ptrIndex PointerFieldIndex, res *AnyPointer) (err error) {
 	seg, ptrType, ptr, dl, pointerOffset, err := s.readFieldPtr(ptrIndex)
+	// err is checked below.
 
 	// Determine concrete offset into segment of where the object actually
 	// starts.
-	if ptrType == pointerTypeList || ptrType == pointerTypeStruct {
+	if (ptrType == pointerTypeList || ptrType == pointerTypeStruct) && !ptr.isZeroStruct() {
 		dataOffset, ok := addWordOffsetsWithCarry(pointerOffset, ptr.dataOffset(), 1)
 		if !ok {
 			return errWordOffsetSumOverflows{ptr.dataOffset(), pointerOffset}
