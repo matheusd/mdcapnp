@@ -134,7 +134,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 		switch capEntry.Which() {
 		case types.CapDescriptor_Which_SenderHosted:
 			stepImportId = ImportId(capEntry.AsSenderHosted())
-			stepResult = capability{eid: ExportId(stepImportId)}
+			stepResult = CapabilityClient{eid: ExportId(stepImportId)}
 			stepResultType = "senderHostedCap"
 		case types.CapDescriptor_Which_SenderPromise:
 			stepImportId = ImportId(capEntry.AsSenderPromise())
@@ -306,8 +306,8 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 		reply.SetAnswerId(AnswerId(qid))
 	*/
 
-	crb := &rc.crb // Ok to reuse (rc is locked).
-	*crb = CallContext{vat: v, rc: rc}
+	crb := &rc.crb                     // Ok to reuse (rc is locked).
+	*crb = CallContext{vat: v, rc: rc} // TODO: add rc.ctx to this <----
 	// crb.pb, err = reply.NewResults()
 	// crb.serMb = outMsg.serMsg
 	crb.aid = AnswerId(qid)
@@ -420,7 +420,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 						Str("typ", "senderPromise").
 						Msg("Exporting capability")
 				} else {
-					return errors.New("other types of exports not implemented")
+					return errors.New("other types of exports not implemented in processCall")
 				}
 
 				// If this is the root cap index, then track this export
@@ -680,14 +680,14 @@ func (v *Vat) processResolve(ctx context.Context, rc *runningConn, res types.Res
 	if err != nil {
 		return err
 	}
-	var resolveCap capability
+	var resolveCap CapabilityClient
 	var resolvePromise ExportId
 	var resolveId ImportId
 	var resImport imprt
 	switch capEntry.Which() {
 	case types.CapDescriptor_Which_SenderHosted:
 		// Resolved into a remote capability.
-		resolveCap = capability{eid: ExportId(capEntry.AsSenderHosted())}
+		resolveCap = CapabilityClient{eid: ExportId(capEntry.AsSenderHosted())}
 		resolveId = ImportId(capEntry.AsSenderHosted())
 		resImport = imprt{typ: importTypeSenderHosted}
 	case types.CapDescriptor_Which_SenderPromise:

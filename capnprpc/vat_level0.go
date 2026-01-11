@@ -74,7 +74,7 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		res := capability{eid: types.ExportId(v.bootImportId)}
+		res := CapabilityClient{eid: types.ExportId(v.bootImportId)}
 		if !v.callSetupStage.CompareAndSwap(level0CallStageWaitingBootstrap, level0CallStageEmpty) {
 			panic("broken assumption: callSetupStage is not level0CallStageWaitingBootstrap")
 		}

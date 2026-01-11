@@ -6,6 +6,7 @@ package capnprpc
 
 import (
 	"errors"
+	"fmt"
 
 	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
@@ -181,5 +182,88 @@ func (v *Vat) newDisembargo(target messageTarget) (outMsg outMsg, dis types.Dise
 	default:
 		err = errors.New("unhandled case in newDisembargo")
 	}
+	return
+}
+
+func (v *Vat) exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error) {
+	// Encompasses some of what is done in RespondAsSenderHostedCap and
+	// inside processCall. Figure out how to abstract.
+	rc := parent.step.value.GetValue().conn
+
+	// FIXME: can't do this here (rc is neither guaranteed locked or unlocked).
+	// Instead, this should be tracked in CallSetup and exported once rc is
+	// locked in execStep (or something to that effect).
+	eid, ok := rc.exports.nextID()
+	if !ok {
+		return 0, errors.New("no more exports allowed")
+	}
+
+	rc.exports.set(eid, export{
+		typ:     exportTypeLocallyHosted,
+		handler: capServer,
+	})
+	return eid, nil
+}
+
+func (v *Vat) importRemoteCapFromPayload(rc *runningConn, pay types.Payload) (cf CallFuture, err error) {
+	payContent, err := pay.Content()
+	if err != nil {
+		err = fmt.Errorf("could not get payload content: %v", err)
+		return
+	}
+
+	if !payContent.IsCapPointer() {
+		err = fmt.Errorf("payload content is not a capability pointer")
+		return
+	}
+	capPtr := payContent.AsCapPointer()
+
+	capTable, err := pay.CapTable()
+	if err != nil {
+		return
+	}
+	if int(capPtr.Index()) >= capTable.Len() {
+		err = fmt.Errorf("capTable of len %d does not contain pointer %d",
+			capTable.Len(), capPtr.Index())
+		return
+	}
+
+	// TODO: merge with similar code in processReturn and processResolve.
+	//
+	var resolveCap CapabilityClient
+	var resolveId ImportId
+	var resImport imprt
+	capEntry := capTable.At(int(capPtr.Index()))
+	switch capEntry.Which() {
+	case types.CapDescriptor_Which_SenderHosted:
+		// Resolved into a remote capability.
+		resolveCap = CapabilityClient{eid: ExportId(capEntry.AsSenderHosted())}
+		resolveId = ImportId(capEntry.AsSenderHosted())
+		resImport = imprt{typ: importTypeSenderHosted}
+	case types.CapDescriptor_Which_SenderPromise:
+		err = errors.New("senderPromise not supported here yet")
+		return
+	case types.CapDescriptor_Which_ThirdPartyHosted:
+		err = errors.New("thirdPartyHosted not supported here yet")
+		return
+	default:
+		err = errors.New("unknown cap entry type")
+		return
+	}
+
+	rc.log.Debug().
+		Int("resIid", int(resolveId)).
+		Str("resTyp", resImport.typ.String()).
+		Msg("Importing capability")
+
+	// Set value of pipeline step to an already known export.
+	cf = newRootFutureCap(v)
+	pv := pipelineStepStateValue{
+		conn:  rc,
+		iid:   resolveId,
+		value: resolveCap,
+	}
+	cf.step.value.Set(pipeStepStateDone, pv)
+
 	return
 }

@@ -8,7 +8,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
@@ -33,6 +35,9 @@ type IOTransport struct {
 
 	// depthLimit atomic.Uintptr
 	readLimit atomic.Uint64
+
+	xxxOutCount int
+	xxxInCount  int
 }
 
 func nopFlush() error { return nil }
@@ -76,6 +81,11 @@ func (iot *IOTransport) send(ctx context.Context, outMsg OutMsg) error {
 	serBytes, err := outMsg.Msg.Serialize()
 	if err != nil {
 		return err
+	}
+
+	if iot.xxxOutCount < 2 {
+		fmt.Println(">", hex.EncodeToString(serBytes))
+		iot.xxxOutCount++
 	}
 
 	n, err := iot.w.Write(serBytes)
@@ -127,6 +137,11 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 		_, err = io.ReadFull(iot.r, iot.inBuf[8:8+seg0SizeBytes])
 		if err != nil {
 			return InMsg{}, err
+		}
+
+		if iot.xxxInCount < 2 {
+			fmt.Println("<", hex.EncodeToString(iot.inBuf[:8+seg0SizeBytes]))
+			iot.xxxInCount++
 		}
 
 		// TODO: Already decoded, no need to decode again. Have an API

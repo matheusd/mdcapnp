@@ -134,8 +134,8 @@ func (api testAPI) GetUser(id string) testUser {
 }
 
 // Wait until this is resolved as a concrete, exported capability.
-func (api testAPI) Wait(ctx context.Context) (capability, error) {
-	return CastCallResultOrErr[capability](WaitReturn(ctx, CallFuture(api)))
+func (api testAPI) Wait(ctx context.Context) (CapabilityClient, error) {
+	return CastCallResultOrErr[CapabilityClient](WaitReturn(ctx, CallFuture(api)))
 }
 
 func (api testAPI) WaitDiscardResult(ctx context.Context) error {

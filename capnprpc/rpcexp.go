@@ -233,7 +233,7 @@ func (ap answerPromise) resolveToThirdPartyImport(tpRc *runningConn, tpIid Impor
 	return err
 }
 
-func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap capability) error {
+func (ap answerPromise) resolveToThirdPartyCap(tpRc *runningConn, cap CapabilityClient) error {
 	return ap.resolveToThirdPartyImport(tpRc, ImportId(cap.eid))
 }
 
@@ -280,6 +280,14 @@ func CallContextParamsStruct[T ~capnpser.StructType](cc *CallContext) (res T, er
 	return
 }
 
+func CallContextParamsCapability[T ~CallFutureType](cc *CallContext) (res T, err error) {
+	cf, err := cc.vat.importRemoteCapFromPayload(cc.rc, cc.Params())
+	if err == nil {
+		res = T(cf)
+	}
+	return
+}
+
 func (cc *CallContext) initResponsePayload(payloadSizeHint capnpser.WordCount) (err error) {
 	totalSizeHint := returnMessageSizeOverhead + payloadSizeHint
 	cc.serMb = cc.vat.mbp.getRawMessageBuilder(totalSizeHint)
@@ -317,6 +325,39 @@ func (cc *CallContext) RespondAsStruct(structSize capnpser.StructSize, payloadSi
 		return
 	}
 	return
+}
+
+// RespondAsSenderHostedCap responds this call with a new sender-hosted
+// capability.
+func (cc *CallContext) RespondAsSenderHostedCap(capServer CallHandler) error {
+	if cc.serMb == nil {
+		err := cc.initResponsePayload(3) // CapTable + entry + pointer FIXME: double check.
+		if err != nil {
+			return nil
+		}
+	}
+
+	// This is OK to do because in the context of a CallContext,
+	// RespondAsSenderHostedCap is called within a processCall() stack, thus
+	// rc is locked.
+	eid, ok := cc.rc.exports.nextID()
+	if !ok {
+		return errors.New("no more exports allowed")
+	}
+	cc.rc.exports.set(eid, export{
+		typ:     exportTypeLocallyHosted,
+		handler: capServer,
+	})
+
+	// Similar to respondAsPromise (unify somehow?)
+	capTable, err := cc.pb.NewCapTable(1, 1)
+	if err != nil {
+		return err
+	}
+	capDesc := capTable.At(0)
+	capDesc.SetSenderHosted(eid)
+	cc.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
+	return nil
 }
 
 func RespondCallAsStruct[T ~capnpser.StructBuilderType](cc *CallContext, size capnpser.StructSize, payloadSizeHint capnpser.WordCount) (T, error) {
@@ -391,17 +432,6 @@ func (err errUnimplemented) Error() string {
 
 func (err errUnimplemented) ToException() exception {
 	return exception{typ: 3, reason: err.Error()}
-}
-
-// CallHandler is the lowest level handler for calls (including bootstrap).
-type CallHandler interface {
-	Call(ctx context.Context, cc *CallContext) error
-}
-
-type CallHandlerFunc func(ctx context.Context, rb *CallContext) error
-
-func (f CallHandlerFunc) Call(ctx context.Context, rb *CallContext) error {
-	return f(ctx, rb)
 }
 
 type allUnimplementedCallHandler struct{}
@@ -507,7 +537,8 @@ type export struct {
 	typ      exportType
 	refCount int
 
-	handler CallHandler // Set when this is senderHosted.
+	// Set when this is senderHosted.
+	handler CallHandler
 
 	// Set when this was a promise that got resolved.
 	resolvedToExport ExportId

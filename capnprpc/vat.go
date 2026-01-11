@@ -7,6 +7,8 @@ package capnprpc
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"runtime/trace"
 	"slices"
 	"sync/atomic"
@@ -54,11 +56,6 @@ func NewVat(opts ...VatOption) *Vat {
 	return v
 }
 
-// isLevel0Sync returns true if this is a level 0 sync client vat.
-func (v *Vat) isLevel0Sync() bool {
-	return v.cfg.isLevel0Sync
-}
-
 func (v *Vat) GetCallMessageBuilder(payloadSizeHint capnpser.WordCount) rpcCallMsgBuilder {
 	outMsg, _ := v.mbp.getForPayloadSize(payloadSizeHint)
 	return rpcCallMsgBuilder{outMsg: outMsg}
@@ -67,6 +64,10 @@ func (v *Vat) GetCallMessageBuilder(payloadSizeHint capnpser.WordCount) rpcCallM
 // TODO: merge with RunConn??
 func (v *Vat) UseRemoteVat(c conn) RemoteVat {
 	return RemoteVat{rc: v.RunConn(c)}
+}
+
+func (v *Vat) exportCap(handler CallHandler, rc *runningConn) (ExportId, error) {
+	panic("how?")
 }
 
 func (v *Vat) RunConn(c conn) *runningConn {
@@ -365,11 +366,16 @@ func (v *Vat) runStep(rs *vatRunState) error {
 	return nil
 }
 
-func (v *Vat) Run(ctx context.Context) (err error) {
+// RunWithListeners runs the vat and takes control of the passed listeners. Once
+// the context is closed (signalling the end of running the vat), the listeners
+// will also be automatically closed.
+func (v *Vat) RunWithListeners(ctx context.Context, listeners ...net.Listener) (err error) {
 	rs := &vatRunState{
 		g:          pool.New().WithContext(ctx).WithCancelOnError().WithFirstError(),
 		expAccepts: make(map[VatNetworkUniqueID]expectedAccept),
 	}
+
+	// Main vat goroutine.
 	rs.g.Go(func(ctx context.Context) error {
 		var err error
 		rs.ctx = ctx
@@ -400,6 +406,48 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 		return err
 	})
 
+	// Individual listeners goroutines.
+	for _, l := range listeners {
+		l := l
+		rs.g.Go(func(ctx context.Context) error {
+			var acceptErr error
+			connPool := pool.New().WithContext(ctx).WithCancelOnError().WithFirstError()
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					if !errors.Is(err, net.ErrClosed) {
+						acceptErr = err
+					}
+					break
+				}
+
+				remoteName := c.RemoteAddr().String()
+				v.log.Info().Str("remote", remoteName).Msg("Accepted connection")
+				ioc := NewIOTransport(remoteName, c)
+				v.RunConn(ioc)
+
+				// TODO: Add some  callback for when conns are
+				// made? Allow per-conn bootstrap?
+			}
+
+			waitErr := connPool.Wait()
+			switch {
+			case acceptErr != nil:
+				return fmt.Errorf("server Accept() errored: %w", acceptErr)
+			case waitErr != nil:
+				return fmt.Errorf("conn wait() errored: %w", waitErr)
+			default:
+				return nil
+			}
+		})
+
+		// Ensure the listener is closed when context is canceled.
+		rs.g.Go(func(ctx context.Context) error {
+			<-ctx.Done()
+			return l.Close()
+		})
+	}
+
 	err = rs.g.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
 		v.log.Err(err).Msg("Vat finished running with unexpected error")
@@ -408,4 +456,9 @@ func (v *Vat) Run(ctx context.Context) (err error) {
 	}
 
 	return
+
+}
+
+func (v *Vat) Run(ctx context.Context) (err error) {
+	return v.RunWithListeners(ctx)
 }

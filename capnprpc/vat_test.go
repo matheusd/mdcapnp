@@ -27,7 +27,7 @@ func TestBootstrapSendSide(t *testing.T) {
 	rc := v.RunConn(tc)
 	boot := rc.Bootstrap()
 	errChan := make(chan error, 1)
-	var finalBootCap capability
+	var finalBootCap CapabilityClient
 	go func() {
 		var err error
 		finalBootCap, err = boot.Wait(testctx.New(t))

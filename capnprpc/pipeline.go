@@ -131,10 +131,14 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 
 type vatImpl interface {
 	msgBuilderPool() *MessageBuilderPool
+	exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error)
 }
 
 func (v *Vat) msgBuilderPool() *MessageBuilderPool             { return v.mbp }
 func (v *Level0ClientVat) msgBuilderPool() *MessageBuilderPool { return v.mbp }
+func (v *Level0ClientVat) exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error) {
+	panic("boo")
+}
 
 func (v *Vat) getCallMessageBuilder(payloadSizeHint capnpser.WordCount) *capnpser.MessageBuilder {
 	return v.mbp.getRawMessageBuilder(payloadSizeHint)
@@ -152,12 +156,14 @@ func (v *Level0ClientVat) putCallMessageBuilder(mb *capnpser.MessageBuilder) {
 	panic("todo")
 }
 
-type CallFuture struct {
+type CallFutureType = struct {
 	step *pipelineStep
 	vat  vatImpl
 }
 
-func setupCall(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, wantParams bool) (CallSetup, types.PayloadBuilder) {
+type CallFuture CallFutureType
+
+func setupCall(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId) (CallSetup, types.PayloadBuilder) {
 	serMb := parent.vat.msgBuilderPool().getRawMessageBuilder(callMessageSizeOverhead + payloadSizeHint)
 	mb, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
@@ -186,15 +192,22 @@ func setupCall(parent CallFuture, payloadSizeHint capnpser.WordCount, iid Interf
 	}, pbuilder
 }
 
+// SetupCallNoParams prepares to make a call that will not send any parameters.
 func SetupCallNoParams(parent CallFuture, iid InterfaceId, mid MethodId) CallSetup {
-	cs, _ := setupCall(parent, 0, iid, mid, false)
+	cs, _ := setupCall(parent, 0, iid, mid)
 	return cs
 }
 
+// SetupCallWithParams prepares to make a call that will send parameters which
+// are likely to take only up to an additional [payloadSizeHint] words as total
+// size.
 func SetupCallWithParams(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId) (CallSetup, types.PayloadBuilder) {
-	return setupCall(parent, payloadSizeHint, iid, mid, true)
+	return setupCall(parent, payloadSizeHint, iid, mid)
 }
 
+// SetupCallWithStructParams prepares to make a call that will send a struct as
+// parameters, with size [paramsSize] and (likely) only up to an additional
+// [payloadSizeHint] words as extra size.
 func SetupCallWithStructParams(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, capnpser.StructBuilder) {
 	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
 	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
@@ -204,6 +217,9 @@ func SetupCallWithStructParams(parent CallFuture, payloadSizeHint capnpser.WordC
 	return cs, sb
 }
 
+// SetupCallWithStructParamsGeneric is similar to [SetupCallWithParams] but
+// allows returning a generic StructBuilder to be used for building the request
+// parameters.
 func SetupCallWithStructParamsGeneric[T ~capnpser.StructBuilderType](parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, T) {
 	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
 	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
@@ -211,6 +227,32 @@ func SetupCallWithStructParamsGeneric[T ~capnpser.StructBuilderType](parent Call
 		panic(err)
 	}
 	return cs, T(sb)
+}
+
+// SetupCallWithNewCap prepares to make a call that will export a new capability
+// to the remote end.
+//
+// TODO: This might need to return a reference to the exported cap (so that *the
+// same* cap can be sent to someone else, referenced when processing some other
+// call made by the remote, etc).
+func SetupCallWithNewCap(parent CallFuture, iid InterfaceId, mid MethodId, capServer CallHandler) CallSetup {
+	// TODO: this should be tracked inside CallSetup to avoid possible
+	// deadlock with rc.
+	eid, err := parent.vat.exportNewCap(capServer, parent)
+	if err != nil {
+		panic(err)
+	}
+	cs, pbuilder := setupCall(parent, 0, iid, mid)
+	ctbuilder, err := pbuilder.NewCapTable(1, 1)
+	if err != nil {
+		panic(err)
+	}
+	cdbuilder := ctbuilder.At(0)
+	if err := cdbuilder.SetSenderHosted(eid); err != nil {
+		panic(err)
+	}
+	pbuilder.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
+	return cs
 }
 
 // FIXME: rename or remove.
@@ -235,6 +277,9 @@ func RemoteCall(parent CallFuture, csetup CallSetup) (res CallFuture) {
 	//
 	// WaitResult will directly access the vat to send the Call (based on
 	// the contents of csetup) and will wait for the corresponding Return.
+	//
+	// TODO: Prevent calling RemoteCall twice without a WaitResult in
+	// between (wrong usage of level0 client).
 	if l0vat, isLevel0 := parent.vat.(*Level0ClientVat); isLevel0 {
 		l0vat.setupNextCall(csetup)
 		res.vat = l0vat
@@ -341,6 +386,54 @@ func WaitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
 	return
 }
 
+func WaitVoidReturnResults(ctx context.Context, cf CallFuture) (rr ReturnResults, err error) {
+	resAny, err := WaitReturn(ctx, cf)
+	if err != nil {
+		return
+	}
+
+	rr.vat = cf.vat
+	var resReader capnpser.Message
+	switch resTyped := resAny.(type) {
+	case *capnpser.MessageBuilder:
+		rr.copyMb = resTyped
+		resReader = rr.copyMb.MessageReader()
+		resReader.Arena().ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
+		resReader.SetDepthLimit(64) // TODO: Make this a constant somewhere?
+	case *capnpser.Arena:
+		resReader = capnpser.MakeMsg(resTyped)
+	default:
+		err = fmt.Errorf("unhandled result type (got %T)", resAny)
+	}
+
+	resRoot, err := resReader.GetRoot()
+	if err != nil {
+		return
+	}
+	resMsg := types.Message(resRoot)
+	if resMsg.Which() != types.Message_Which_Return {
+		err = errors.New("not the expected Return")
+		return
+	}
+	resReturn, err := resMsg.AsReturn()
+	if err != nil {
+		return
+	}
+	resPayload, err := resReturn.AsResults()
+	if err != nil {
+		return
+	}
+	rr.content, err = resPayload.Content()
+	if err != nil {
+		return
+	}
+	if !rr.content.IsZeroStruct() {
+		err = errors.New("Return.Results.Content is not an expected zero-struct")
+		return
+	}
+	return
+}
+
 func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
 	resAny, err := WaitReturn(ctx, cf)
 	if err != nil {
@@ -390,13 +483,13 @@ func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Cont
 	res = T(rr.content.AsStruct())
 	return
 }
-func WaitReturnResultsCapability[T ~CapabilityType](ctx context.Context, cf CallFuture) (res T, err error) {
+func WaitReturnResultsCapability[T ~CapabilityClientType](ctx context.Context, cf CallFuture) (res T, err error) {
 	resAny, err := WaitReturn(ctx, cf)
 	if err != nil {
 		return
 	}
 
-	resCap, ok := resAny.(capability)
+	resCap, ok := resAny.(CapabilityClient)
 	if !ok {
 		err = fmt.Errorf("result was not a capability (got %T)", resAny)
 		return

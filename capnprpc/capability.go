@@ -6,17 +6,28 @@ package capnprpc
 
 import "context"
 
-type CapabilityType = struct {
+type CapabilityClientType = struct {
 	eid ExportId // Is this right???
 }
 
-type capability CapabilityType
+type CapabilityClient CapabilityClientType
+
+// CallHandler is the lowest level handler for calls (including bootstrap).
+type CallHandler interface {
+	Call(ctx context.Context, cc *CallContext) error
+}
+
+type CallHandlerFunc func(ctx context.Context, rb *CallContext) error
+
+func (f CallHandlerFunc) Call(ctx context.Context, rb *CallContext) error {
+	return f(ctx, rb)
+}
 
 type BootstrapFuture CallFuture
 
-func (bc BootstrapFuture) Wait(ctx context.Context) (capability, error) {
+func (bc BootstrapFuture) Wait(ctx context.Context) (CapabilityClient, error) {
 	// return CastCallResultOrErr[capability](WaitReturn(ctx, CallFuture(bc)))
-	return WaitReturnResultsCapability[capability](ctx, CallFuture(bc))
+	return WaitReturnResultsCapability[CapabilityClient](ctx, CallFuture(bc))
 }
 
 type VoidFuture CallFuture
