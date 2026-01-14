@@ -107,13 +107,14 @@ func (rc *runningConn) String() string {
 	return rc.c.remoteName()
 }
 
+// queue a message for sending. If too many messages are already queued, this
+// fails.
 func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
-	// mr := m.mb.AsReader()
-	// which := mr.Which().String()
-
 	/*
+		mr := m.mb.AsReader()
+		which := mr.Which().String()
 		rc.log.Trace().
-			Str("which", which.String()).
+			Str("which", which).
 			Msg("Queueing outgoing message")
 	*/
 
@@ -127,12 +128,16 @@ func (rc *runningConn) queue(ctx context.Context, m outMsg) error {
 				Str("which", which).
 				Msg("Queued outgoing message")
 		*/
+
 		return nil
 
 	default:
 		// Assume rc.outQueue is properly buffered. If the default case
 		// is triggered, it means the buffer is full and sending is too
 		// slow.
+		//
+		// TODO: offer options other than error out? Fail, keep trying,
+		// add a max number of tries?
 		return errors.New("outbound queue is full")
 	}
 }
@@ -152,29 +157,6 @@ type InboundReturn struct {
 	SerMsg capnpser.Message
 	Msg    types.Message
 	Ret    types.Return
-}
-
-func (rc *runningConn) nextReturn(ctx context.Context, inRet *InboundReturn) error {
-	msg, err := rc.c.receive(ctx)
-	if err != nil {
-		return err
-	}
-
-	err = inRet.Msg.ReadFromRoot(&msg.Msg)
-	if err != nil {
-		return err
-	}
-
-	if inRet.Msg.Which() != types.Message_Which_Return {
-		return fmt.Errorf("message was not a return")
-	}
-
-	inRet.Ret, err = inRet.Msg.AsReturn()
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
@@ -223,10 +205,16 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 		err = rpcMsg.ReadFromRoot(&msg.Msg)
 		if err == nil {
 			err = v.processInMessage(ctx, rc, rpcMsg, msg.Msg)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				err = fmt.Errorf("processInMessage errored: %w", err)
+			}
 		}
 
 		// Process input msg.
 		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				err = fmt.Errorf("inLoop errored: %w", err)
+			}
 			return err
 		}
 	}
@@ -264,7 +252,11 @@ func (rc *runningConn) outLoop(ctx context.Context) error {
 
 func (rc *runningConn) waitToClose(ctx context.Context) error {
 	<-ctx.Done()
-	return rc.c.close()
+	err := rc.c.close()
+	if err != nil && !errors.Is(err, context.Canceled) {
+		err = fmt.Errorf("waitToClose errored: %w", err)
+	}
+	return err
 }
 
 func newRunningConn(c conn, v *Vat) *runningConn {

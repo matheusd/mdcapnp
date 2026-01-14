@@ -264,6 +264,18 @@ func (cc *CallContext) MethodId() MethodId {
 	return cc.mid
 }
 
+// IsIidMid is a simple helper to verify if the call context is for a given
+// interface and method id. Returns an error if they don't match.
+func (cc *CallContext) IsIidMid(iid InterfaceId, mid MethodId) error {
+	if cc.iid != iid {
+		return ErrUnexpectedInterfaceId{Want: iid, Got: cc.iid}
+	}
+	if cc.mid != mid {
+		return ErrUnexpectedMethodId{Want: mid, Got: cc.mid}
+	}
+	return nil
+}
+
 func (cc *CallContext) Params() types.Payload {
 	return cc.params
 }
@@ -412,6 +424,62 @@ func (cc *CallContext) respondAsPromise() (answerPromise, error) {
 	return answerPromise{rc: cc.rc, eid: eid}, nil
 }
 
+// StructReplyCallContext is a [CallContext] that is used in server method
+// definitions that reply with a struct.
+//
+// In general, instances of this type are only valid for use during the handling
+// of individual Calls.
+type StructReplyCallContext[T ~capnpser.StructBuilderType] struct {
+	cc              *CallContext
+	structSize      capnpser.StructSize
+	payloadSizeHint capnpser.WordCount
+}
+
+// MakeStructReplyCallContext creates a [StructReplyCallContext] for a given
+// struct builder type and call context.
+func MakeStructReplyCallContext[T ~capnpser.StructBuilderType](cc *CallContext, structSize capnpser.StructSize) StructReplyCallContext[T] {
+	return StructReplyCallContext[T]{
+		cc:         cc,
+		structSize: structSize,
+	}
+}
+
+// InitResults initializes the response message with a Return.Results (Payload)
+// field set to a struct with the previously configured struct size. If any
+// payload size hints were added, then the backing message buffer is
+// additionally allocated (but not yet consumed) those many words to fit
+// internal reply objects before having to grow the buffer.
+func (gcc *StructReplyCallContext[T]) InitResults() T {
+	s, err := gcc.cc.RespondAsStruct(gcc.structSize, gcc.payloadSizeHint)
+	if err != nil {
+		panic(err)
+	}
+	return T(s)
+}
+
+// AddWordsToSizeHint adds w many words to the size hint used to initialize a
+// response. It only makes sense to call this method before [InitResults] is
+// called.
+func (gcc *StructReplyCallContext[T]) AddWordsToSizeHint(w capnpser.WordCount) {
+	gcc.payloadSizeHint += w
+}
+
+// AddBytesToSizeHint adds as many words as needed to store b bytes to the size
+// hint used to initialize a response. It only makes sense to call this method
+// before [InitResults] is called.
+func (gcc *StructReplyCallContext[T]) AddBytesToSizeHint(b int) {
+	w, ok := capnpser.ByteCount(b).StorageWordCount()
+	if !ok {
+		panic(fmt.Sprintf("%b bytes cannot be stored as words", b))
+	}
+	gcc.payloadSizeHint += capnpser.WordCount(w)
+}
+
+// CC returns the underlying CallContext.
+func (gcc *StructReplyCallContext[T]) CC() *CallContext {
+	return gcc.cc
+}
+
 type exception struct { // TODO: improve.
 	typ    int
 	reason string
@@ -421,23 +489,10 @@ type callExceptionError interface {
 	ToException() exception
 }
 
-type errUnimplemented struct {
-	Iid InterfaceId
-	Mid MethodId
-}
-
-func (err errUnimplemented) Error() string {
-	return fmt.Sprintf("call %d.%d unimplemented", err.Iid, err.Mid)
-}
-
-func (err errUnimplemented) ToException() exception {
-	return exception{typ: 3, reason: err.Error()}
-}
-
 type allUnimplementedCallHandler struct{}
 
 func (h allUnimplementedCallHandler) Call(ctx context.Context, res *CallContext) error {
-	return errUnimplemented{Iid: res.iid, Mid: res.mid}
+	return ErrUnknownMethodId{IId: res.iid, Mid: res.mid}
 }
 
 type inMsg struct {

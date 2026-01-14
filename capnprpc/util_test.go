@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -60,6 +61,18 @@ func (th *testHarness) newVat(name string, opts ...VatOption) *testVat {
 		return err
 	})
 	return &testVat{Vat: v, name: name, index: index}
+}
+
+func (th *testHarness) newLevel0Vat(name string, cfg *Level0ClientCfg) *Level0ClientVat {
+	if cfg == nil {
+		cfg = &Level0ClientCfg{}
+	}
+	if cfg.Log == nil {
+		l := th.logger.With().Str("vat", name).Logger()
+		cfg.Log = &l
+	}
+	c := NewLevel0ClientVat(*cfg)
+	return c
 }
 
 func (th *testHarness) newTestConn() *testConn {
@@ -162,8 +175,10 @@ func newTestHarness(t testing.TB) *testHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	g := pool.New().WithContext(ctx).WithCancelOnError().WithFirstError()
 
+	// Disable logging to stdout in benchmarks.
 	var logger zerolog.Logger
-	if _, isBench := t.(*testing.B); isBench {
+	forceLog := os.Getenv("FORCEBENCHLOG") == "1"
+	if _, isBench := t.(*testing.B); isBench && !forceLog {
 		logger = zerolog.Nop()
 		// logger = testLogger(t).With().Timestamp().Logger()
 	} else {
@@ -182,7 +197,17 @@ func newTestHarness(t testing.TB) *testHarness {
 		}
 	})
 
-	t.Cleanup(cancel)
+	t.Cleanup(func() {
+		// Once the main test procedure ends and its own cleanups run,
+		// wait for a few milliseconds in order for queues to
+		// (hopefully) drain to avoid any errors about pipes/conns being
+		// closed prematurely. These are usually not critical for the
+		// tests themselves, but ensure logs remain clean from errors in
+		// the common case.
+		time.Sleep(5 * time.Millisecond)
+		logger.Warn().Str("vat", "").Msg("Cancelling main test harness context")
+		cancel()
+	})
 
 	th := &testHarness{
 		ctx:    ctx,

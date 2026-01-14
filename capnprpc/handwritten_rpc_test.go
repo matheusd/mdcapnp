@@ -31,6 +31,8 @@ const testAPI_Void_CallID = 101
 const testAPI_GetAnotherAPI_CallID = 102
 const testAPI_GetUser_CallID = 103
 const testAPI_Add_CallID = 104
+const testAPI_GetTestUserMethods_MethodId = 105
+const testAPI_CallGetAvatarFromUserMethods_MethodId = 106
 
 func (api testAPI) VoidCall() futureVoid {
 	return futureVoid(RemoteCall(
@@ -123,6 +125,32 @@ func (api testAPI) GetAnotherAPICap() testAPI {
 	))
 }
 
+func (api testAPI) GetTestUserMethods() testUserMethods {
+	return testUserMethods(RemoteCall(
+		CallFuture(api),
+		SetupCallNoParams(
+			CallFuture(api),
+			testAPI_InterfaceID,
+			testAPI_GetTestUserMethods_MethodId,
+		),
+	))
+}
+
+func (api testAPI) CallGetAvatarFromUserMethods(s testUserMethodsCapServer) VoidFuture {
+	cs := SetupCallWithNewCap(
+		CallFuture(api),
+		testAPI_InterfaceID,
+		testAPI_CallGetAvatarFromUserMethods_MethodId,
+		testUserMethodsCapServerAsCallHandler(s),
+	)
+
+	return VoidFuture(RemoteCall(
+		CallFuture(api),
+		cs,
+	))
+}
+
+/*
 func (api testAPI) GetUser(id string) testUser {
 	return testUser(RemoteCall(
 		CallFuture(api),
@@ -132,6 +160,7 @@ func (api testAPI) GetUser(id string) testUser {
 		},
 	))
 }
+*/
 
 // Wait until this is resolved as a concrete, exported capability.
 func (api testAPI) Wait(ctx context.Context) (CapabilityClient, error) {
@@ -147,6 +176,86 @@ func testAPIAsBootstrap(bt BootstrapFuture) testAPI {
 	return testAPI(bt)
 }
 
+const testUserMethods_InterfaceId InterfaceId = 1001
+const testUserMethods_getAvatarData_methodId MethodId = 11
+
+type testUserMethods CallFuture
+
+func (up testUserMethods) Wait(ctx context.Context) (CapabilityClient, error) {
+	return CastCallResultOrErr[CapabilityClient](WaitReturn(ctx, CallFuture(up)))
+}
+
+var testUserMethods_GetAvatarData_ResultsSize = capnpser.StructSize{DataSectionSize: 0, PointerSectionSize: 1}
+
+type testUserMethods_GetAvatarData_Results capnpser.Struct
+
+func (s *testUserMethods_GetAvatarData_Results) AvatarData() string {
+	return (*capnpser.Struct)(s).String(0)
+}
+
+type testUserMethods_GetAvatarData_ResultsBuilder capnpser.StructBuilder
+
+func (b *testUserMethods_GetAvatarData_ResultsBuilder) SetAvatarData(s string) error {
+	return (*capnpser.StructBuilder)(b).SetString(0, s)
+}
+
+type testUserMethods_GetAvatarData_Results_future CallFuture
+
+func (f testUserMethods_GetAvatarData_Results_future) Wait(ctx context.Context) (testUserMethods_GetAvatarData_Results, ReturnResults, error) {
+	return WaitShallowCopyReturnResultsStruct[testUserMethods_GetAvatarData_Results](ctx, CallFuture(f))
+}
+
+// GetAvatarData @0 () -> (AvatarData :text)
+func (up testUserMethods) GetAvatarData() testUserMethods_GetAvatarData_Results_future {
+	cs := SetupCallNoParams(
+		CallFuture(up),
+		testUserMethods_InterfaceId,
+		testUserMethods_getAvatarData_methodId,
+	)
+	cs.WantShallowReturnCopy = true
+
+	return testUserMethods_GetAvatarData_Results_future(RemoteCall(
+		CallFuture(up),
+		cs,
+	))
+}
+
+type testUserMethods_GetAvatarData_CallContext = StructReplyCallContext[testUserMethods_GetAvatarData_ResultsBuilder]
+
+type testUserMethodsCapServer interface {
+	GetAvatarData(ri testUserMethods_GetAvatarData_CallContext) error
+}
+
+func testUserMethodsCapServerAsCallHandler(s testUserMethodsCapServer) CallHandler {
+	return CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+		iid, mid := cc.InterfaceId(), cc.MethodId()
+		if iid != testUserMethods_InterfaceId {
+			return ErrUnexpectedInterfaceId{Want: testUserMethods_InterfaceId, Got: iid}
+		}
+		switch mid {
+		case testUserMethods_getAvatarData_methodId:
+			return s.GetAvatarData(testUserMethods_GetAvatarData_CallContext(
+				MakeStructReplyCallContext[testUserMethods_GetAvatarData_ResultsBuilder](
+					cc, testUserMethods_GetAvatarData_ResultsSize,
+				)))
+		default:
+			return ErrUnknownMethodId{IId: iid, Mid: mid}
+		}
+	})
+}
+
+type testUser capnpser.Struct
+
+func (st *testUser) Username() string {
+	return (*capnpser.Struct)(st).String(0)
+}
+
+func (st *testUser) Methods() testUserMethods {
+	// return (*capnpser.Struct)(st).ReadAnyPointer()
+	panic("boo")
+}
+
+/*
 type testUser CallFuture
 
 func (usr testUser) GetProfile() testUserProfile {
@@ -170,3 +279,4 @@ func (up testUserProfile) GetAvatarData() futureString {
 		},
 	))
 }
+*/

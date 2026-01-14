@@ -16,6 +16,9 @@ import (
 
 // CallSetup are the requirements to build and send a Call message.
 type CallSetup struct {
+	// TODO: split InterfaceId, MethodId and WantShallowReturnCopy into one
+	// struct, then bundle with callOutMsg in another.
+
 	callOutMsg rpcCallMsgBuilder // !!! Experimental
 
 	InterfaceId InterfaceId
@@ -277,9 +280,6 @@ func RemoteCall(parent CallFuture, csetup CallSetup) (res CallFuture) {
 	//
 	// WaitResult will directly access the vat to send the Call (based on
 	// the contents of csetup) and will wait for the corresponding Return.
-	//
-	// TODO: Prevent calling RemoteCall twice without a WaitResult in
-	// between (wrong usage of level0 client).
 	if l0vat, isLevel0 := parent.vat.(*Level0ClientVat); isLevel0 {
 		l0vat.setupNextCall(csetup)
 		res.vat = l0vat
@@ -341,6 +341,8 @@ func CastCallResultOrErr[T any](callResult any, inErr error) (res T, err error) 
 	return
 }
 
+// WaitReturn waits until the passed future is resolved. Returns either the
+// resolved value or an error.
 func WaitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
 	if cf.vat == nil {
 		err = errors.New("could not find vat for pipeline")
@@ -453,10 +455,12 @@ func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Cont
 		resReader = capnpser.MakeMsg(resTyped)
 	default:
 		err = fmt.Errorf("unhandled result type (got %T)", resAny)
+		return
 	}
 
 	resRoot, err := resReader.GetRoot()
 	if err != nil {
+		err = fmt.Errorf("unable to get root: %v", err)
 		return
 	}
 	resMsg := types.Message(resRoot)

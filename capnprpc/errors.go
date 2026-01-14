@@ -6,6 +6,7 @@ package capnprpc
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/rs/zerolog"
 )
@@ -23,6 +24,35 @@ func (err errDisembargoAcceptUnknownExport) Error() string {
 
 func (err errDisembargoAcceptUnknownExport) addExtraDataToLog(e *zerolog.Event) {
 	e.Int("eid", int(err))
+}
+
+type ErrUnexpectedInterfaceId struct {
+	Want InterfaceId
+	Got  InterfaceId
+}
+
+func (err ErrUnexpectedInterfaceId) Error() string {
+	return fmt.Sprintf("unexpected interfaceId (want 0x%016x got 0x%016x)",
+		err.Want, err.Got)
+}
+
+type ErrUnexpectedMethodId struct {
+	Want MethodId
+	Got  MethodId
+}
+
+func (err ErrUnexpectedMethodId) Error() string {
+	return fmt.Sprintf("unexpected methodId (want 0x%04x got 0x%04x)",
+		err.Want, err.Got)
+}
+
+type ErrUnknownMethodId struct {
+	IId InterfaceId
+	Mid MethodId
+}
+
+func (err ErrUnknownMethodId) Error() string {
+	return fmt.Sprintf("unknown method id 0x%x in interface 0x%x", err.Mid, err.IId)
 }
 
 var errConnStopped = errors.New("conn stopped")

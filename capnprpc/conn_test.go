@@ -6,7 +6,9 @@ package capnprpc
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 
 	types "matheusd.com/mdcapnp/capnprpc/types"
 	"matheusd.com/mdcapnp/capnpser"
@@ -151,6 +153,10 @@ func (tpc *testPipeConn) send(ctx context.Context, m OutMsg) error {
 func (tpc *testPipeConn) receive(ctx context.Context) (InMsg, error) {
 	n, err := tpc.r.Read(tpc.inBuf)
 	if err != nil {
+		if errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+			// Handle graceful close.
+			err = io.EOF
+		}
 		return InMsg{}, err
 	}
 

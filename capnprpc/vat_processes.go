@@ -37,6 +37,7 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.
 		Msg("Exported Bootstrap")
 
 	return rc.queue(ctx, outMsg)
+	// return rc.send(ctx, outMsg)
 }
 
 func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnpser.Message, ret types.Return) error {
@@ -245,7 +246,9 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	}
 
 	logEvent := rc.log.Trace().
-		Int("qid", int(qid))
+		Int("qid", int(qid)).
+		Int("iid", int(iid)).
+		Int("mid", int(mid))
 
 	// Determine the target of this call (either an exported cap or a
 	// promised answer).
@@ -443,8 +446,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 			Msg("Processed call into payload result")
 	}
 
-	return rc.send(ctx, outm)
-	// return rc.queue(ctx, outMsg)
+	return rc.queue(ctx, outm)
 }
 
 func (v *Vat) processFinish(ctx context.Context, rc *runningConn, fin types.Finish) error {
@@ -1122,6 +1124,8 @@ func (v *Vat) prepareOutMessageForStep(ctx context.Context, step *pipelineStep,
 	if err != nil {
 		return 0, fmt.Errorf("unable to create message target: %v", err)
 	}
+
+	// TODO: extract iid and mid from the call to log it.
 
 	if parentIid > 0 {
 		mtb.SetImportedCap(parentIid)

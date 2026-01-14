@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/rs/zerolog"
 	types "matheusd.com/mdcapnp/capnprpc/types"
 )
 
@@ -17,6 +18,7 @@ const level0BootQid = 1
 
 type Level0ClientCfg struct {
 	Conn conn
+	Log  *zerolog.Logger
 }
 
 const (
@@ -29,6 +31,7 @@ const (
 type Level0ClientVat struct {
 	cfg  Level0ClientCfg
 	conn conn
+	log  *zerolog.Logger
 
 	callSetupStage atomic.Int64 // Protection against misuse.
 	csetup         CallSetup
@@ -45,8 +48,13 @@ func NewLevel0ClientVat(cfg Level0ClientCfg) *Level0ClientVat {
 	v := &Level0ClientVat{
 		cfg:     cfg,
 		conn:    cfg.Conn,
+		log:     cfg.Log,
 		lastQid: level0BootQid + 1,
 		mbp:     NewMessageBuilderPool(),
+	}
+	if v.log == nil {
+		nop := zerolog.Nop()
+		v.log = &nop
 	}
 	v.boot = BootstrapFuture(newRootFutureCap(v))
 	v.csetup.callOutMsg.isBootstrap = true
@@ -54,6 +62,7 @@ func NewLevel0ClientVat(cfg Level0ClientCfg) *Level0ClientVat {
 }
 
 func (v *Level0ClientVat) setupNextCall(csetup CallSetup) {
+	v.log.Trace().Int("iid", int(csetup.InterfaceId)).Int("mid", int(csetup.MethodId)).Msg("Starting to setup next call")
 	if !v.callSetupStage.CompareAndSwap(level0CallStageEmpty, level0CallStageBuilding) {
 		panic("cannot setup multiple concurrent calls in a level 0 vat client")
 	}
@@ -81,7 +90,7 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 		return res, nil
 	}
 
-	// Ensure we return the stage to level0CallStageRunning on exit.
+	// Ensure we return the stage to level0CallStageEmpty on exit.
 	defer func() {
 		if !v.callSetupStage.CompareAndSwap(level0CallStageRunning, level0CallStageEmpty) {
 			panic("call stage was not the expected level0CallStageRunning at defer time")
@@ -97,11 +106,17 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 
 	target, err := call.NewTarget()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to create target field in call: %v:", err)
 	}
+
+	logLine := v.log.Debug().
+		Int("qid", int(v.lastQid)).
+		Int("iid", int(v.csetup.InterfaceId)).
+		Int("mid", int(v.csetup.MethodId))
 
 	if v.bootImportId != 0 {
 		target.SetImportedCap(v.bootImportId)
+		logLine.Int("target.importedCap", int(v.bootImportId))
 	} else {
 		// Bootstrap not fetched yet. Pipeline the call to the bootstrap
 		// cap, but expect the bootstrap Return first.
@@ -114,8 +129,10 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 			return nil, err
 		}
 		pans.SetQuestionId(level0BootQid)
+		logLine.Int("target.pans", int(level0BootQid))
 	}
 
+	logLine.Msg("Sending Call")
 	err = v.conn.send(ctx, OutMsg{Msg: v.csetup.callOutMsg.serMsg})
 	if err != nil {
 		return nil, err
@@ -156,8 +173,9 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ret.AnswerId() != types.AnswerId(v.lastQid) {
-		return nil, errors.New("answerId was not the expected one for the last sent call")
+	if ansId := ret.AnswerId(); ansId != types.AnswerId(v.lastQid) {
+		return nil, fmt.Errorf("answerId was not the expected one for "+
+			"the last sent call (got %d, want %d)", ansId, v.lastQid)
 	}
 
 	if ret.Which() != types.Return_Which_Results {
@@ -194,11 +212,13 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 		finalRes = inMsg.Msg.Arena()
 	}
 
+	v.log.Debug().Int("aid", int(v.lastQid)).Msg("Received valid Return")
+
 	return finalRes, nil
 }
 
-func (c *Level0ClientVat) sendBoot(ctx context.Context) error {
-	serMb := c.mbp.getRawMessageBuilder(0)
+func (v *Level0ClientVat) sendBoot(ctx context.Context) error {
+	serMb := v.mbp.getRawMessageBuilder(0)
 	msg, err := types.NewRootMessageBuilder(serMb)
 	if err != nil {
 		return err
@@ -209,40 +229,45 @@ func (c *Level0ClientVat) sendBoot(ctx context.Context) error {
 	}
 	boot.SetQuestionId(level0BootQid)
 
-	err = c.conn.send(ctx, OutMsg{Msg: serMb})
+	v.log.Debug().Int("qid", level0BootQid).Msg("Sending bootstrap")
+	err = v.conn.send(ctx, OutMsg{Msg: serMb})
 	if err != nil {
 		return err
 	}
 
-	c.mbp.put(serMb)
+	v.mbp.put(serMb)
 	return nil
 }
 
-func (c *Level0ClientVat) recvBoot(ctx context.Context) error {
-	inMsg, err := c.conn.receive(ctx)
+func (v *Level0ClientVat) recvBoot(ctx context.Context) error {
+	v.log.Trace().Msg("Waiting for bootstrap response on next conn.receive")
+	inMsg, err := v.conn.receive(ctx)
 	if err != nil {
 		return err
 	}
+	v.log.Trace().Msg("Received next message while waiting for bootstrap reply")
 
 	var msg types.Message
 	if err := msg.ReadFromRoot(&inMsg.Msg); err != nil {
 		return err
 	}
 
-	if msg.Which() != types.Message_Which_Return {
-		return errors.New("message was not a Return after sending Bootstrap")
+	if which := msg.Which(); which != types.Message_Which_Return {
+		return fmt.Errorf("message was not a Return after sending "+
+			"Bootstrap (got %d)", which)
 	}
 
 	ret, err := msg.AsReturn()
 	if err != nil {
 		return err
 	}
-	if ret.AnswerId() != level0BootQid {
-		return errors.New("answerId was not the expected one for bootstrap")
+	if ansId := ret.AnswerId(); ansId != level0BootQid {
+		return fmt.Errorf("answerId was not the expected one for "+
+			"bootstrap (got %d, want %d)", ansId, level0BootQid)
 	}
 
-	if ret.Which() != types.Return_Which_Results {
-		return errors.New("return which was not for results")
+	if which := ret.Which(); which != types.Return_Which_Results {
+		return fmt.Errorf("return which was not for results (got %d)", which)
 	}
 
 	pay, err := ret.AsResults()
@@ -270,15 +295,18 @@ func (c *Level0ClientVat) recvBoot(ctx context.Context) error {
 
 	capDescr := capTable.At(capIndex)
 	if capDescr.Which() != types.CapDescriptor_Which_SenderHosted {
+		// TODO: We could support a promise, but then we can't send
+		// anything until the promise is resolved.
 		return errors.New("level 0 only supports SenderHosted bootstrap cap")
 	}
-	c.bootImportId = ImportId(capDescr.AsSenderHosted())
+	v.bootImportId = ImportId(capDescr.AsSenderHosted())
+	v.log.Debug().Int("impId", int(v.bootImportId)).Msg("Received bootstrap return")
 	return nil
 }
 
 func (v *Level0ClientVat) sendRecvBoot(ctx context.Context) error {
 	if err := v.sendBoot(ctx); err != nil {
-		return err
+		return fmt.Errorf("error sending boot msg: %v", err)
 	}
 	if err := v.recvBoot(ctx); err != nil {
 		return fmt.Errorf("error processing received bootstrap: %v", err)

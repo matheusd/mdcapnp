@@ -197,7 +197,7 @@ func TestRemotePromiseWithCap(t *testing.T) {
 	// Setup harness.
 	th := newTestHarness(t)
 	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(bootHandler))
-	cc, _ := th.connectVats(c, s)
+	cc, _ := th.connectVatsWithTCP(c, s)
 
 	// Wait for bootstrap to complete to ease log reviewing.
 	api := testAPIAsBootstrap(cc.Bootstrap())
