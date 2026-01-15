@@ -10,15 +10,13 @@ import (
 	"matheusd.com/testctx"
 )
 
-type fixedUserMethodsImpl struct { // TODO: benchmark if this style of works.
+type fixedUserMethodsImpl struct {
 	getAvatarDataCalled chan struct{}
 	avatarData          string
 }
 
-func (f fixedUserMethodsImpl) GetAvatarData(cc testUserMethods_GetAvatarData_CallContext) error {
-	cc.AddBytesToSizeHint(len(f.avatarData)) // Optional.
-	rb := cc.InitResults()
-	rb.SetAvatarData(f.avatarData)
+func (f fixedUserMethodsImpl) GetAvatarData(cc StringReplyCallContext) error {
+	cc.SetResponse(f.avatarData)
 	if f.getAvatarDataCalled != nil {
 		f.getAvatarDataCalled <- struct{}{}
 	}
@@ -56,11 +54,10 @@ func TestSenderHostedCapAsCallParams(t *testing.T) {
 		// TODO: test case where we decouple but don't respond anything
 		// yet (respond from within the gorountine).
 		go func() {
-			res, _, err := methods.GetAvatarData().Wait(ctx)
+			gotAvatarData, err := methods.GetAvatarData().Wait(ctx)
 			if err != nil {
 				panic(err)
 			}
-			gotAvatarData := res.AvatarData()
 			getAvatarReplyChan <- gotAvatarData
 
 		}()
@@ -149,9 +146,9 @@ func TestSenderHostedCapAsReturnResults(t *testing.T) {
 
 			// Alice exercises a call on the returned capability
 			// (double check it is working).
-			gotAvatarData, _, err := aliceBobCap.GetAvatarData().Wait(testctx.New(t))
+			gotAvatarData, err := aliceBobCap.GetAvatarData().Wait(testctx.New(t))
 			require.NoError(t, err)
-			require.Equal(t, userMethodsCapImpl.avatarData, gotAvatarData.AvatarData())
+			require.Equal(t, userMethodsCapImpl.avatarData, gotAvatarData)
 		})
 	}
 }
@@ -201,9 +198,9 @@ func TestSenderHostedCapEmbeddedInReturnResults(t *testing.T) {
 
 			// Alice exercises a call on the returned capability
 			// (double check it is working).
-			gotAvatarData, _, err := aliceBobCap.GetAvatarData().Wait(testctx.New(t))
+			gotAvatarData, err := aliceBobCap.GetAvatarData().Wait(testctx.New(t))
 			require.NoError(t, err)
-			require.Equal(t, userMethodsCapImpl.avatarData, gotAvatarData.AvatarData())
+			require.Equal(t, userMethodsCapImpl.avatarData, gotAvatarData)
 		})
 	}
 
@@ -235,7 +232,7 @@ func BenchmarkGenericStructCallHandler(b *testing.B) {
 	var i int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, err = api.GetAvatarData().Wait(ctx)
+		err := api.GetAvatarData().WaitDiscardResult(ctx)
 		if err != nil {
 			b.Fatalf("at %d: %v", i, err)
 		}

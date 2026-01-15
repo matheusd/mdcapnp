@@ -23,63 +23,18 @@ type CallSetup struct {
 
 	InterfaceId InterfaceId
 	MethodId    MethodId
-
-	// ParamsBuilder is called with the outbound message builder when the
-	// Call message is being built. This can be used to fill the Params
-	// field of the Call.
-	// ParamsBuilder CallParamsBuilder
-
-	// ResultsParser is called when a Return.Results is received in response
-	// to a Call. It can parse the encoded results into some Go value.
-	// ResultsParser CallResultsParser
-
-	// copyReturnResults bool
-
-	// WantReturnResults bool
-
-	WantShallowReturnCopy bool
 }
 
 type ReturnResults struct {
-	content capnpser.AnyPointer
-	copyMb  *capnpser.MessageBuilder
-	vat     vatImpl
+	inMsg *InMsg
+	vat   vatImpl
 }
 
 func (rr *ReturnResults) Release() {
-	if rr.copyMb != nil {
-		rr.vat.msgBuilderPool().put(rr.copyMb)
+	if rr.inMsg != nil && rr.inMsg.pool != nil {
+		rr.inMsg.pool.put(rr.inMsg)
+		rr.inMsg = nil
 	}
-}
-
-func (rr *ReturnResults) Content() capnpser.AnyPointer {
-	return rr.content
-}
-
-func ReturnResultsStruct[T ~capnpser.StructType](rr ReturnResults) T {
-	if !rr.content.IsStruct() {
-		panic("ReturnResults content is not a struct")
-	}
-	return T(rr.content.AsStruct())
-}
-
-func NewCallParamsStruct[T ~capnpser.StructBuilderType](payload types.PayloadBuilder, size capnpser.StructSize) (T, error) {
-	res, err := payload.SetContentAsNewStruct(size)
-	return T(res), err
-}
-
-func ResultsStruct[T ~capnpser.StructType](payload types.Payload) (res T, err error) {
-	var content capnpser.AnyPointer
-	content, err = payload.Content()
-	if err != nil {
-		return
-	}
-	if !content.IsStruct() {
-		err = errors.New("payload contents is not a struct in results")
-		return
-	}
-	res = T(content.AsStruct())
-	return
 }
 
 type pipelineStepState int
@@ -278,7 +233,7 @@ func RemoteCall(parent CallFuture, csetup CallSetup) (res CallFuture) {
 	// Level 0 vats only perform sync calls one at a time and don't support
 	// pipelining, therefore tracking of pipeline steps isn't needed.
 	//
-	// WaitResult will directly access the vat to send the Call (based on
+	// WaitReturn will directly access the vat to send the Call (based on
 	// the contents of csetup) and will wait for the corresponding Return.
 	if l0vat, isLevel0 := parent.vat.(*Level0ClientVat); isLevel0 {
 		l0vat.setupNextCall(csetup)
@@ -293,57 +248,9 @@ func RemoteCall(parent CallFuture, csetup CallSetup) (res CallFuture) {
 	return res
 }
 
-func CastCallResult[T any](callResult any) (res T, err error) {
-	// Check if result is already the expected return type.
-	var ok bool
-	if res, ok = callResult.(T); ok {
-		return
-	}
-
-	// Not an error, and not type T, so must be an AnyPointer with the
-	// Content field of a Payload result.
-	var resAnyPointer capnpser.AnyPointer
-	if resAnyPointer, ok = callResult.(capnpser.AnyPointer); !ok {
-		err = fmt.Errorf("future expected AnyPointer but got %T", callResult)
-		return
-	}
-
-	// Content may be either a Struct or a CapPointer, and T will be an
-	// alias to one of these (depending on what's expected based on the
-	// schema).
-	//
-	// TODO: better way to convert to T?
-	var contentAny any
-	if resAnyPointer.IsStruct() {
-		contentAny = resAnyPointer.AsStruct()
-	} else if resAnyPointer.IsCapPointer() {
-		// TODO: How to convert capPointer to importId???
-		contentAny = resAnyPointer.AsCapPointer()
-	} else {
-		err = fmt.Errorf("content is not struct or capPointer")
-		return
-	}
-
-	res, ok = contentAny.(T)
-	if !ok {
-		err = fmt.Errorf("future expected %T but got back %T", res, contentAny)
-	}
-
-	return
-}
-
-func CastCallResultOrErr[T any](callResult any, inErr error) (res T, err error) {
-	if inErr != nil {
-		err = inErr
-	} else {
-		res, err = CastCallResult[T](callResult)
-	}
-	return
-}
-
-// WaitReturn waits until the passed future is resolved. Returns either the
+// waitReturn waits until the passed future is resolved. Returns either the
 // resolved value or an error.
-func WaitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
+func waitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
 	if cf.vat == nil {
 		err = errors.New("could not find vat for pipeline")
 		return
@@ -388,77 +295,42 @@ func WaitReturn(ctx context.Context, cf CallFuture) (res any, err error) {
 	return
 }
 
-func WaitVoidReturnResults(ctx context.Context, cf CallFuture) (rr ReturnResults, err error) {
-	resAny, err := WaitReturn(ctx, cf)
+// WaitVoidReturnResults waits for the return of a call that is meant to return
+// a void valule.
+func WaitVoidReturnResults(ctx context.Context, cf CallFuture) (err error) {
+	resAny, err := waitReturn(ctx, cf)
 	if err != nil {
 		return
 	}
 
-	rr.vat = cf.vat
-	var resReader capnpser.Message
-	switch resTyped := resAny.(type) {
-	case *capnpser.MessageBuilder:
-		rr.copyMb = resTyped
-		resReader = rr.copyMb.MessageReader()
-		resReader.Arena().ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
-		resReader.SetDepthLimit(64) // TODO: Make this a constant somewhere?
-	case *capnpser.Arena:
-		resReader = capnpser.MakeMsg(resTyped)
+	switch resAny.(type) {
+	case struct{}:
+		return nil
 	default:
-		err = fmt.Errorf("unhandled result type (got %T)", resAny)
+		return fmt.Errorf("unexpected non-void return type %T", resAny)
 	}
-
-	resRoot, err := resReader.GetRoot()
-	if err != nil {
-		return
-	}
-	resMsg := types.Message(resRoot)
-	if resMsg.Which() != types.Message_Which_Return {
-		err = errors.New("not the expected Return")
-		return
-	}
-	resReturn, err := resMsg.AsReturn()
-	if err != nil {
-		return
-	}
-	resPayload, err := resReturn.AsResults()
-	if err != nil {
-		return
-	}
-	rr.content, err = resPayload.Content()
-	if err != nil {
-		return
-	}
-	if !rr.content.IsZeroStruct() {
-		err = errors.New("Return.Results.Content is not an expected zero-struct")
-		return
-	}
-	return
 }
 
-func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
-	resAny, err := WaitReturn(ctx, cf)
+// waitReturnResultsContent waits for the return of a call that is meant to
+// return a non-void Results content.
+func waitReturnResultsContent(ctx context.Context, cf CallFuture) (content capnpser.AnyPointer, rr ReturnResults, err error) {
+	var ok bool
+	var resAny any
+
+	resAny, err = waitReturn(ctx, cf)
 	if err != nil {
 		return
 	}
 
 	rr.vat = cf.vat
-
-	var resReader capnpser.Message
-	switch resTyped := resAny.(type) {
-	case *capnpser.MessageBuilder:
-		rr.copyMb = resTyped
-		resReader = rr.copyMb.MessageReader()
-		resReader.Arena().ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
-		resReader.SetDepthLimit(64) // TODO: Make this a constant somewhere?
-	case *capnpser.Arena:
-		resReader = capnpser.MakeMsg(resTyped)
-	default:
-		err = fmt.Errorf("unhandled result type (got %T)", resAny)
+	if rr.inMsg, ok = resAny.(*InMsg); !ok {
+		err = fmt.Errorf("unhandled result type (got %T instead of *InMsg)", resAny)
 		return
 	}
 
-	resRoot, err := resReader.GetRoot()
+	// TODO: A few of these checks are now redundant...
+
+	resRoot, err := rr.inMsg.Msg.GetRoot()
 	if err != nil {
 		err = fmt.Errorf("unable to get root: %v", err)
 		return
@@ -476,45 +348,89 @@ func WaitShallowCopyReturnResultsStruct[T ~capnpser.StructType](ctx context.Cont
 	if err != nil {
 		return
 	}
-	rr.content, err = resPayload.Content()
+	content, err = resPayload.Content()
 	if err != nil {
 		return
 	}
-	if !rr.content.IsStruct() {
-		err = errors.New("Return.Results.Content is not an expected Struct")
-		return
-	}
-	res = T(rr.content.AsStruct())
 	return
 }
-func WaitReturnResultsCapability[T ~CapabilityClientType](ctx context.Context, cf CallFuture) (res T, err error) {
-	resAny, err := WaitReturn(ctx, cf)
+
+// waitReturnResultsStruct waits for the return of a call that is expected to
+// produce a struct as result.
+func waitReturnResultsStruct(ctx context.Context, cf CallFuture) (s capnpser.Struct, rr ReturnResults, err error) {
+	var content capnpser.AnyPointer
+	content, rr, err = waitReturnResultsContent(ctx, cf)
 	if err != nil {
 		return
 	}
 
-	resCap, ok := resAny.(CapabilityClient)
+	if !content.IsStruct() {
+		err = errors.New("Return.Results.Content is not the expected Struct")
+		return
+	}
+
+	s = content.AsStruct()
+	return
+}
+
+// WaitReturnResultsStruct waits for the return of a call that is expected to
+// return a struct of type T.
+func WaitReturnResultsStruct[T ~capnpser.StructType](ctx context.Context, cf CallFuture) (res T, rr ReturnResults, err error) {
+	var s capnpser.Struct
+	s, rr, err = waitReturnResultsStruct(ctx, cf)
+	res = T(s)
+	return
+}
+
+// waitReturnResultsList waits for the return of a call that is expected to
+// produce a list as result.
+func waitReturnResultsList(ctx context.Context, cf CallFuture) (l capnpser.List, rr ReturnResults, err error) {
+	var content capnpser.AnyPointer
+	content, rr, err = waitReturnResultsContent(ctx, cf)
+	if err != nil {
+		return
+	}
+
+	if !content.IsList() {
+		err = errors.New("Return.Results.Content is not the expected List")
+		return
+	}
+
+	l = content.AsList()
+	return
+}
+
+// WaitReturnResultsList waits for the return of a call that is expected to
+// produce a list of some particular type as result.
+func WaitReturnResultsList[T ~capnpser.ListType](ctx context.Context, cf CallFuture) (l T, rr ReturnResults, err error) {
+	var ll capnpser.List
+	ll, rr, err = waitReturnResultsList(ctx, cf)
+	l = T(ll)
+	return
+}
+
+// waitReturnResultsCapability waits for the return of a remote call that should
+// return a capability client.
+func waitReturnResultsCapability(ctx context.Context, cf CallFuture) (cc CapabilityClient, err error) {
+	var resAny any
+	resAny, err = waitReturn(ctx, cf)
+	if err != nil {
+		return
+	}
+
+	var ok bool
+	cc, ok = resAny.(CapabilityClient)
 	if !ok {
 		err = fmt.Errorf("result was not a capability (got %T)", resAny)
 		return
 	}
-
-	res = T(resCap)
 	return
 }
 
-func releaseStepResultMsgBuilder(cf CallFuture) {
-	step := cf.step
-	step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
-		// TODO: make assertions on type, state, etc
-		anyp := ov.value.(capnpser.AnyPointerBuilder)
-		vat := ov.conn.vat
-		vat.mbp.put(anyp.MsgBuilder())
-		ov.value = nil
-		return os, ov, nil
-	})
-}
-
-func releaseFuture(ctx context.Context, cap CallFuture) {
-	finalizePipelineStep(cap.step)
+// WaitReturnResultsCapability waits for the return of a remote call that should
+// return a capability client.
+func WaitReturnResultsCapability[T ~CapabilityClientType](ctx context.Context, cf CallFuture) (res T, err error) {
+	cc, err := waitReturnResultsCapability(ctx, cf)
+	res = T(cc)
+	return
 }

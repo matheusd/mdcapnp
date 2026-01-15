@@ -40,38 +40,38 @@ func (v *Vat) processBootstrap(ctx context.Context, rc *runningConn, boot types.
 	// return rc.send(ctx, outMsg)
 }
 
-func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnpser.Message, ret types.Return) error {
+func (v *Vat) processReturn(ctx context.Context, rc *runningConn, ret types.Return, inMsg *InMsg) (*InMsg, error) {
 	qid := QuestionId(ret.AnswerId())
 	q, ok := rc.questions.get(qid)
 	if !ok {
-		return fmt.Errorf("question %d not found", qid)
+		return inMsg, fmt.Errorf("question %d not found", qid)
 	}
 
 	// TODO: support exception, cancel, etc
 	if ret.Which() != types.Return_Which_Results {
-		return fmt.Errorf("only results supported")
+		return inMsg, fmt.Errorf("only results supported")
 	}
 
 	if q.typ == questionTypeProvide {
 		res, err := ret.AsResults()
 		if err != nil {
-			return err
+			return inMsg, err
 		}
 		content, err := res.Content()
 		if err != nil {
-			return err
+			return inMsg, err
 		}
 		if !content.IsZeroStruct() {
-			return fmt.Errorf("received non-void return for provide")
+			return inMsg, fmt.Errorf("received non-void return for provide")
 		}
 		rc.log.Debug().Int("qid", int(qid)).Msg("Received Return message for prior Provide")
-		return nil
+		return inMsg, nil
 	}
 
 	step := q.step()
 	if step == nil {
 		rc.log.Warn().Int("qid", int(qid)).Msg("Received Return message for released step")
-		return nil
+		return inMsg, nil
 	}
 
 	// Go through cap table, modify imports table based on what was
@@ -84,11 +84,11 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 	// TODO: only do this if the cap is referenced in the content?
 	payload, err := ret.AsResults()
 	if err != nil {
-		return err
+		return inMsg, err
 	}
 	capTable, err := payload.CapTable()
 	if err != nil {
-		return fmt.Errorf("error extracting cap table: %v", err)
+		return inMsg, fmt.Errorf("error extracting cap table: %v", err)
 	}
 	for i := range capTable.Len() {
 		entry := capTable.At(i)
@@ -102,7 +102,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 			iid = ImportId(entry.AsSenderPromise())
 			imp = imprt{typ: importTypeRemotePromise, step: weak.Make(step)}
 		default:
-			return fmt.Errorf("unsupported capability type %d", entry.Which())
+			return inMsg, fmt.Errorf("unsupported capability type %d", entry.Which())
 		}
 
 		rc.imports.set(iid, imp)
@@ -121,7 +121,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 
 	content, err := payload.Content()
 	if err != nil {
-		return err
+		return inMsg, err
 	}
 	if content.IsCapPointer() {
 		// NOT GOOD. Must have a new type to pass along instead of
@@ -129,7 +129,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 		cp := content.AsCapPointer()
 		capIndex := cp.Index()
 		if int(capIndex) >= capTable.Len() {
-			return fmt.Errorf("capability referenced index outside cap table")
+			return inMsg, fmt.Errorf("capability referenced index outside cap table")
 		}
 		capEntry := capTable.At(int(capIndex))
 		switch capEntry.Which() {
@@ -142,40 +142,27 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 			stepResultPromise = ExportId(stepImportId)
 			stepResultType = "senderPromise"
 		default:
-			return errors.New("unknown cap entry type")
+			return inMsg, errors.New("unknown cap entry type")
 		}
 	} else if content.IsZeroStruct() {
 		stepResult = struct{}{}
 		stepResultType = "void"
-	} else if content.IsStruct() {
-		// TODO: copy if its a struct? Or release serialized message if
-		// content is just a cap (because it's not needed anymore)?
-		// stepResult = content.AsStruct()
-		/*if step.csetup.ResultsParser != nil {
-			stepResult, err = step.csetup.ResultsParser(payload)
-			if err != nil {
-				return fmt.Errorf("error parsing results: %w", err)
-			}
-		} else */
-		if step.csetup.WantShallowReturnCopy {
-			inMsgArena := rawInMsg.Arena()
-			sizeHint := inMsgArena.TotalSize()
-			mb := v.mbp.getRawMessageBuilder(sizeHint)
-			err = capnpser.ShallowCopy(&rawInMsg, mb)
-			if err != nil {
-				return err
-			}
-			stepResult = mb
-		} else {
-			stepResult = struct{}{}
-		}
-		stepResultType = "struct"
 	} else {
-		return errors.New("unknown/unimplemented content type")
+		// In this case, this Return contains a struct or list that the
+		// caller will use (this is a future/pipeline step that will be
+		// fulfilled in the step.value.Modify() call down below). Thus,
+		// this will outlive this iteration of processInMessage().
+		// Effectively, we're transfering ownership of this
+		// message/buffer from the conn's inLoop to the caller, by
+		// making inMsg nil.
+		stepResult, inMsg = inMsg, nil
+		stepResultType = "anyPointer"
 	}
 
 	// Automatically remove question if result contains no caps and
 	// noFinishNeeded was set.
+	//
+	// TODO: handle embedded caps (send resolve?).
 	noFinishNeeded := ret.NoFinishNeeded()
 	if noFinishNeeded {
 		// TODO: need to validate if this is ok?
@@ -193,7 +180,7 @@ func (v *Vat) processReturn(ctx context.Context, rc *runningConn, rawInMsg capnp
 	}
 
 	// Fulfill pipeline waiting for this result.
-	return step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
+	return inMsg, step.value.Modify(func(os pipelineStepState, ov pipelineStepStateValue) (pipelineStepState, pipelineStepStateValue, error) {
 		if os != pipeStepStateRunning {
 			return os, ov, fmt.Errorf("pipeline step not running: %v", os)
 		}
@@ -359,10 +346,18 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 		if crb.serMb == nil {
 			// Handler did not allocate any return data. Assume a void
 			// return.
-			outm, reply, _, err = v.newReturnPayload(AnswerId(qid))
+			var payb types.PayloadBuilder
+			outm, reply, payb, err = v.newReturnPayload(AnswerId(qid))
 			if err != nil {
 				return err
 			}
+
+			// Set Return.Results.Content as a null pointer (void).
+			//
+			// TODO: double check: is this correct? Should it have
+			// been set as a zero struct by default (when setting
+			// the Return.Results as a new struct)?
+			payb.SetContent(capnpser.ZeroStructAsPointerBuilder())
 		} else {
 			outm = outMsg{serMsg: crb.serMb, mb: crb.mb}
 			reply = crb.rb
@@ -988,7 +983,7 @@ func (v *Vat) processDisembargo(ctx context.Context, rc *runningConn, dis types.
 	}
 }
 
-func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.Message, rawMsg capnpser.Message) error {
+func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.Message, inMsg *InMsg) (*InMsg, error) {
 
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -1023,7 +1018,7 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.M
 		var ret types.Return
 		ret, err = msg.AsReturn()
 		if err == nil {
-			err = v.processReturn(ctx, rc, rawMsg, ret)
+			inMsg, err = v.processReturn(ctx, rc, ret, inMsg)
 		}
 
 	case types.Message_Which_Resolve:
@@ -1063,8 +1058,8 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.M
 		if err, ok := err.(extraDataError); ok {
 			err.addExtraDataToLog(logEvent)
 		}
-		if rc.log.GetLevel() < zerolog.InfoLevel {
-			msgRawData := rawMsg.Arena().RawDataCopy()
+		if inMsg != nil && rc.log.GetLevel() < zerolog.InfoLevel {
+			msgRawData := inMsg.Msg.Arena().RawDataCopy()
 			for i, data := range msgRawData {
 				logEvent.Hex(fmt.Sprintf("msg.seg%d", i), data)
 			}
@@ -1072,7 +1067,7 @@ func (v *Vat) processInMessage(ctx context.Context, rc *runningConn, msg types.M
 		logEvent.Msg("Error while processing inbound message")
 	}
 
-	return nil
+	return inMsg, nil
 }
 
 var errTooManyOpenQuestions = errors.New("too many open questions")

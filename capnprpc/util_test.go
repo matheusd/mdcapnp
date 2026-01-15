@@ -93,14 +93,14 @@ func (th *testHarness) twoVatsPipe(v1, v2 *testVat) (c1, c2 *testPipeConn) {
 		remIndex: v2.index,
 		w:        p1w,
 		r:        p2r,
-		inBuf:    make([]byte, 2048),
+		inPool:   newArenaPool(2048),
 	}
 	c2 = &testPipeConn{
 		remName:  v1.name,
 		remIndex: v1.index,
 		w:        p2w,
 		r:        p1r,
-		inBuf:    make([]byte, 2048),
+		inPool:   newArenaPool(2048),
 	}
 	return
 }

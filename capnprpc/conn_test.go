@@ -99,13 +99,13 @@ func (tc *testConn) send(ctx context.Context, m OutMsg) error {
 
 // receive is called by the vat end of this test conn. It allows test code to
 // set the next message to be received.
-func (tc *testConn) receive(ctx context.Context) (InMsg, error) {
+func (tc *testConn) receive(ctx context.Context, prev *InMsg) (*InMsg, error) {
 	select {
 	case <-ctx.Done():
-		return InMsg{}, context.Cause(ctx)
+		return nil, context.Cause(ctx)
 	case tcr := <-tc.fillReceive:
 		msg, err := tcr.f()
-		return InMsg{Msg: msg}, err
+		return &InMsg{Msg: msg}, err
 	}
 }
 
@@ -131,9 +131,9 @@ type testPipeConn struct {
 	remName  string
 	remIndex int
 
-	w     writerCloser
-	r     readerCloser
-	inBuf []byte
+	w      writerCloser
+	r      readerCloser
+	inPool *inMsgPool
 
 	recvArena  capnpser.Arena
 	recvSerMsg capnpser.Message
@@ -150,24 +150,30 @@ func (tpc *testPipeConn) send(ctx context.Context, m OutMsg) error {
 	return err
 }
 
-func (tpc *testPipeConn) receive(ctx context.Context) (InMsg, error) {
-	n, err := tpc.r.Read(tpc.inBuf)
+func (tpc *testPipeConn) receive(ctx context.Context, prev *InMsg) (*InMsg, error) {
+	var res *InMsg = prev
+	if prev == nil {
+		res = tpc.inPool.new()
+	}
+
+	n, err := tpc.r.Read(res.buf)
 	if err != nil {
 		if errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
 			// Handle graceful close.
 			err = io.EOF
 		}
-		return InMsg{}, err
+		return nil, err
 	}
 
 	tpc.recvArena.ReadLimiter().InitConcurrentUnsafe(64 * 1024 * 1024)
-	err = tpc.recvArena.DecodeSingleSegment(tpc.inBuf[:n])
+	err = tpc.recvArena.DecodeSingleSegment(res.buf[:n])
 	if err != nil {
-		return InMsg{}, err
+		return nil, err
 	}
 	tpc.recvSerMsg = capnpser.MakeMsg(&tpc.recvArena)
+	res.Msg = tpc.recvSerMsg
 
-	return InMsg{Msg: tpc.recvSerMsg}, nil
+	return res, nil
 }
 
 func (tpc *testPipeConn) remoteName() string {

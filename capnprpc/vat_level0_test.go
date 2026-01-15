@@ -57,35 +57,3 @@ func TestVoidCallLevel0(t *testing.T) {
 		})
 	}
 }
-
-// BenchmarkVoidCallLevel0 benchmarks the basic interaction betweeen a level 0
-// client and a regular server.
-func BenchmarkVoidCallLevel0(b *testing.B) {
-	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
-		return nil
-	})
-
-	th := newTestHarness(b)
-	s := th.newVat("server", WithBootstrapHandler(handler))
-
-	io1, io2 := th.tcpTransportPair("client", "server")
-	s.RunConn(io2)
-
-	c := NewLevel0ClientVat(Level0ClientCfg{Conn: io1})
-
-	ctx := testctx.New(b)
-
-	// Wait for bootstrap.
-	boot := c.Bootstrap()
-	_, err := boot.Wait(ctx)
-	require.NoError(b, err)
-	api := testAPIAsBootstrap(boot)
-
-	b.ReportAllocs()
-	for b.Loop() {
-		err = api.VoidCall().Wait(ctx)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}

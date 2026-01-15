@@ -47,12 +47,14 @@ type OutMsg struct {
 }
 
 type InMsg struct {
-	Msg capnpser.Message
+	buf  []byte
+	Msg  capnpser.Message
+	pool *inMsgPool
 }
 
 type conn interface {
 	send(context.Context, OutMsg) error
-	receive(context.Context) (InMsg, error) // Ok because message goes to stack.
+	receive(ctx context.Context, prev *InMsg) (*InMsg, error)
 	close() error
 	remoteName() string
 
@@ -178,9 +180,17 @@ func (rc *runningConn) cleanupQuestionIdDueToUnref(qid QuestionId) {
 }
 
 func (rc *runningConn) inLoop(ctx context.Context) error {
+	// inMsg (arena and buffer) is reused whenever possible. It is generally
+	// not reused:
+	// - In returns, when the CallSetup signals that a struct will be needed
+	// from result payload.
+	// - In calls, when the handler detaches from the processing loop
+	// without returning anything.
+	var inMsg *InMsg
+	var err error
 	v := rc.vat
 	for {
-		msg, err := rc.c.receive(ctx)
+		inMsg, err = rc.c.receive(ctx, inMsg)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// EOF is considered a graceful conn shutdown.
@@ -202,20 +212,15 @@ func (rc *runningConn) inLoop(ctx context.Context) error {
 		*/
 
 		var rpcMsg types.Message
-		err = rpcMsg.ReadFromRoot(&msg.Msg)
-		if err == nil {
-			err = v.processInMessage(ctx, rc, rpcMsg, msg.Msg)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				err = fmt.Errorf("processInMessage errored: %w", err)
-			}
+		err = rpcMsg.ReadFromRoot(&inMsg.Msg)
+		if err != nil {
+			return err
 		}
 
 		// Process input msg.
-		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				err = fmt.Errorf("inLoop errored: %w", err)
-			}
-			return err
+		inMsg, err = v.processInMessage(ctx, rc, rpcMsg, inMsg)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			err = fmt.Errorf("inLoop: processInMessage errored: %w", err)
 		}
 	}
 }

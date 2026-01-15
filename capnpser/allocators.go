@@ -72,6 +72,11 @@ type PoolableAllocatorPoolIntf interface {
 	Put(b []byte)
 }
 
+// SingleSegmentPoolableAllocator is an allocator that queries a
+// [PoolableAllocatorPoolIntf] every time it needs a new slice. Whenever a slice
+// is no loger needed (either because the message builder was reset or because
+// a segment is growing beyond its current cap), it returns the slice back to
+// the allocator.
 type SingleSegmentPoolableAllocator struct {
 	initialSize WordCount
 	pool        PoolableAllocatorPoolIntf

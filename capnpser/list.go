@@ -49,12 +49,14 @@ func listByteCount(elSize listElementSize, lsSize listSize) ByteCount {
 	return ByteCount(listWordCount(elSize, lsSize)) * WordSize
 }
 
-type List struct {
+type ListType = struct {
 	seg   *Segment
 	arena *Arena
 	ptr   listPointer
 	dl    depthLimit
 }
+
+type List ListType
 
 func (ls *List) lenWords() WordCount {
 	return listWordCount(ls.ptr.elSize, ls.ptr.listSize)
@@ -62,6 +64,11 @@ func (ls *List) lenWords() WordCount {
 
 func (ls *List) LenBytes() ByteCount {
 	return listByteCount(ls.ptr.elSize, ls.ptr.listSize)
+}
+
+// IsElementSizeByte returns true if the list is for byte-sized elements.
+func (ls *List) IsElementSizeByte() bool {
+	return ls.ptr.elSize == listElSizeByte
 }
 
 func (ls *List) AsAnyPointer() AnyPointer {
@@ -123,6 +130,8 @@ func (ls *List) Read(b []byte) (n int, err error) {
 	return ls.seg.Read(ls.ptr.startOffset, b[:n])
 }
 
+// String returns the list as a string. This does not validate whether the list
+// was actually a Text field.
 func (ls *List) String() string {
 	if ls.ptr.listSize == 0 {
 		return ""

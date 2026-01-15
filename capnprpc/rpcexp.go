@@ -339,6 +339,25 @@ func (cc *CallContext) RespondAsStruct(structSize capnpser.StructSize, payloadSi
 	return
 }
 
+func (cc *CallContext) RespondAsString(s string) (err error) {
+	if cc.serMb == nil {
+		payloadSizeHint, ok := capnpser.ByteCount(len(s) + 1).StorageWordCount()
+		if !ok {
+			return errors.New("trying to respond with a string that is too large for CapNProto")
+		}
+		err = cc.initResponsePayload(payloadSizeHint)
+		if err != nil {
+			return
+		}
+	}
+
+	l, err := cc.serMb.CopyToNewText(s)
+	if err != nil {
+		return err
+	}
+	return cc.pb.SetContent(l)
+}
+
 // RespondAsSenderHostedCap responds this call with a new sender-hosted
 // capability.
 func (cc *CallContext) RespondAsSenderHostedCap(capServer CallHandler) error {
@@ -422,6 +441,18 @@ func (cc *CallContext) respondAsPromise() (answerPromise, error) {
 	cc.pb.SetContent(capnpser.CapPointerAsAnyPointerBuilder(0))
 
 	return answerPromise{rc: cc.rc, eid: eid}, nil
+}
+
+type StringReplyCallContext struct {
+	cc *CallContext
+}
+
+func (scc *StringReplyCallContext) SetResponse(s string) {
+	scc.cc.RespondAsString(s)
+}
+
+func MakeStringReplyCallContext(cc *CallContext) StringReplyCallContext {
+	return StringReplyCallContext{cc: cc}
 }
 
 // StructReplyCallContext is a [CallContext] that is used in server method

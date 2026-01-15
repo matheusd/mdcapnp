@@ -1337,6 +1337,22 @@ func (mb *MessageBuilder) newText(preferSeg SegmentID, s string) (sid SegmentID,
 		}, nil
 }
 
+// CopyToNewText allocates a new text object in the message and copies the
+// contents of s into it.
+func (mb *MessageBuilder) CopyToNewText(s string) (res AnyPointerBuilder, err error) {
+	sid, ptr, err := mb.newText(0, s)
+	if err != nil {
+		return res, err
+	}
+	res = AnyPointerBuilder{
+		mb:  mb,
+		off: ptr.startOffset,
+		ptr: buildRawListPointer(ptr.startOffset, listElSizeByte, listSize(len(s)+1)),
+		sid: sid,
+	}
+	return
+}
+
 // Allocate a number of words into a segment.
 func (mb *MessageBuilder) Allocate(size WordCount) (segb SegmentBuilder, offset WordOffset, err error) {
 	return mb.allocate(0, size)

@@ -28,8 +28,7 @@ type IOTransport struct {
 
 	remName string
 
-	inBuf   []byte
-	inArena capnpser.Arena
+	inPool *inMsgPool
 
 	// depthLimit atomic.Uintptr
 	readLimit atomic.Uint64
@@ -51,7 +50,7 @@ func NewIOTransport(remoteName string, rw net.Conn) *IOTransport {
 		r:       r,
 		w:       w,
 		closeRW: close,
-		inBuf:   make([]byte, 512*1024), // TODO: parametrize
+		inPool:  newArenaPool(),
 	}
 	// iot.depthLimit.Store(64) // TODO: constant somewhere?
 	iot.readLimit.Store(64 * 1024 * 1024)
@@ -90,31 +89,35 @@ func (iot *IOTransport) send(ctx context.Context, outMsg OutMsg) error {
 	// return iot.flush()
 }
 
-func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
+func (iot *IOTransport) receive(ctx context.Context, prev *InMsg) (*InMsg, error) {
+	var res *InMsg = prev
 	for ctx.Err() == nil {
+		if prev == nil {
+			res = iot.inPool.new()
+		}
 
 		// Read header.
 		//
 		// TODO: abstract and move to capnpser.
-		_, err := io.ReadFull(iot.r, iot.inBuf[:8])
+		_, err := io.ReadFull(iot.r, res.buf[:8])
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				// Graceful local close.
-				return InMsg{}, io.EOF
+				return nil, io.EOF
 			}
-			return InMsg{}, err
+			return nil, err
 		}
 
-		segCount := binary.LittleEndian.Uint32(iot.inBuf[:4])
+		segCount := binary.LittleEndian.Uint32(res.buf[:4])
 		if segCount != 0 {
 			// TODO: support multi segment.
-			return InMsg{}, errors.New("multi-seg not supported in IOTransport.receive")
+			return nil, errors.New("multi-seg not supported in IOTransport.receive")
 		}
 
 		// TODO: Support multi-segment messages.
 
 		// TODO: protect against too large reads.
-		seg0SizeWords := binary.LittleEndian.Uint32(iot.inBuf[4:])
+		seg0SizeWords := binary.LittleEndian.Uint32(res.buf[4:])
 		seg0SizeBytes := int(seg0SizeWords) * capnpser.WordSize
 
 		if seg0SizeBytes == 0 {
@@ -122,31 +125,31 @@ func (iot *IOTransport) receive(ctx context.Context) (InMsg, error) {
 			continue
 		}
 
-		if len(iot.inBuf) < seg0SizeBytes+8 {
-			oldHeader := iot.inBuf[:8]
-			iot.inBuf = make([]byte, 8+seg0SizeBytes)
-			copy(iot.inBuf, oldHeader)
+		if cap(res.buf) < seg0SizeBytes+8 {
+			res.buf = iot.inPool.replaceBuf(res.buf, capnpser.WordCount(1+seg0SizeWords))
 		}
+		res.buf = res.buf[:8+seg0SizeBytes]
 
-		_, err = io.ReadFull(iot.r, iot.inBuf[8:8+seg0SizeBytes])
+		_, err = io.ReadFull(iot.r, res.buf[8:])
 		if err != nil {
-			return InMsg{}, err
+			return nil, err
 		}
 
 		// TODO: Already decoded, no need to decode again. Have an API
 		// to build it directly.
-		err = iot.inArena.DecodeSingleSegment(iot.inBuf[:8+seg0SizeBytes])
+		arena := res.Msg.Arena()
+		err = arena.DecodeSingleSegment(res.buf)
 		if err != nil {
-			return InMsg{}, err
+			return nil, err
 		}
-		iot.inArena.ReadLimiter().InitConcurrentUnsafe(iot.readLimit.Load())
+		arena.ReadLimiter().InitConcurrentUnsafe(iot.readLimit.Load())
 
-		res := InMsg{Msg: capnpser.MakeMsg(&iot.inArena)}
+		// res.Msg = capnpser.MakeMsg(res.arena)
 		// res.Msg.SetDepthLimit(uint(iot.depthLimit.Load()))
 
 		return res, nil
 	}
-	return InMsg{}, ctx.Err()
+	return nil, ctx.Err()
 }
 
 func (iot *IOTransport) close() error {

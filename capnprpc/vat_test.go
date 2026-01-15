@@ -94,7 +94,7 @@ func TestBootstrapReceiveSide(t *testing.T) {
 func TestBootstrapBothSides(t *testing.T) {
 	th := newTestHarness(t)
 	c, s := th.newVat("client"), th.newVat("server")
-	cc, cs := th.connectVats(c, s)
+	cc, cs := th.connectVatsWithTCP(c, s)
 
 	// Request the bootstrap cap on client.
 	boot, err := cc.Bootstrap().Wait(testctx.New(t))
@@ -113,7 +113,7 @@ func TestVoidCallBothSides(t *testing.T) {
 
 	th := newTestHarness(t)
 	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
-	cc, _ := th.connectVats(c, s)
+	cc, _ := th.connectVatsWithTCP(c, s)
 
 	// First call.
 	api := testAPIAsBootstrap(cc.Bootstrap())
@@ -159,7 +159,7 @@ func TestAddCall(t *testing.T) {
 
 	th := newTestHarness(t)
 	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
-	cc, _ := th.connectVats(c, s)
+	cc, _ := th.connectVatsWithTCP(c, s)
 
 	a, b := int64(11), int64(1100)
 	addResFuture := testAPIAsBootstrap(cc.Bootstrap()).Add(a, b)

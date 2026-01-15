@@ -38,6 +38,8 @@ type Level0ClientVat struct {
 
 	mbp *MessageBuilderPool
 
+	inMsg *InMsg
+
 	boot BootstrapFuture
 
 	bootImportId ImportId
@@ -140,8 +142,6 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 
 	// After sending, the request MessageBuilder is ready for reuse.
 	v.mbp.put(v.csetup.callOutMsg.serMsg)
-	wantShallowReturnCopy := v.csetup.WantShallowReturnCopy
-	// resParser := v.csetup.ResultsParser
 	v.csetup = CallSetup{}
 
 	// When the call was pipelined from the bootstrap, we expect the Return
@@ -153,14 +153,14 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 	}
 
 	// Wait return.
-	inMsg, err := v.conn.receive(ctx)
+	v.inMsg, err = v.conn.receive(ctx, v.inMsg)
 	if err != nil {
 		return nil, err
 	}
 
 	// Process return.
 	var msg types.Message
-	if err := msg.ReadFromRoot(&inMsg.Msg); err != nil {
+	if err := msg.ReadFromRoot(&v.inMsg.Msg); err != nil {
 		return nil, err
 	}
 
@@ -205,11 +205,16 @@ func (v *Level0ClientVat) execNextCall(ctx context.Context) (any, error) {
 				return nil, err
 			}
 		} else */
-	if content.IsZeroStruct() || !wantShallowReturnCopy {
+	if content.IsZeroStruct() {
 		// All done in this case.
 		finalRes = struct{}{}
 	} else {
-		finalRes = inMsg.Msg.Arena()
+		// In this case, this Return contains a struct that the caller
+		// will use. Thus, this will outlive this iteration of
+		// execNextCall. Effectively, we're transfering ownership
+		// of this message/buffer from the conn's inLoop to the caller,
+		// by making inMsg nil.
+		finalRes, v.inMsg = v.inMsg, nil
 	}
 
 	v.log.Debug().Int("aid", int(v.lastQid)).Msg("Received valid Return")
@@ -241,7 +246,7 @@ func (v *Level0ClientVat) sendBoot(ctx context.Context) error {
 
 func (v *Level0ClientVat) recvBoot(ctx context.Context) error {
 	v.log.Trace().Msg("Waiting for bootstrap response on next conn.receive")
-	inMsg, err := v.conn.receive(ctx)
+	inMsg, err := v.conn.receive(ctx, nil)
 	if err != nil {
 		return err
 	}

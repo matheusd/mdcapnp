@@ -10,22 +10,9 @@ import (
 	"matheusd.com/mdcapnp/capnpser"
 )
 
-type futureString CallFuture
-
-func (fs futureString) wait(ctx context.Context) (string, error) {
-	return CastCallResultOrErr[string](WaitReturn(ctx, CallFuture(fs)))
-}
-
 type testAPI CallFuture
 
 const testAPI_InterfaceID = 1000
-
-type futureVoid CallFuture
-
-func (fv futureVoid) Wait(ctx context.Context) error {
-	_, err := WaitReturn(ctx, CallFuture(fv))
-	return err
-}
 
 const testAPI_Void_CallID = 101
 const testAPI_GetAnotherAPI_CallID = 102
@@ -34,8 +21,8 @@ const testAPI_Add_CallID = 104
 const testAPI_GetTestUserMethods_MethodId = 105
 const testAPI_CallGetAvatarFromUserMethods_MethodId = 106
 
-func (api testAPI) VoidCall() futureVoid {
-	return futureVoid(RemoteCall(
+func (api testAPI) VoidCall() VoidFuture {
+	return VoidFuture(RemoteCall(
 		CallFuture(api),
 		SetupCallNoParams(CallFuture(api),
 			testAPI_InterfaceID,
@@ -87,7 +74,7 @@ func (s *addResponse) C() int64 {
 type futureAddResult CallFuture
 
 func (fut futureAddResult) wait(ctx context.Context) (res int64, err error) {
-	r, rr, err := WaitShallowCopyReturnResultsStruct[addResponse](ctx, CallFuture(fut))
+	r, rr, err := WaitReturnResultsStruct[addResponse](ctx, CallFuture(fut))
 	if err != nil {
 		return
 	}
@@ -107,8 +94,6 @@ func (api testAPI) Add(a int64, b int64) futureAddResult {
 
 	req.SetA(a)
 	req.SetB(b)
-	cs.WantShallowReturnCopy = true
-
 	return futureAddResult(RemoteCall(
 		CallFuture(api),
 		cs,
@@ -164,11 +149,11 @@ func (api testAPI) GetUser(id string) testUser {
 
 // Wait until this is resolved as a concrete, exported capability.
 func (api testAPI) Wait(ctx context.Context) (CapabilityClient, error) {
-	return CastCallResultOrErr[CapabilityClient](WaitReturn(ctx, CallFuture(api)))
+	return waitReturnResultsCapability(ctx, CallFuture(api))
 }
 
 func (api testAPI) WaitDiscardResult(ctx context.Context) error {
-	_, err := WaitReturn(ctx, CallFuture(api))
+	_, err := api.Wait(ctx)
 	return err
 }
 
@@ -182,48 +167,26 @@ const testUserMethods_getAvatarData_methodId MethodId = 11
 type testUserMethods CallFuture
 
 func (up testUserMethods) Wait(ctx context.Context) (CapabilityClient, error) {
-	return CastCallResultOrErr[CapabilityClient](WaitReturn(ctx, CallFuture(up)))
+	return waitReturnResultsCapability(ctx, CallFuture(up))
 }
 
 var testUserMethods_GetAvatarData_ResultsSize = capnpser.StructSize{DataSectionSize: 0, PointerSectionSize: 1}
 
-type testUserMethods_GetAvatarData_Results capnpser.Struct
-
-func (s *testUserMethods_GetAvatarData_Results) AvatarData() string {
-	return (*capnpser.Struct)(s).String(0)
-}
-
-type testUserMethods_GetAvatarData_ResultsBuilder capnpser.StructBuilder
-
-func (b *testUserMethods_GetAvatarData_ResultsBuilder) SetAvatarData(s string) error {
-	return (*capnpser.StructBuilder)(b).SetString(0, s)
-}
-
-type testUserMethods_GetAvatarData_Results_future CallFuture
-
-func (f testUserMethods_GetAvatarData_Results_future) Wait(ctx context.Context) (testUserMethods_GetAvatarData_Results, ReturnResults, error) {
-	return WaitShallowCopyReturnResultsStruct[testUserMethods_GetAvatarData_Results](ctx, CallFuture(f))
-}
-
 // GetAvatarData @0 () -> (AvatarData :text)
-func (up testUserMethods) GetAvatarData() testUserMethods_GetAvatarData_Results_future {
+func (up testUserMethods) GetAvatarData() StringFuture {
 	cs := SetupCallNoParams(
 		CallFuture(up),
 		testUserMethods_InterfaceId,
 		testUserMethods_getAvatarData_methodId,
 	)
-	cs.WantShallowReturnCopy = true
-
-	return testUserMethods_GetAvatarData_Results_future(RemoteCall(
+	return StringFuture(RemoteCall(
 		CallFuture(up),
 		cs,
 	))
 }
 
-type testUserMethods_GetAvatarData_CallContext = StructReplyCallContext[testUserMethods_GetAvatarData_ResultsBuilder]
-
 type testUserMethodsCapServer interface {
-	GetAvatarData(ri testUserMethods_GetAvatarData_CallContext) error
+	GetAvatarData(StringReplyCallContext) error
 }
 
 func testUserMethodsCapServerAsCallHandler(s testUserMethodsCapServer) CallHandler {
@@ -234,10 +197,7 @@ func testUserMethodsCapServerAsCallHandler(s testUserMethodsCapServer) CallHandl
 		}
 		switch mid {
 		case testUserMethods_getAvatarData_methodId:
-			return s.GetAvatarData(testUserMethods_GetAvatarData_CallContext(
-				MakeStructReplyCallContext[testUserMethods_GetAvatarData_ResultsBuilder](
-					cc, testUserMethods_GetAvatarData_ResultsSize,
-				)))
+			return s.GetAvatarData(MakeStringReplyCallContext(cc))
 		default:
 			return ErrUnknownMethodId{IId: iid, Mid: mid}
 		}
