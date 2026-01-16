@@ -98,12 +98,12 @@ func newChildStep(parent *pipelineStep) *pipelineStep {
 
 type vatImpl interface {
 	msgBuilderPool() *MessageBuilderPool
-	exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error)
+	exportNewCap(capServer CapabilityServer, parent CallFuture) (ExportId, error)
 }
 
 func (v *Vat) msgBuilderPool() *MessageBuilderPool             { return v.mbp }
 func (v *Level0ClientVat) msgBuilderPool() *MessageBuilderPool { return v.mbp }
-func (v *Level0ClientVat) exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error) {
+func (v *Level0ClientVat) exportNewCap(capServer CapabilityServer, parent CallFuture) (ExportId, error) {
 	panic("boo")
 }
 
@@ -202,7 +202,7 @@ func SetupCallWithStructParamsGeneric[T ~capnpser.StructBuilderType](parent Call
 // TODO: This might need to return a reference to the exported cap (so that *the
 // same* cap can be sent to someone else, referenced when processing some other
 // call made by the remote, etc).
-func SetupCallWithNewCap(parent CallFuture, iid InterfaceId, mid MethodId, capServer CallHandler) CallSetup {
+func SetupCallWithNewCap(parent CallFuture, iid InterfaceId, mid MethodId, capServer CapabilityServer) CallSetup {
 	// TODO: this should be tracked inside CallSetup to avoid possible
 	// deadlock with rc.
 	eid, err := parent.vat.exportNewCap(capServer, parent)

@@ -304,6 +304,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 	crb.iid = InterfaceId(iid)
 	crb.mid = MethodId(mid)
 	crb.params, _ = c.Params()
+	crb.ctx = rc.ctx
 	if err != nil {
 		return err
 	}
@@ -312,7 +313,7 @@ func (v *Vat) processCall(ctx context.Context, rc *runningConn, c types.Call) er
 
 	// Make the call!
 	logEvent.Msg("Locally handling call")
-	err = exp.handler.Call(rc.ctx, crb)
+	err = exp.handler.Call(crb)
 	if ex, ok := err.(callExceptionError); ok {
 		var exb types.ExceptionBuilder
 		outm, exb, err = v.newReturnException(AnswerId(qid))

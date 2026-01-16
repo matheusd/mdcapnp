@@ -5,7 +5,6 @@
 package capnprpc
 
 import (
-	"context"
 	"errors"
 	"runtime"
 	"sync/atomic"
@@ -106,13 +105,13 @@ func TestBootstrapBothSides(t *testing.T) {
 // TestVoidCallBothSides tests a void call between two vats.
 func TestVoidCallBothSides(t *testing.T) {
 	var called atomic.Bool
-	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
+	handler := CapabilityServerFunc(func(rb *CallContext) error {
 		called.Store(true)
 		return nil
 	})
 
 	th := newTestHarness(t)
-	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(handler))
 	cc, _ := th.connectVatsWithTCP(c, s)
 
 	// First call.
@@ -143,7 +142,7 @@ func TestVoidCallBothSides(t *testing.T) {
 
 // TestAddCall tests an Add() call between two vats.
 func TestAddCall(t *testing.T) {
-	handler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+	handler := CapabilityServerFunc(func(cc *CallContext) error {
 		req, err := CallContextParamsStruct[addRequest](cc)
 		if err != nil {
 			return err
@@ -158,7 +157,7 @@ func TestAddCall(t *testing.T) {
 	})
 
 	th := newTestHarness(t)
-	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(handler))
 	cc, _ := th.connectVatsWithTCP(c, s)
 
 	a, b := int64(11), int64(1100)
@@ -172,7 +171,7 @@ func TestAddCall(t *testing.T) {
 // promise with a capability).
 func TestRemotePromiseWithCap(t *testing.T) {
 	var callHandled atomic.Bool
-	callHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
+	callHandler := CapabilityServerFunc(func(rb *CallContext) error {
 		if !callHandled.CompareAndSwap(false, true) {
 			return errors.New("already called")
 		}
@@ -181,7 +180,7 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	resolvePromiseChan := make(chan struct{}, 1)
 	resolveErrChan := make(chan error, 1)
-	bootHandler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
+	bootHandler := CapabilityServerFunc(func(rb *CallContext) error {
 		ap, err := rb.respondAsPromise()
 		if err != nil {
 			return err
@@ -196,7 +195,7 @@ func TestRemotePromiseWithCap(t *testing.T) {
 
 	// Setup harness.
 	th := newTestHarness(t)
-	c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(bootHandler))
+	c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(bootHandler))
 	cc, _ := th.connectVatsWithTCP(c, s)
 
 	// Wait for bootstrap to complete to ease log reviewing.
@@ -329,14 +328,14 @@ func BenchmarkVatRunOverhead(b *testing.B) {
 // BenchmarkVoidCall benchmarks a basic void call under various circumstances.
 func BenchmarkVoidCall(b *testing.B) {
 	var callCount atomic.Uint64
-	handler := CallHandlerFunc(func(ctx context.Context, rb *CallContext) error {
+	handler := CapabilityServerFunc(func(rb *CallContext) error {
 		callCount.Add(1)
 		return nil
 	})
 
 	b.Run("pipe", func(b *testing.B) {
 		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(handler))
 		cc, _ := th.connectVats(c, s)
 		callCount.Store(0)
 		ctx := testctx.New(b)
@@ -361,7 +360,7 @@ func BenchmarkVoidCall(b *testing.B) {
 
 	b.Run("conn", func(b *testing.B) {
 		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(handler))
 		cc, _ := th.connectVatsWithTCP(c, s)
 		callCount.Store(0)
 		ctx := testctx.New(b)
@@ -386,7 +385,7 @@ func BenchmarkVoidCall(b *testing.B) {
 
 	b.Run("level0", func(b *testing.B) {
 		th := newTestHarness(b)
-		s := th.newVat("server", WithBootstrapHandler(handler))
+		s := th.newVat("server", WithBootstrapServer(handler))
 
 		io1, io2 := th.tcpTransportPair("client", "server")
 		s.RunConn(io2)
@@ -417,7 +416,7 @@ func BenchmarkVoidCall(b *testing.B) {
 
 // BenchmarkAddCall benchmarks a basic Add() call under various circumstances.
 func BenchmarkAddCall(b *testing.B) {
-	handler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+	handler := CapabilityServerFunc(func(cc *CallContext) error {
 		req, err := CallContextParamsStruct[addRequest](cc)
 		if err != nil {
 			return err
@@ -433,7 +432,7 @@ func BenchmarkAddCall(b *testing.B) {
 
 	b.Run("conn", func(b *testing.B) {
 		th := newTestHarness(b)
-		c, s := th.newVat("client"), th.newVat("server", WithBootstrapHandler(handler))
+		c, s := th.newVat("client"), th.newVat("server", WithBootstrapServer(handler))
 		cc, _ := th.connectVatsWithTCP(c, s)
 		ctx := testctx.New(b)
 
@@ -461,7 +460,7 @@ func BenchmarkAddCall(b *testing.B) {
 
 	b.Run("level0", func(b *testing.B) {
 		th := newTestHarness(b)
-		s := th.newVat("server", WithBootstrapHandler(handler))
+		s := th.newVat("server", WithBootstrapServer(handler))
 
 		io1, io2 := th.tcpTransportPair("client", "server")
 		s.RunConn(io2)

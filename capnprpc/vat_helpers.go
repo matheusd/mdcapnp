@@ -185,7 +185,7 @@ func (v *Vat) newDisembargo(target messageTarget) (outMsg outMsg, dis types.Dise
 	return
 }
 
-func (v *Vat) exportNewCap(capServer CallHandler, parent CallFuture) (ExportId, error) {
+func (v *Vat) exportNewCap(capServer CapabilityServer, parent CallFuture) (ExportId, error) {
 	// Encompasses some of what is done in RespondAsSenderHostedCap and
 	// inside processCall. Figure out how to abstract.
 	rc := parent.step.value.GetValue().conn

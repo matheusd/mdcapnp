@@ -63,7 +63,7 @@ type answerPromise struct {
 	eid ExportId
 }
 
-func (ap answerPromise) resolveToHandler(handler CallHandler) error {
+func (ap answerPromise) resolveToHandler(handler CapabilityServer) error {
 	var err error
 
 	// resolution is the new export ap is resolving to.
@@ -244,6 +244,7 @@ type CallResultsParser func(types.Payload) (any, error)
 type CallContext struct {
 	vat *Vat
 	rc  *runningConn
+	ctx context.Context
 
 	serMb *capnpser.MessageBuilder // Root reply message builder
 	mb    types.MessageBuilder
@@ -254,6 +255,10 @@ type CallContext struct {
 	iid    InterfaceId
 	mid    MethodId
 	params types.Payload // Request Call.Params field
+}
+
+func (cc *CallContext) Ctx() context.Context {
+	return cc.Ctx()
 }
 
 func (cc *CallContext) InterfaceId() InterfaceId {
@@ -367,7 +372,7 @@ func (cc *CallContext) RespondAsString(s string) (err error) {
 
 // RespondAsSenderHostedCap responds this call with a new sender-hosted
 // capability.
-func (cc *CallContext) RespondAsSenderHostedCap(capServer CallHandler) error {
+func (cc *CallContext) RespondAsSenderHostedCap(capServer CapabilityServer) error {
 	if cc.serMb == nil {
 		err := cc.initResponsePayload(3) // CapTable + entry + pointer FIXME: double check.
 		if err != nil {
@@ -529,7 +534,7 @@ type callExceptionError interface {
 
 type allUnimplementedCallHandler struct{}
 
-func (h allUnimplementedCallHandler) Call(ctx context.Context, res *CallContext) error {
+func (h allUnimplementedCallHandler) Call(res *CallContext) error {
 	return ErrUnknownMethodId{IId: res.iid, Mid: res.mid}
 }
 
@@ -631,7 +636,7 @@ type export struct {
 	refCount int
 
 	// Set when this is senderHosted.
-	handler CallHandler
+	handler CapabilityServer
 
 	// Set when this was a promise that got resolved.
 	resolvedToExport ExportId

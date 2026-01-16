@@ -66,7 +66,7 @@ func (v *Vat) UseRemoteVat(c conn) RemoteVat {
 	return RemoteVat{rc: v.RunConn(c)}
 }
 
-func (v *Vat) exportCap(handler CallHandler, rc *runningConn) (ExportId, error) {
+func (v *Vat) exportCap(handler CapabilityServer, rc *runningConn) (ExportId, error) {
 	panic("how?")
 }
 
@@ -86,8 +86,8 @@ func (v *Vat) RunConn(c conn) *runningConn {
 
 	// Set the bootstrap capability.
 	rc.bootExportId, _ = rc.exports.nextID() // First export, no need to check ok.
-	if v.cfg.bootstrapHandler != nil {
-		rc.exports.set(rc.bootExportId, export{typ: exportTypeLocallyHosted, handler: v.cfg.bootstrapHandler})
+	if v.cfg.bootServer != nil {
+		rc.exports.set(rc.bootExportId, export{typ: exportTypeLocallyHosted, handler: v.cfg.bootServer})
 	}
 
 	v.newConn <- rc // TODO: need context here too.

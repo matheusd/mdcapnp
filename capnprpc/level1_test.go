@@ -1,7 +1,6 @@
 package capnprpc
 
 import (
-	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -38,7 +37,7 @@ func TestSenderHostedCapAsCallParams(t *testing.T) {
 	// Bootstrap handler for Bob. Only responds to the
 	// CallGetAvatarFromUserMethods call.
 	getAvatarReplyChan := make(chan string, 1)
-	bobBootHandler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+	bobBootHandler := CapabilityServerFunc(func(cc *CallContext) error {
 		if err := cc.IsIidMid(testAPI_InterfaceID, testAPI_CallGetAvatarFromUserMethods_MethodId); err != nil {
 			return err
 		}
@@ -69,7 +68,7 @@ func TestSenderHostedCapAsCallParams(t *testing.T) {
 	// Setup harness.
 	th := newTestHarness(t)
 	alice := th.newVat("alice")
-	bob := th.newVat("bob", WithBootstrapHandler(bobBootHandler))
+	bob := th.newVat("bob", WithBootstrapServer(bobBootHandler))
 
 	// Connect vats.
 	aliceBobRc, _ := th.connectVatsWithTCP(alice, bob)
@@ -112,7 +111,7 @@ func TestSenderHostedCapAsReturnResults(t *testing.T) {
 
 	// Bootstrap handler for Bob. Only responds to the GetTestUserMethods
 	// call.
-	bobBootHandler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+	bobBootHandler := CapabilityServerFunc(func(cc *CallContext) error {
 		if err := cc.IsIidMid(testAPI_InterfaceID, testAPI_GetTestUserMethods_MethodId); err != nil {
 			return err
 		}
@@ -128,7 +127,7 @@ func TestSenderHostedCapAsReturnResults(t *testing.T) {
 			// Setup harness.
 			th := newTestHarness(t)
 			alice := th.newVat("alice")
-			bob := th.newVat("bob", WithBootstrapHandler(bobBootHandler))
+			bob := th.newVat("bob", WithBootstrapServer(bobBootHandler))
 
 			// Connect vats.
 			aliceBobRc, _ := th.connectVatsWithTCP(alice, bob)
@@ -164,7 +163,7 @@ func TestSenderHostedCapEmbeddedInReturnResults(t *testing.T) {
 
 	// Bootstrap handler for Bob. Only responds to the GetTestUserMethods
 	// call.
-	bobBootHandler := CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+	bobBootHandler := CapabilityServerFunc(func(cc *CallContext) error {
 		if err := cc.IsIidMid(testAPI_InterfaceID, testAPI_GetTestUserMethods_MethodId); err != nil {
 			return err
 		}
@@ -180,7 +179,7 @@ func TestSenderHostedCapEmbeddedInReturnResults(t *testing.T) {
 			// Setup harness.
 			th := newTestHarness(t)
 			alice := th.newVat("alice")
-			bob := th.newVat("bob", WithBootstrapHandler(bobBootHandler))
+			bob := th.newVat("bob", WithBootstrapServer(bobBootHandler))
 
 			// Connect vats.
 			aliceBobRc, _ := th.connectVatsWithTCP(alice, bob)
@@ -245,7 +244,7 @@ func BenchmarkGenericStructCallHandler(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			// Setup test harness.
 			th := newTestHarness(b)
-			s := th.newVat("server", WithBootstrapHandler(serverBootHandler))
+			s := th.newVat("server", WithBootstrapServer(serverBootHandler))
 			ctx := testctx.New(b)
 
 			// Setup client.

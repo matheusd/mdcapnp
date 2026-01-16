@@ -75,7 +75,7 @@ type expectedAccept struct {
 
 	// handler is the concrete capability that the provider (Bob) shared
 	// with the initiating caller (Alice).
-	handler CallHandler
+	handler CapabilityServer
 }
 
 type getExpectedAccept struct {
@@ -94,7 +94,7 @@ type acceptedConnAndCap struct {
 
 	// handler is the concrete capability that the provider (Bob) shared
 	// with the initiating caller (Alice).
-	handler CallHandler
+	handler CapabilityServer
 }
 
 // wasExpectingAccept determines if the given provisionId received on a conn is

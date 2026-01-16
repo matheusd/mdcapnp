@@ -17,15 +17,28 @@ type CapabilityClientType = struct {
 
 type CapabilityClient CapabilityClientType
 
-// CallHandler is the lowest level handler for calls (including bootstrap).
-type CallHandler interface {
-	Call(ctx context.Context, cc *CallContext) error
+// CapabilityServer is the backend/server/implementation side of a capability.
+// It responds to calls made to the capability.
+type CapabilityServer interface {
+	// Call is the method called by a [Vat] when it receives a remote call
+	// message for some previously exported capability.
+	//
+	// The passed [CallContext] may be reused across various call
+	// invocations, therefore it (and any of its fields and methods) MUST
+	// NOT be stored or used outside the scope of the invocation itself. In
+	// other words, it is only safe for use during a particular execution of
+	// the call method.
+	Call(cc *CallContext) error
 }
 
-type CallHandlerFunc func(ctx context.Context, rb *CallContext) error
+// CapabilityServerFunc is an implementation of the [CapabilityServer]
+// interface. It may be used to cast any function with the same signature as a
+// capability server.
+type CapabilityServerFunc func(cc *CallContext) error
 
-func (f CallHandlerFunc) Call(ctx context.Context, rb *CallContext) error {
-	return f(ctx, rb)
+// Call fulfills the [CapabilityServer] interface.
+func (f CapabilityServerFunc) Call(cc *CallContext) error {
+	return f(cc)
 }
 
 type BootstrapFuture CallFuture

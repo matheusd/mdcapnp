@@ -4,6 +4,11 @@
 
 package capnprpc
 
+// The structures, functions and interfaces in this file were all hand-written,
+// even before any compiler existed for this package. They are meant to
+// experiment the different alternatives that exist for implementing the
+// user-facing API of generated RPC bindings.
+
 import (
 	"context"
 
@@ -189,8 +194,8 @@ type testUserMethodsCapServer interface {
 	GetAvatarData(StringReplyCallContext) error
 }
 
-func testUserMethodsCapServerAsCallHandler(s testUserMethodsCapServer) CallHandler {
-	return CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+func testUserMethodsCapServerAsCallHandler(s testUserMethodsCapServer) CapabilityServer {
+	return CapabilityServerFunc(func(cc *CallContext) error {
 		iid, mid := cc.InterfaceId(), cc.MethodId()
 		if iid != testUserMethods_InterfaceId {
 			return ErrUnexpectedInterfaceId{Want: testUserMethods_InterfaceId, Got: iid}
@@ -331,8 +336,8 @@ type testCapWithComplexMethodServer interface {
 	ComplexMethod(testCapWithComplexMethod_ComplexMethod_Params, testCapWithComplexMethod_ComplexMethod_CallContext) error
 }
 
-func testCapWithComplexMethodServerAsHandler(s testCapWithComplexMethodServer) CallHandler {
-	return CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+func testCapWithComplexMethodServerAsHandler(s testCapWithComplexMethodServer) CapabilityServer {
+	return CapabilityServerFunc(func(cc *CallContext) error {
 		iid, mid := cc.InterfaceId(), cc.MethodId()
 		if iid != testCapWithComplexMethod_InterfaceId {
 			return ErrUnexpectedInterfaceId{Want: testCapWithComplexMethod_InterfaceId, Got: iid}

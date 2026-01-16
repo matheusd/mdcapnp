@@ -12,12 +12,13 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// vatConfig holds the full config of a [Vat].
 type vatConfig struct {
-	logger           *zerolog.Logger
-	name             string
-	bootstrapHandler CallHandler
-	net              VatNetwork
-	failOnConnErr    bool
+	logger        *zerolog.Logger
+	name          string
+	bootServer    CapabilityServer
+	net           VatNetwork
+	failOnConnErr bool
 
 	// delayResolveIn3PH is how long to delay sending a resolve after
 	// sending a Provide.
@@ -32,8 +33,8 @@ func (vc *vatConfig) applyOptions(opts ...VatOption) {
 
 	// If no forms of a bootstrap cap were specified, use a fixed one that
 	// returns everything as unimplemented.
-	if vc.bootstrapHandler == nil {
-		vc.bootstrapHandler = allUnimplementedCallHandler{}
+	if vc.bootServer == nil {
+		vc.bootServer = allUnimplementedCallHandler{}
 	}
 }
 
@@ -63,27 +64,38 @@ func defaultVatConfig() vatConfig {
 
 type VatOption func(c *vatConfig)
 
+// WithName defines the name to use for a [Vat] instance. This is mostly used
+// for debugging/logging purposes.
 func WithName(name string) VatOption {
 	return func(c *vatConfig) {
 		c.name = name
 	}
 }
 
+// WithLogger defines the logger to use with a [Vat] instance.
 func WithLogger(l *zerolog.Logger) VatOption {
 	return func(c *vatConfig) {
 		c.logger = l
 	}
 }
 
+// WithVatNetwork defines the [VatNetwork] that a particular [Vat] belongs to.
+// This is only necessary for level 3+ vats that intend to use third party
+// capability introduction (3PH).
 func WithVatNetwork(net VatNetwork) VatOption {
 	return func(c *vatConfig) {
 		c.net = net
 	}
 }
 
-func WithBootstrapHandler(h CallHandler) VatOption {
+// WithBootstrapServer defines the [CapabilityServer] that is to be used as the
+// bootstrap capability for remote vats that connect to this vat.
+//
+// If no bootstrap server is set on a [Vat], then every call made by the remote
+// will return an error.
+func WithBootstrapServer(cs CapabilityServer) VatOption {
 	return func(c *vatConfig) {
-		c.bootstrapHandler = h
+		c.bootServer = cs
 	}
 }
 
