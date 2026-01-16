@@ -34,6 +34,22 @@ func (bc BootstrapFuture) Wait(ctx context.Context) (CapabilityClient, error) {
 	return waitReturnResultsCapability(ctx, CallFuture(bc))
 }
 
+// Boostrappable is a helper interface that matches both [RemoteVat] and
+// [Level0ClientVat] to call their respective Bootstrap() methods.
+type Boostrappable interface {
+	Bootstrap() BootstrapFuture
+}
+
+// WaitBootstrap is a helper to call the Bootstrap() method of a vat, wait for
+// it complete, and return its callable capability client caset to a specific
+// type.
+func WaitBootstrap[T ~CallFutureType](ctx context.Context, b Boostrappable) (bootCap T, cc CapabilityClient, err error) {
+	f := b.Bootstrap()
+	bootCap = T(f)
+	cc, err = f.Wait(ctx)
+	return
+}
+
 type VoidFuture CallFuture
 
 func (fv VoidFuture) Wait(ctx context.Context) error {

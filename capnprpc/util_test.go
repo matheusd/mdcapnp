@@ -75,6 +75,18 @@ func (th *testHarness) newLevel0Vat(name string, cfg *Level0ClientCfg) *Level0Cl
 	return c
 }
 
+// newLevel0VatTo creates a new level 0 vat and connects it to an existing
+// server vat.
+func (th *testHarness) newLevel0VatTo(svr *testVat, name string, cfg *Level0ClientCfg) *Level0ClientVat {
+	io1, io2 := th.tcpTransportPair("client", "server")
+	svr.RunConn(io2)
+	if cfg == nil {
+		cfg = &Level0ClientCfg{}
+	}
+	cfg.Conn = io1
+	return th.newLevel0Vat("client", cfg)
+}
+
 func (th *testHarness) newTestConn() *testConn {
 	return &testConn{
 		th:          th,

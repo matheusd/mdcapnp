@@ -280,11 +280,18 @@ func (cc *CallContext) Params() types.Payload {
 	return cc.params
 }
 
+// CallContextParamsStruct extracts the params of the given call context as a
+// struct of type T.
 func CallContextParamsStruct[T ~capnpser.StructType](cc *CallContext) (res T, err error) {
 	pay := cc.Params()
 	payContent, err := pay.Content()
 	if err != nil {
 		err = fmt.Errorf("could not get payload content: %v", err)
+		return
+	}
+
+	if !payContent.IsStruct() && !payContent.IsZeroStruct() {
+		err = fmt.Errorf("payload Content is not a struct")
 		return
 	}
 

@@ -240,3 +240,115 @@ func (up testUserProfile) GetAvatarData() futureString {
 	))
 }
 */
+
+// *********** cap with complex method **********
+//
+// interface testCapWithComplexMethod {
+//   ComplexMethod(int64Value :int64, strValue :Text) -> (int64Value :int64, strValue :Text)
+// }
+
+const (
+	testCapWithComplexMethod_InterfaceId                     = 2001
+	testCapWithComplexMethod_ComplexMethod_MethodId MethodId = 30
+)
+
+type testCapWithComplexMethod CallFuture
+
+var testCapWithComplexMethod_ComplexMethod_ParamsSize = capnpser.StructSize{DataSectionSize: 2, PointerSectionSize: 2}
+
+type testCapWithComplexMethod_ComplexMethod_Params capnpser.Struct
+
+func (s *testCapWithComplexMethod_ComplexMethod_Params) Int64Value() int64 {
+	return (*capnpser.Struct)(s).Int64(1) // Different than result.
+}
+
+func (s *testCapWithComplexMethod_ComplexMethod_Params) StrValue() string {
+	return (*capnpser.Struct)(s).String(1) // Different than result.
+}
+
+func (s *testCapWithComplexMethod_ComplexMethod_Params) UnsafeStrValue() string {
+	return (*capnpser.Struct)(s).UnsafeString(1) // Different than result.
+}
+
+type testCapWithComplexMethod_ComplexMethod_ParamsBuilder capnpser.StructBuilder
+
+func (b *testCapWithComplexMethod_ComplexMethod_ParamsBuilder) SetInt64Value(v int64) error {
+	return (*capnpser.StructBuilder)(b).SetInt64(1, v)
+}
+
+func (b *testCapWithComplexMethod_ComplexMethod_ParamsBuilder) SetStrValue(v string) error {
+	return (*capnpser.StructBuilder)(b).SetString(1, v)
+}
+
+var testCapWithComplexMethod_ComplexMethod_ResultSize = capnpser.StructSize{DataSectionSize: 2, PointerSectionSize: 2}
+
+type testCapWithComplexMethod_ComplexMethod_Result capnpser.Struct
+
+func (s *testCapWithComplexMethod_ComplexMethod_Result) Int64Value() int64 {
+	return (*capnpser.Struct)(s).Int64(0) // Different than params.
+}
+
+func (s *testCapWithComplexMethod_ComplexMethod_Result) StrValue() string {
+	return (*capnpser.Struct)(s).String(0) // Different than result.
+}
+
+func (s *testCapWithComplexMethod_ComplexMethod_Result) UnsafeStrValue() string {
+	return (*capnpser.Struct)(s).UnsafeString(0) // Different than result.
+}
+
+type testCapWithComplexMethod_ComplexMethod_ResultBuilder capnpser.StructBuilder
+
+func (b *testCapWithComplexMethod_ComplexMethod_ResultBuilder) SetInt64Value(v int64) error {
+	return (*capnpser.StructBuilder)(b).SetInt64(0, v)
+}
+
+func (b *testCapWithComplexMethod_ComplexMethod_ResultBuilder) SetStrValue(v string) error {
+	return (*capnpser.StructBuilder)(b).SetString(0, v)
+}
+
+type futureTestCapWithComplexMethod_ComplexMethod CallFuture
+
+func (cf futureTestCapWithComplexMethod_ComplexMethod) Wait(ctx context.Context) (testCapWithComplexMethod_ComplexMethod_Result, ReturnResults, error) {
+	return WaitReturnResultsStruct[testCapWithComplexMethod_ComplexMethod_Result](ctx, CallFuture(cf))
+}
+
+func (parent testCapWithComplexMethod) ComplexMethod(payloadSizeHint capnpser.WordCount) (testCapWithComplexMethod_ComplexMethod_ParamsBuilder, futureTestCapWithComplexMethod_ComplexMethod) {
+	return RemoteCallWithStructParams[
+		testCapWithComplexMethod_ComplexMethod_ParamsBuilder,
+		futureTestCapWithComplexMethod_ComplexMethod](
+		CallWithStructParamsSetup{
+			ParentCap:       CallFuture(parent),
+			InterfaceId:     testCapWithComplexMethod_InterfaceId,
+			MethodId:        testCapWithComplexMethod_ComplexMethod_MethodId,
+			ParamsSize:      testCapWithComplexMethod_ComplexMethod_ParamsSize,
+			PayloadSizeHint: payloadSizeHint,
+		})
+}
+
+type testCapWithComplexMethod_ComplexMethod_CallContext = StructReplyCallContext[testCapWithComplexMethod_ComplexMethod_ResultBuilder]
+
+type testCapWithComplexMethodServer interface {
+	ComplexMethod(testCapWithComplexMethod_ComplexMethod_Params, testCapWithComplexMethod_ComplexMethod_CallContext) error
+}
+
+func testCapWithComplexMethodServerAsHandler(s testCapWithComplexMethodServer) CallHandler {
+	return CallHandlerFunc(func(ctx context.Context, cc *CallContext) error {
+		iid, mid := cc.InterfaceId(), cc.MethodId()
+		if iid != testCapWithComplexMethod_InterfaceId {
+			return ErrUnexpectedInterfaceId{Want: testCapWithComplexMethod_InterfaceId, Got: iid}
+		}
+		switch mid {
+		case testCapWithComplexMethod_ComplexMethod_MethodId:
+			params, err := CallContextParamsStruct[testCapWithComplexMethod_ComplexMethod_Params](cc)
+			if err != nil {
+				return err
+			}
+			return s.ComplexMethod(
+				params,
+				MakeStructReplyCallContext[testCapWithComplexMethod_ComplexMethod_ResultBuilder](
+					cc, testCapWithComplexMethod_ComplexMethod_ResultSize))
+		default:
+			return ErrUnknownMethodId{IId: iid, Mid: mid}
+		}
+	})
+}

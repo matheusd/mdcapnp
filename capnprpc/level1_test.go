@@ -3,10 +3,12 @@ package capnprpc
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/canastic/chantest"
 	"matheusd.com/depvendoredtestify/require"
+	"matheusd.com/mdcapnp/capnpser"
 	"matheusd.com/testctx"
 )
 
@@ -206,36 +208,92 @@ func TestSenderHostedCapEmbeddedInReturnResults(t *testing.T) {
 
 }
 
+type complexMethodServerImpl struct {
+	execs atomic.Int64
+}
+
+func (c *complexMethodServerImpl) ComplexMethod(params testCapWithComplexMethod_ComplexMethod_Params, cc testCapWithComplexMethod_ComplexMethod_CallContext) error {
+	c.execs.Add(1)
+	intVal, strVal := params.Int64Value(), params.UnsafeStrValue()
+	cc.AddBytesToSizeHint(len(strVal))
+	res := cc.InitResults()
+	res.SetInt64Value(intVal)
+	res.SetStrValue(strVal)
+	return nil
+}
+
 // BenchmarkGenericStructCallHandler benchmarks the generic StructCallHandler
 // pattern for handling calls. Ideally, it should not produce any additional
 // heap allocs.
 func BenchmarkGenericStructCallHandler(b *testing.B) {
-	userMethodsCapImpl := fixedUserMethodsImpl{avatarData: "test avatar data"}
-	userMethodsHandler := testUserMethodsCapServerAsCallHandler(userMethodsCapImpl)
+	const wantIntValue = 1701
+	const wantStrValue = "the hills are alive with the sound of music"
 
-	th := newTestHarness(b)
-	s := th.newVat("server", WithBootstrapHandler(userMethodsHandler))
+	// Server bootstrap cap implementation.
+	complexCapImpl := complexMethodServerImpl{}
+	serverBootHandler := testCapWithComplexMethodServerAsHandler(&complexCapImpl)
 
-	io1, io2 := th.tcpTransportPair("client", "server")
-	s.RunConn(io2)
+	tests := []struct {
+		name     string
+		isLevel0 bool
+	}{
+		{name: "level0", isLevel0: true},
+		{name: "level1+", isLevel0: false},
+	}
 
-	c := th.newLevel0Vat("client", &Level0ClientCfg{Conn: io1})
+	for _, tc := range tests {
+		b.Run(tc.name, func(b *testing.B) {
+			// Setup test harness.
+			th := newTestHarness(b)
+			s := th.newVat("server", WithBootstrapHandler(serverBootHandler))
+			ctx := testctx.New(b)
 
-	ctx := testctx.New(b)
+			// Setup client.
+			var bt Boostrappable
+			if tc.isLevel0 {
+				bt = th.newLevel0VatTo(s, "client", nil)
+			} else {
+				c := th.newVat("client")
+				_, bt = th.connectVatsWithTCP(s, c)
+			}
 
-	// Wait for bootstrap.
-	boot := c.Bootstrap()
-	_, err := boot.Wait(ctx)
-	require.NoError(b, err)
-	api := testUserMethods(boot)
+			// Wait for bootstrap.
+			api, _, err := WaitBootstrap[testCapWithComplexMethod](ctx, bt)
+			require.NoError(b, err)
 
-	var i int
-	b.ReportAllocs()
-	for b.Loop() {
-		err := api.GetAvatarData().WaitDiscardResult(ctx)
-		if err != nil {
-			b.Fatalf("at %d: %v", i, err)
-		}
-		i++
+			var i int
+			requestSizeHint, _ := capnpser.ByteCount(len(wantStrValue)).StorageWordCount()
+
+			// Run test.
+			b.ReportAllocs()
+			for b.Loop() {
+				// Setup the parameters of the call.
+				rb, future := api.ComplexMethod(requestSizeHint)
+				rb.SetInt64Value(wantIntValue)
+				if err := rb.SetStrValue(wantStrValue); err != nil {
+					panic(err)
+				}
+
+				// Wait for call to complete.
+				res, rr, err := future.Wait(ctx)
+				if err != nil {
+					b.Fatalf("at %d: %v", i, err)
+				}
+
+				// Double check resulting values are correct.
+				gotInt := res.Int64Value()
+				if gotInt != wantIntValue {
+					b.Fatalf("wrong intvalue: got %v, want %v", gotInt, wantIntValue)
+				}
+				gotStr := res.UnsafeStrValue()
+				if gotStr != wantStrValue {
+					b.Fatalf("wrong strValue: got %v, want %v", gotStr, wantStrValue)
+				}
+
+				// Release the results (not gonna be used anymore).
+				rr.Release()
+				i++
+			}
+		})
 	}
 }

@@ -14,6 +14,15 @@ import (
 	"matheusd.com/mdcapnp/internal/sigvalue"
 )
 
+type CallWithStructParamsSetup struct {
+	ParentCap   CallFuture
+	InterfaceId InterfaceId
+	MethodId    MethodId
+
+	PayloadSizeHint capnpser.WordCount
+	ParamsSize      capnpser.StructSize
+}
+
 // CallSetup are the requirements to build and send a Call message.
 type CallSetup struct {
 	// TODO: split InterfaceId, MethodId and WantShallowReturnCopy into one
@@ -167,7 +176,7 @@ func SetupCallWithParams(parent CallFuture, payloadSizeHint capnpser.WordCount, 
 // parameters, with size [paramsSize] and (likely) only up to an additional
 // [payloadSizeHint] words as extra size.
 func SetupCallWithStructParams(parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, capnpser.StructBuilder) {
-	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
+	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint+paramsSize.TotalSize(), iid, mid)
 	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
 	if err != nil {
 		panic(err)
@@ -179,7 +188,7 @@ func SetupCallWithStructParams(parent CallFuture, payloadSizeHint capnpser.WordC
 // allows returning a generic StructBuilder to be used for building the request
 // parameters.
 func SetupCallWithStructParamsGeneric[T ~capnpser.StructBuilderType](parent CallFuture, payloadSizeHint capnpser.WordCount, iid InterfaceId, mid MethodId, paramsSize capnpser.StructSize) (CallSetup, T) {
-	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint, iid, mid)
+	cs, pbuilder := SetupCallWithParams(parent, payloadSizeHint+paramsSize.TotalSize(), iid, mid)
 	sb, err := pbuilder.SetContentAsNewStruct(paramsSize)
 	if err != nil {
 		panic(err)
@@ -246,6 +255,13 @@ func RemoteCall(parent CallFuture, csetup CallSetup) (res CallFuture) {
 	res.vat = parent.vat
 
 	return res
+}
+
+func RemoteCallWithStructParams[BT ~capnpser.StructBuilderType, FT ~CallFutureType](css CallWithStructParamsSetup) (paramsBuilder BT, future FT) {
+	cs, rb := SetupCallWithStructParamsGeneric[BT](css.ParentCap, css.PayloadSizeHint, css.InterfaceId, css.MethodId, css.ParamsSize)
+	future = FT(RemoteCall(css.ParentCap, cs))
+	paramsBuilder = BT(rb)
+	return
 }
 
 // waitReturn waits until the passed future is resolved. Returns either the
@@ -364,7 +380,7 @@ func waitReturnResultsStruct(ctx context.Context, cf CallFuture) (s capnpser.Str
 		return
 	}
 
-	if !content.IsStruct() {
+	if !content.IsStruct() && !content.IsZeroStruct() {
 		err = errors.New("Return.Results.Content is not the expected Struct")
 		return
 	}
