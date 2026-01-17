@@ -1,10 +1,11 @@
 module matheusd.com/mdcapnp
 
-go 1.24.3
+go 1.25
 
 require (
 	github.com/canastic/chantest v0.0.0-20210218075530-34c9aad5cd57
 	github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381
+	github.com/go-json-experiment/json v0.0.0-20251027170946-4849db3c2f7e
 	github.com/rs/zerolog v1.34.0
 	github.com/sourcegraph/conc v0.3.0
 	matheusd.com/depvendoredtestify v1.10.0-alpha
